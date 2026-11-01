@@ -14,6 +14,8 @@ Graphplot/
 │   │   ├── PeakPicker.*           peak picking, snapping, peak-list CSV
 │   │   ├── BrukerReader.*         Bruker TopSpin pdata (2rr + procs/proc2s) reader/writer
 │   │   ├── Style.*                all visual settings, .gpstyle files, built-in styles
+│   │   ├── Statistics.*           region statistics (mean, sd, min/max, RMS, integral)
+│   │   ├── TimeSeriesLoader.*     time-column detection for sensor logs
 │   │   └── DataLoader.*           column / matrix text file readers
 │   ├── commands/               5. history layer
 │   │   ├── Commands.*             QUndoCommand subclasses (generic add/remove/edit templates)
