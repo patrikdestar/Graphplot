@@ -90,11 +90,19 @@ QList<double> ColorBar::ticks() const
     QList<double> out;
     const double span = m_range.upper - m_range.lower;
     if (!(span > 0) || !std::isfinite(span)) return out;
+    // A range of a few rounding steps (nearly constant data) has no useful
+    // ticks; v += step would not even advance. Show the value once.
+    const double scale = std::max(std::abs(m_range.lower), std::abs(m_range.upper));
+    if (span < scale * 1e-12) return {m_range.lower};
     const double raw = span / 5;
     const double mag = std::pow(10.0, std::floor(std::log10(raw)));
     const double step = raw / mag < 1.5 ? mag : raw / mag < 3.5 ? 2 * mag : raw / mag < 7.5 ? 5 * mag : 10 * mag;
-    for (double v = std::ceil(m_range.lower / step) * step; v <= m_range.upper + step * 1e-9; v += step)
+    const double first = std::ceil(m_range.lower / step) * step;
+    for (int i = 0; i < 50; ++i) {  // an integer counter: always terminates
+        const double v = first + i * step;
+        if (v > m_range.upper + step * 1e-9) break;
         out << (std::abs(v) < step * 1e-9 ? 0.0 : v);
+    }
     return out;
 }
 

@@ -978,6 +978,23 @@ class PlotterTests(unittest.TestCase):
         self.assertEqual(plt.gca().get_lines(), [])
         plt.close("all")
 
+    def test_no_hangs(self):
+        import plotter.pyplot as plt
+        f = self.fig
+        nan = float("nan")
+        f.plot([0, 0, 1, 1, 0, nan, 2, 2, 3], [0, 1, 1, 0, 0, nan, 0, 2, 2], fill=True)
+        z = np.full((3, 3), 0.3)
+        z[0, 0] = 0.1 + 0.2  # a range of one rounding step
+        f.image(z)
+        with tempfile.TemporaryDirectory() as d:
+            f.savefig(os.path.join(d, "a.png"))
+            plt.figure()
+            plt.bar(["a", "b"], [1, 2], yerr=[0.1, 0.2], color=["C0", "C1"])
+            plt.barh([1, 2], [2, 1])
+            self.assertEqual(plt.gca().panel.get_xticks()[1], ["a", "b"])
+            plt.savefig(os.path.join(d, "b.png"))
+            plt.close("all")
+
     def test_pyplot_compat_round2(self):
         import io
         import plotter.pyplot as plt

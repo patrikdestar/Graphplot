@@ -39,6 +39,25 @@ bool viewFromJson(const QJsonValue& value, ViewRange* v)
     return v->xmax > v->xmin && v->ymax > v->ymin;
 }
 
+QString shareName(GridSpec::Share s)
+{
+    switch (s) {
+    case GridSpec::Share::All: return "all";
+    case GridSpec::Share::Column: return "col";
+    case GridSpec::Share::Row: return "row";
+    case GridSpec::Share::None: break;
+    }
+    return "none";
+}
+
+GridSpec::Share shareFrom(const QJsonValue& v)
+{
+    if (v.isBool()) return v.toBool() ? GridSpec::Share::All : GridSpec::Share::None;  // older files
+    const QString s = v.toString();
+    return s == "all" ? GridSpec::Share::All : s == "col" ? GridSpec::Share::Column
+         : s == "row" ? GridSpec::Share::Row : GridSpec::Share::None;
+}
+
 QJsonArray doubles(const QList<double>& l)
 {
     QJsonArray a;
@@ -86,7 +105,7 @@ bool FigureWindow::saveFigure(const QString& fileName, QString* error) const
                                        {"heightRatios", doubles(g.heightRatios)},
                                        {"widthRatios", doubles(g.widthRatios)},
                                        {"hspace", g.hspace},    {"wspace", g.wspace},
-                                       {"sharex", g.sharex},    {"sharey", g.sharey}};
+                                       {"sharex", shareName(g.sharex)}, {"sharey", shareName(g.sharey)}};
     }
     QJsonArray panelArray;
     for (int i : panels) {
@@ -220,8 +239,8 @@ bool FigureWindow::loadFigure(const QString& fileName, QString* error)
             spec.widthRatios = doublesFrom(g["widthRatios"]);
             spec.hspace = g["hspace"].toInt(-1);
             spec.wspace = g["wspace"].toInt(-1);
-            spec.sharex = g["sharex"].toBool();
-            spec.sharey = g["sharey"].toBool();
+            spec.sharex = shareFrom(g["sharex"]);
+            spec.sharey = shareFrom(g["sharey"]);
             setGrid(spec);
         }
         while (axesCount() < panels.size()) createPanel();  // panels hidden by a smaller grid

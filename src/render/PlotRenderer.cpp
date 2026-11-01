@@ -146,6 +146,7 @@ PlotRenderer::PlotRenderer(PlotModel* model, QCustomPlot* plot, QCPAxisRect* rec
     });
     connect(m_model, &PlotModel::datasetDataChanged, this, [this](ObjectId id) {
         applyDatasetData(id);
+        if (m_followData && m_autoHome) autoscale();  // live data stays in view until the user zooms
         replot();
     });
     connect(m_model, &PlotModel::matrixAdded, this, &PlotRenderer::onMatrixAdded);
@@ -191,10 +192,16 @@ PlotRenderer::PlotRenderer(PlotModel* model, QCustomPlot* plot, QCPAxisRect* rec
         replot();
     });
 
-    connect(m_x, qOverload<const QCPRange&>(&QCPAxis::rangeChanged), this,
-            [this] { emit viewChanged(); });
-    connect(m_y, qOverload<const QCPRange&>(&QCPAxis::rangeChanged), this,
-            [this] { emit viewChanged(); });
+    // A view change that is not an autoscale (zoom, pan, typed limits, a
+    // linked panel) stops following the data.
+    connect(m_x, qOverload<const QCPRange&>(&QCPAxis::rangeChanged), this, [this] {
+        if (!m_autoscaling) m_followData = false;
+        emit viewChanged();
+    });
+    connect(m_y, qOverload<const QCPRange&>(&QCPAxis::rangeChanged), this, [this] {
+        if (!m_autoscaling) m_followData = false;
+        emit viewChanged();
+    });
 
     rebuildAll();
 }
@@ -375,7 +382,27 @@ void PlotRenderer::autoscale(bool doX, bool doY)
 {
     double xmin, xmax, ymin, ymax;
     const bool xLog = m_model->axesInfo().xLog, yLog = m_model->axesInfo().yLog;
-    if (!m_model->dataBounds(xmin, xmax, ymin, ymax, true, xLog, yLog)) return;
+    if (!m_model->dataBounds(xmin, xmax, ymin, ymax, true, xLog, yLog)) {
+        xmin = ymin = std::numeric_limits<double>::infinity();
+        xmax = ymax = -xmin;
+    }
+    // Shared axes: the union with the panels linked to this one.
+    auto unite = [&](const QList<PlotRenderer*>& partners, bool isX) {
+        for (PlotRenderer* p : partners) {
+            double a, b, c, d;
+            if (!p->m_model->dataBounds(a, b, c, d, true, xLog, yLog)) continue;
+            if (isX) xmin = std::min(xmin, a), xmax = std::max(xmax, b);
+            else ymin = std::min(ymin, c), ymax = std::max(ymax, d);
+        }
+    };
+    if (doX) unite(m_shareX, true);
+    if (doY) unite(m_shareY, false);
+    if (!(xmax >= xmin) || !(ymax >= ymin)) return;  // no data anywhere
+    m_followData = true;  // an explicit or automatic fit: keep following the data
+    struct Guard {
+        bool& flag;
+        ~Guard() { flag = false; }
+    } guard{m_autoscaling = true};
     // Padding in log space for logarithmic axes.
     auto pad = [](double& lo, double& hi, double fraction, bool log) {
         if (!log) return padRange(lo, hi, fraction);
@@ -421,7 +448,9 @@ void PlotRenderer::resetView()
 
 void PlotRenderer::maybeCaptureHome()
 {
-    if (m_hasHome || !m_autoHome) return;
+    // New data: re-fit while the view still follows the data (nobody zoomed
+    // or set limits), and remember the fitted view as "home".
+    if (!m_autoHome || (!m_followData && m_hasHome)) return;
     autoscale();
     captureHomeView();
 }
@@ -627,6 +656,7 @@ void PlotRenderer::applyDatasetData(ObjectId id)
     }
     if (auto* g = qobject_cast<QCPGraph*>(p)) g->setData(d->x, d->y, true);
     else if (auto* c = qobject_cast<QCPCurve*>(p)) c->setData(d->x, d->y);
+    if (d->style.fillColor.isValid() && qobject_cast<QCPCurve*>(p)) applyDatasetAppearance(id);  // fillable?
     updateErrorBars(id);
 }
 
@@ -688,7 +718,13 @@ void PlotRenderer::applyDatasetAppearance(ObjectId id)
     p->setVisible(s.visible);
     // Filled symbols (open symbols like x/+ ignore the brush).
     const QCPScatterStyle scatter(toScatterShape(s.scatter), color, color, s.scatterSize);
-    p->setBrush(s.fillColor.isValid() ? QBrush(s.fillColor) : QBrush(Qt::NoBrush));
+    // A QCPCurve (unsorted x) with NaN / inf points must not be filled: Qt's
+    // polygon filler never finishes on such paths (the line is still drawn).
+    bool fillable = true;
+    if (qobject_cast<QCPCurve*>(p))
+        for (qsizetype i = 0; i < d->x.size() && fillable; ++i)
+            fillable = std::isfinite(d->x[i]) && std::isfinite(d->y[i]);
+    p->setBrush(s.fillColor.isValid() && fillable ? QBrush(s.fillColor) : QBrush(Qt::NoBrush));
     if (auto* g = qobject_cast<QCPGraph*>(p)) {
         QCPGraph::LineStyle ls = QCPGraph::lsLine;
         // QCustomPlot names: lsStepLeft = point on the left of its step (= "post").

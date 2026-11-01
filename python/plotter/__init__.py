@@ -402,7 +402,8 @@ def _subplots(self: Figure, nrows: int = 1, ncols: int = 1, *, sharex: bool = Fa
     ranges and keep tick labels only on the outer panels. hspace/wspace are
     the gaps in pixels (0 = frames touch, as in ratio plots).
     Returns a list (one row or column, like matplotlib's squeeze) or a list of rows."""
-    self._subplots(int(nrows), int(ncols), bool(sharex), bool(sharey),
+    self._subplots(int(nrows), int(ncols), sharex if isinstance(sharex, str) else bool(sharex),
+                   sharey if isinstance(sharey, str) else bool(sharey),
                    list(height_ratios or []), list(width_ratios or []),
                    -1 if hspace is None else int(hspace), -1 if wspace is None else int(wspace))
     grid = [[Axes(self, r * ncols + c) for c in range(ncols)] for r in range(nrows)]

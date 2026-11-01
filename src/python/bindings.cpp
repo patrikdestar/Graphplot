@@ -219,6 +219,21 @@ QColor requiredColor(const py::object& obj, const char* what)
     return toColor(obj, what);
 }
 
+// sharex / sharey as in matplotlib: False / True / 'none' / 'all' / 'col' / 'row'.
+GridSpec::Share toShare(const py::object& v)
+{
+    if (v.is_none()) return GridSpec::Share::None;
+    if (py::isinstance<py::str>(v)) {
+        const std::string s = v.cast<std::string>();
+        if (s == "all") return GridSpec::Share::All;
+        if (s == "col") return GridSpec::Share::Column;
+        if (s == "row") return GridSpec::Share::Row;
+        if (s == "none") return GridSpec::Share::None;
+        throw py::value_error("share must be True/False, 'all', 'col', 'row' or 'none'");
+    }
+    return py::bool_(v) ? GridSpec::Share::All : GridSpec::Share::None;
+}
+
 // matplotlib-style horizontal / vertical alignment -> Qt::Alignment flags.
 int toAlignment(const std::string& ha, const std::string& va)
 {
@@ -1658,7 +1673,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
     });
     fig.def(
         "_subplots",
-        [](FigurePtr self, int rows, int cols, bool sharex, bool sharey, std::vector<double> hr,
+        [](FigurePtr self, int rows, int cols, const py::object& sharex, const py::object& sharey, std::vector<double> hr,
            std::vector<double> wr, int hspace, int wspace) {
             inGui([&] {
                 if (self->w()->hasTimeline())
@@ -1666,8 +1681,8 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
                 GridSpec g;
                 g.rows = rows;
                 g.cols = cols;
-                g.sharex = sharex;
-                g.sharey = sharey;
+                g.sharex = toShare(sharex);
+                g.sharey = toShare(sharey);
                 g.heightRatios = QList<double>(hr.begin(), hr.end());
                 g.widthRatios = QList<double>(wr.begin(), wr.end());
                 g.hspace = hspace;

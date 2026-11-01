@@ -359,11 +359,23 @@ void FigureWindow::setGrid(const GridSpec& spec)
         m_linkConnections << connect(b, qOverload<const QCPRange&>(&QCPAxis::rangeChanged), a,
                                      qOverload<const QCPRange&>(&QCPAxis::setRange));
     };
-    for (int i = 0; i < rows * cols && i < int(m_axes.size()); ++i) {
+    // The panel each panel's axis is linked to (its group's first panel), or -1.
+    auto leader = [&](GridSpec::Share mode, int row, int col) {
+        switch (mode) {
+        case GridSpec::Share::All: return 0;
+        case GridSpec::Share::Column: return col;
+        case GridSpec::Share::Row: return row * cols;
+        case GridSpec::Share::None: break;
+        }
+        return -1;
+    };
+    const int n = std::min(rows * cols, int(m_axes.size()));
+    for (int i = 0; i < n; ++i) {
         PlotRenderer* r = m_axes[size_t(i)].renderer;
         const int row = i / cols, col = i % cols;
-        const bool hideX = spec.sharex && row < rows - 1;
-        const bool hideY = spec.sharey && col > 0;
+        const bool hideX = (spec.sharex == GridSpec::Share::All || spec.sharex == GridSpec::Share::Column) &&
+                           row < rows - 1;
+        const bool hideY = (spec.sharey == GridSpec::Share::All || spec.sharey == GridSpec::Share::Row) && col > 0;
         r->xAxis()->setTickLabels(!hideX);
         r->yAxis()->setTickLabels(!hideY);
         QCPAxisRect* rect = r->axisRect();
@@ -376,11 +388,23 @@ void FigureWindow::setGrid(const GridSpec& spec)
         if (spec.wspace == 0 && col < cols - 1) autoSides &= ~QCP::msRight, fixed.setRight(0);
         rect->setAutoMargins(autoSides);
         rect->setMargins(fixed);
-        if (spec.sharex && col == 0 && row > 0) {
-            for (int c2 = 0; c2 < cols; ++c2)
-                if (auto* other = axesRenderer(c2)) link(other->xAxis(), axesRenderer(row * cols + c2)->xAxis());
+        const int lx = leader(spec.sharex, row, col), ly = leader(spec.sharey, row, col);
+        if (lx >= 0 && lx != i) link(axesRenderer(lx)->xAxis(), r->xAxis());
+        if (ly >= 0 && ly != i) link(axesRenderer(ly)->yAxis(), r->yAxis());
+    }
+    // Autoscaling a linked axis fits all panels that share it (the union).
+    for (int i = 0; i < n; ++i) {
+        const int row = i / cols, col = i % cols;
+        QList<PlotRenderer*> xs, ys;
+        for (int j = 0; j < n; ++j) {
+            if (j == i) continue;
+            const int r2 = j / cols, c2 = j % cols;
+            if (leader(spec.sharex, row, col) >= 0 && leader(spec.sharex, row, col) == leader(spec.sharex, r2, c2))
+                xs << m_axes[size_t(j)].renderer;
+            if (leader(spec.sharey, row, col) >= 0 && leader(spec.sharey, row, col) == leader(spec.sharey, r2, c2))
+                ys << m_axes[size_t(j)].renderer;
         }
-        if (spec.sharey && col > 0) link(axesRenderer(row * cols)->yAxis(), r->yAxis());
+        m_axes[size_t(i)].renderer->setSharedWith(xs, ys);
     }
     m_gridSpec = spec;
     m_plot->replot();

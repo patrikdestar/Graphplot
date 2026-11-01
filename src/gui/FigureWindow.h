@@ -50,8 +50,11 @@ struct GridSpec {
     QList<double> widthRatios;   // one per column
     int hspace = -1;             // px between rows (-1 = default; 0 = frames touch)
     int wspace = -1;
-    bool sharex = false;         // linked x ranges; only the bottom row shows x tick labels
-    bool sharey = false;
+    // Linked ranges, as in matplotlib: None, All panels, per Column or per Row.
+    // x: only the bottom row shows x tick labels; y: only the first column.
+    enum class Share { None, All, Column, Row };
+    Share sharex = Share::None;
+    Share sharey = Share::None;
 };
 
 class FigureWindow : public QMainWindow {

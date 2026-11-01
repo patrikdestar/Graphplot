@@ -112,6 +112,13 @@ public:
     void setPanelVisible(bool visible);
     bool panelVisible() const { return m_panelVisible; }
     void setRegionLabelVisible(bool on) { m_regionLabelOn = on; applyRegion(); }
+    // Panels whose x / y axis is linked to this one: autoscaling fits the
+    // union of their data (shared axes).
+    void setSharedWith(const QList<PlotRenderer*>& x, const QList<PlotRenderer*>& y)
+    {
+        m_shareX = x;
+        m_shareY = y;
+    }
     // Multi-panel figures: the panel draws its title above its own frame (and
     // the figure header shows the suptitle); single panels use the header.
     void setOwnTitle(bool on);
@@ -224,6 +231,11 @@ private:
     bool m_autoHome = true;
     bool m_regionInExports = false;
     bool m_ownTitle = false;
+    QList<PlotRenderer*> m_shareX, m_shareY;
+    // The view follows the data (re-fits when data is added or changed) until
+    // the user or code sets the view; autoscale() resumes following.
+    bool m_followData = true;
+    bool m_autoscaling = false;
     bool m_panelVisible = true;
     bool m_regionLabelOn = true;
     ViewRange m_home;

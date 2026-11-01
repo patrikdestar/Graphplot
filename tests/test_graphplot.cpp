@@ -790,7 +790,7 @@ private slots:
         auto w = makeWindow();  // panel 0 holds the ramp
         GridSpec g;
         g.rows = 2;
-        g.sharex = true;
+        g.sharex = GridSpec::Share::All;
         g.hspace = 0;
         g.heightRatios = {0.7, 0.3};
         w->setGrid(g);
@@ -1593,7 +1593,7 @@ private slots:
         w->model()->setStyle(st);
         GridSpec g;
         g.rows = 2;
-        g.sharex = true;
+        g.sharex = GridSpec::Share::All;
         w->setGrid(g);
         w->axes(1).editor->addDataset(ramp("lower", 3));
         w->renderer()->setViewRange({5, 50, -1, 60});

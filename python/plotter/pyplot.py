@@ -407,38 +407,62 @@ class PltAxes:
                                  ha=ha or kw.get("horizontalalignment") or "left",
                                  va=va or kw.get("verticalalignment") or "baseline", arrow_to=arrow)
 
+    @staticmethod
+    def _bar_outline(starts, sizes, lengths, bases, vertical):
+        """One closed path through all bars, along the baseline between them
+        (no NaN: filled curves with gaps cannot be drawn); filled, no edge line."""
+        a, b = [], []  # along / across the bars
+        for s0, sz, ln, bs in zip(starts, sizes, lengths, bases):
+            a += [s0, s0, s0 + sz, s0 + sz]
+            b += [bs, bs + ln, bs + ln, bs]
+        if a:
+            a.append(a[0])
+            b.append(b[0])
+        return (a, b) if vertical else (b, a)
+
     def bar(self, x, height, width=0.8, bottom=0.0, align="center", color=None, label=None,
-            edgecolor=None, **kw):
-        """Vertical bars (drawn as one filled outline)."""
-        x = _np.atleast_1d(_np.asarray(x, dtype=float))
+            edgecolor=None, yerr=None, capsize=None, tick_label=None, **kw):
+        """Vertical bars (filled, no edge line, as matplotlib draws them by default).
+        x may be numbers or category names (placed at 0, 1, 2, ... with those tick labels)."""
+        xs = list(_np.atleast_1d(x))
+        if xs and isinstance(xs[0], str):
+            tick_label = tick_label or xs
+            xs = list(range(len(xs)))
+        x = _np.asarray(xs, dtype=float)
         h = _np.broadcast_to(_np.asarray(height, dtype=float), x.shape)
         w = _np.broadcast_to(_np.asarray(width, dtype=float), x.shape)
         b = _np.broadcast_to(_np.asarray(bottom, dtype=float), x.shape)
         left = x - w / 2 if align == "center" else x
-        # Each bar is a closed rectangle; NaN separates them (filled one by one).
-        xs, ys = [], []
-        for l0, wi, hi, bi in zip(left, w, h, b):
-            xs += [l0, l0, l0 + wi, l0 + wi, l0, _np.nan]
-            ys += [bi, bi + hi, bi + hi, bi, bi, _np.nan]
-        opts = _common(dict(kw, **({"label": label} if label is not None else {}),
-                            **({"color": color} if color is not None else {})), self._ax)
-        return self._ax.plot(xs, ys, fill=True, **opts)
+        if isinstance(color, (list, tuple)) and color and not isinstance(color[0], (int, float)):
+            # One colour per bar: one filled shape per bar.
+            out = [self.bar(xi, hi, wi, bi, align, color=ci, label=label if i == 0 else None, **kw)
+                   for i, (xi, hi, wi, bi, ci) in enumerate(zip(x, h, w, b, color))]
+            line = out[0]
+        else:
+            xs_, ys_ = self._bar_outline(left, w, h, b, True)
+            opts = _common(dict(kw, **({"label": label} if label is not None else {}),
+                                **({"color": color} if color is not None else {})), self._ax)
+            opts["style"] = "none"
+            opts["color"] = opts.get("color") or self._ax._take_color()
+            line = self._ax.plot(xs_, ys_, fill=opts["color"], **opts)  # opaque, as matplotlib
+        if yerr is not None:
+            self._ax.plot(x, b + h, yerr=yerr, style="none", color="k")
+        if tick_label is not None:
+            self._ax.set_xticks(list(x), [str(t) for t in _np.atleast_1d(tick_label)])
+        return line
 
     def barh(self, y, width, height=0.8, left=0.0, color=None, label=None, **kw):
-        """Horizontal bars (drawn as one filled outline)."""
+        """Horizontal bars (filled)."""
         y = _np.atleast_1d(_np.asarray(y, dtype=float))
         wd = _np.broadcast_to(_np.asarray(width, dtype=float), y.shape)
         ht = _np.broadcast_to(_np.asarray(height, dtype=float), y.shape)
         lf = _np.broadcast_to(_np.asarray(left, dtype=float), y.shape)
-        xs, ys = [], []
-        for yi, wi, hi, li in zip(y - ht / 2, wd, ht, lf):
-            xs += [li, li + wi, li + wi, li, li]
-            ys += [yi, yi, yi + hi, yi + hi, yi]
-            xs.append(_np.nan)
-            ys.append(_np.nan)
+        xs, ys = self._bar_outline(y - ht / 2, ht, wd, lf, False)
         opts = _common(dict(kw, **({"label": label} if label is not None else {}),
                             **({"color": color} if color is not None else {})), self._ax)
-        return self._ax.plot(xs, ys, fill=True, **opts)
+        opts["style"] = "none"
+        opts["color"] = opts.get("color") or self._ax._take_color()
+        return self._ax.plot(xs, ys, fill=opts["color"], **opts)
 
     def step(self, x, y, *args, where="pre", **kw):
         """Step plot (where: 'pre', 'post', 'mid')."""
