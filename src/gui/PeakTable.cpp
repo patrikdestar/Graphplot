@@ -65,6 +65,7 @@ PeakTable::PeakTable(PlotEditor* editor, PlotRenderer* renderer, InteractionCont
     auto* v = new QDoubleValidator(m_threshold);
     v->setBottom(0);
     v->setNotation(QDoubleValidator::ScientificNotation);
+    v->setLocale(QLocale::c());  // "1.5" everywhere (read back with toDouble)
     m_threshold->setValidator(v);
     m_threshold->setToolTip("Minimum peak height. Empty = the current lowest contour level,\n"
                             "so exactly the peaks you can see are picked.");

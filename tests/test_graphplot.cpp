@@ -1373,6 +1373,43 @@ private slots:
     }
 
     // ---- data loading -----------------------------------------------------------------------
+    void loaderEdgeCases()
+    {
+        QTemporaryDir dir;
+        auto write = [&](const QString& name, const QByteArray& text) {
+            QFile f(dir.filePath(name));
+            f.open(QIODevice::WriteOnly);
+            f.write(text);
+            return f.fileName();
+        };
+        // A relative microsecond counter is not a 1970 epoch.
+        TimeSeriesTable a = loadTimeSeriesCsv(write("daq.csv", "time_us,v\n0,1\n600000000,2\n"));
+        QVERIFY2(a.error.isEmpty(), qPrintable(a.error));
+        QVERIFY(!a.absolute);
+        QCOMPARE(a.time.last(), 600.0);
+        // Space-separated date + time stays one timestamp.
+        TimeSeriesTable b = loadTimeSeriesCsv(
+            write("log.txt", "date time value\n2024-01-01 12:00:00 1.5\n2024-01-01 12:00:01 2.5\n"));
+        QVERIFY2(b.error.isEmpty(), qPrintable(b.error));
+        QVERIFY(b.absolute);
+        QCOMPARE(b.time[1] - b.time[0], 1.0);
+        QCOMPARE(b.columns, QStringList{"value"});
+        // Quoted names containing the separator; a trailing separator adds nothing.
+        LoadResult c = loadColumnFile(write("excel.csv", "\"x\",\"Temp, K\",\n1,2,\n2,3,\n"));
+        QVERIFY2(c.error.isEmpty(), qPrintable(c.error));
+        QCOMPARE(int(c.datasets.size()), 1);
+        QCOMPARE(c.datasets[0].name, QString("Temp, K"));
+        // Space-separated header with units.
+        LoadResult d = loadColumnFile(write("units.txt", "time (s)   value\n0 1\n1 2\n"));
+        QCOMPARE(d.datasets[0].name, QString("value"));
+        // Matrix: empty cells are NaN, columns don't shift.
+        MatrixLoadResult m = loadMatrixFile(write("grid.csv", "1,,3\n4,,6\n"));
+        QVERIFY2(m.error.isEmpty(), qPrintable(m.error));
+        QCOMPARE(m.matrix.nx, 3);
+        QVERIFY(std::isnan(m.matrix.z[1]));
+        QCOMPARE(m.matrix.z[5], 6.0);
+    }
+
     void loadColumns()
     {
         QTemporaryDir dir;

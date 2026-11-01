@@ -1342,6 +1342,8 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         [](FigurePtr self, int rows, int cols, bool sharex, bool sharey, std::vector<double> hr,
            std::vector<double> wr, int hspace, int wspace) {
             inGui([&] {
+                if (self->w()->hasTimeline())
+                    throw py::value_error("a timeline figure arranges its own rows (use add_row)");
                 GridSpec g;
                 g.rows = rows;
                 g.cols = cols;

@@ -7,7 +7,9 @@
 // stamp / datetime / sec / seconds (case-insensitive, units in brackets are
 // ignored), otherwise the first column. Accepted time values:
 //   * ISO 8601 date-times ("2024-05-02T14:03:27.250", "2024-05-02 14:03:27")
-//   * Unix epoch numbers in s, ms, us or ns (detected from the magnitude)
+//   * Unix epoch numbers in s, ms, us or ns (detected from the magnitude of
+//     the whole range)
+//   * relative times; a unit in the header ("time_ms", "t [us]") is honoured
 //   * plain seconds (relative time)
 // Empty or non-numeric cells become NaN (drawn as gaps). Rows are sorted
 // by time.
@@ -36,8 +38,13 @@ TimeSeriesTable loadTimeSeriesCsv(const QString& fileName);
 // for ISO date-times. Numbers are returned unscaled (see normalizeTimes).
 double parseTimeCell(const QString& cell, bool* isDateTime);
 
-// Converts raw numeric times to seconds: values that look like Unix epoch
-// timestamps in ms / us / ns are scaled; returns true if they are epochs.
-bool normalizeTimes(QVector<double>& t);
+// Converts raw numeric times to seconds. With unitScale > 0 (seconds per
+// unit, from the header) the times are scaled by it. Otherwise
+// values whose whole range looks like Unix epoch timestamps in s / ms / us /
+// ns are scaled to seconds; returns true if they are epochs.
+bool normalizeTimes(QVector<double>& t, double unitScale = 0);
+// Seconds per unit named in a time column header ("time_ms", "t [us]"),
+// 0 if none.
+double headerUnitScale(const QString& header);
 
 }  // namespace gp

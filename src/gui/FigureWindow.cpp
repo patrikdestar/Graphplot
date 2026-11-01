@@ -289,8 +289,13 @@ void FigureWindow::setGrid(const GridSpec& spec)
     for (const Axes& ax : m_axes)
         if (m_grid->elements(false).contains(ax.renderer->axisRect())) m_grid->take(ax.renderer->axisRect());
     m_grid->simplify();
-    for (size_t i = 0; i < m_axes.size() && int(i) < rows * cols; ++i)
-        m_grid->addElement(int(i) / cols, int(i) % cols, m_axes[i].renderer->axisRect());
+    for (size_t i = 0; i < m_axes.size(); ++i) {
+        const bool inGrid = int(i) < rows * cols;
+        // Panels beyond a smaller grid keep their content (undo, Python
+        // handles) but must not be drawn at their old position.
+        m_axes[i].renderer->setPanelVisible(inGrid);
+        if (inGrid) m_grid->addElement(int(i) / cols, int(i) % cols, m_axes[i].renderer->axisRect());
+    }
     if (spec.heightRatios.size() == rows) m_grid->setRowStretchFactors(spec.heightRatios);
     if (spec.widthRatios.size() == cols) m_grid->setColumnStretchFactors(spec.widthRatios);
     m_grid->setRowSpacing(spec.hspace >= 0 ? spec.hspace : 8);

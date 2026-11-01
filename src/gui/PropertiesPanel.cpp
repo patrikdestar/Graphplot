@@ -515,6 +515,7 @@ QWidget* PropertiesPanel::buildMatrixPage()
     auto* validator = new QDoubleValidator(m_mxBase);
     validator->setBottom(0);
     validator->setNotation(QDoubleValidator::ScientificNotation);
+    validator->setLocale(QLocale::c());  // "1.5" everywhere (read back with toDouble)
     m_mxBase->setValidator(validator);
     m_mxBase->setToolTip("Lowest positive contour level. Scroll the wheel with Alt held "
                          "(or with 'Levels' enabled) to change it; '*' halves it, '/' doubles it.");

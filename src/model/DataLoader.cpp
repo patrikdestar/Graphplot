@@ -5,6 +5,8 @@
 #include <QFileInfo>
 #include <QRegularExpression>
 #include <QTextStream>
+#include <algorithm>
+#include <cmath>
 #include <limits>
 
 namespace gp {
@@ -20,12 +22,38 @@ QStringList splitFields(const QString& line, QChar sep)
 {
     static const QRegularExpression whitespace(R"(\s+)");
     if (sep == ' ') return line.split(whitespace, Qt::SkipEmptyParts);
-    QStringList parts = line.split(sep);
-    for (QString& p : parts) {
-        p = p.trimmed();
-        if (p.size() >= 2 && p.startsWith('"') && p.endsWith('"')) p = p.mid(1, p.size() - 2);
+    // Quote-aware split: "Temp, K" stays one field; "" inside quotes is a quote.
+    QStringList parts;
+    QString field;
+    bool quoted = false;
+    for (qsizetype i = 0; i < line.size(); ++i) {
+        const QChar c = line[i];
+        if (quoted) {
+            if (c != '"') field += c;
+            else if (i + 1 < line.size() && line[i + 1] == '"') field += '"', ++i;
+            else quoted = false;
+        } else if (c == '"') {
+            quoted = true;
+        } else if (c == sep) {
+            parts << field.trimmed();
+            field.clear();
+        } else {
+            field += c;
+        }
     }
+    parts << field.trimmed();
     return parts;
+}
+
+QStringList splitHeader(const QString& line, QChar sep, qsizetype columns)
+{
+    QStringList h = splitFields(line, sep);
+    if (sep != ' ' || h.size() == columns) return h;
+    // Space-separated header with spaces inside names ("time (s)   value"):
+    // try splitting on runs of 2+ spaces or tabs instead.
+    static const QRegularExpression wide(R"(\s{2,}|\t)");
+    const QStringList w = line.split(wide, Qt::SkipEmptyParts);
+    return w.size() == columns ? w : h;
 }
 
 double parseCell(const QString& cell, bool* ok)
@@ -47,6 +75,7 @@ LoadResult loadColumnFile(const QString& fileName)
     QTextStream in(&f);
     QChar sep;  // detected from the first non-comment line
     QStringList header;
+    QString headerLine;
     std::vector<QVector<double>> columns;
     int lineNo = 0;
     while (!in.atEnd()) {
@@ -69,6 +98,7 @@ LoadResult loadColumnFile(const QString& fileName)
         if (!numeric) {
             if (columns.empty() && header.isEmpty()) {  // the first text line is the header
                 header = parts;
+                headerLine = line;
                 continue;
             }
             result.error = QString("Line %1 is not numeric").arg(lineNo);
@@ -88,6 +118,11 @@ LoadResult loadColumnFile(const QString& fileName)
         result.error = "The file contains no numeric data";
         return result;
     }
+    if (!headerLine.isEmpty()) header = splitHeader(headerLine, sep, qsizetype(columns.size()));
+    // A trailing separator ("1,2,") makes an unnamed, empty last column: drop it.
+    while (columns.size() > 1 && header.value(int(columns.size()) - 1).isEmpty() &&
+           std::all_of(columns.back().begin(), columns.back().end(), [](double v) { return std::isnan(v); }))
+        columns.pop_back();
     const QString base = QFileInfo(fileName).completeBaseName();
     if (columns.size() == 1) {  // single column: plot against index
         Dataset d;
@@ -121,6 +156,7 @@ MatrixLoadResult loadMatrixFile(const QString& fileName)
                                              QRegularExpression::CaseInsensitiveOption);
     QTextStream in(&f);
     Matrix& m = result.matrix;
+    QChar cellSep;
     bool haveExtent = false;
     int lineNo = 0;
     while (!in.atEnd()) {
@@ -141,7 +177,11 @@ MatrixLoadResult loadMatrixFile(const QString& fileName)
             }
             continue;
         }
-        const QStringList parts = line.split(sep, Qt::SkipEmptyParts);
+        // One separator for the whole file (from the first row). With
+        // commas / semicolons / tabs an empty cell is a missing value (NaN),
+        // not a merged separator, so columns never shift.
+        if (cellSep.isNull()) cellSep = detectSeparator(line);
+        const QStringList parts = splitFields(line, cellSep);
         if (m.nx == 0) m.nx = int(parts.size());
         if (parts.size() != m.nx) {
             result.error = QString("Line %1 has %2 values, expected %3").arg(lineNo).arg(parts.size()).arg(m.nx);
@@ -149,12 +189,12 @@ MatrixLoadResult loadMatrixFile(const QString& fileName)
         }
         for (const QString& p : parts) {
             bool ok = false;
-            const double v = p.toDouble(&ok);
-            if (!ok && p.toLower() != "nan") {
+            const double v = parseCell(p, &ok);  // empty / "nan" -> NaN
+            if (!ok) {
                 result.error = QString("Line %1 is not numeric").arg(lineNo);
                 return result;
             }
-            m.z.push_back(ok ? v : std::numeric_limits<double>::quiet_NaN());
+            m.z.push_back(v);
         }
         ++m.ny;
     }

@@ -26,6 +26,10 @@ QChar detectSeparator(const QString& line);
 // Splits on `sep` keeping empty fields (",," is a missing value); quotes are
 // stripped. With ' ' runs of whitespace separate fields.
 QStringList splitFields(const QString& line, QChar sep);
+// Splits a header line; for space-separated files whose names contain single
+// spaces ("time (s)  value"), falls back to runs of 2+ spaces when that
+// matches the number of data columns.
+QStringList splitHeader(const QString& line, QChar sep, qsizetype columns);
 // Number or NaN for empty / "nan" cells; sets *ok = false for other text.
 double parseCell(const QString& cell, bool* ok);
 
