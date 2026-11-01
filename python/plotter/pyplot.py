@@ -181,14 +181,30 @@ class PltAxes:
                 lines.append(self._ax.plot(x, col, **_common(dict(opts), self._ax)))
         return lines
 
-    def scatter(self, x, y, s=None, c=None, marker="o", **kw):
+    def scatter(self, x, y, s=None, c=None, marker="o", cmap=None, vmin=None, vmax=None, **kw):
         if c is not None:
             arr = _np.asarray(c)
             if arr.dtype.kind in "fiu" and arr.ndim == 1 and arr.size not in (3, 4):
-                # One value per point (colour-mapped in matplotlib) is not supported.
-                import warnings
-                warnings.warn("plotter.pyplot.scatter: per-point colours are not supported; "
-                              "using a single colour", stacklevel=2)
+                # One value per point: colour-mapped in 32 steps (one dataset per
+                # step, sharing the label of the first).
+                x, y, v = (_np.asarray(a, dtype=float) for a in (x, y, arr))
+                lo = _np.nanmin(v) if vmin is None else vmin
+                hi = _np.nanmax(v) if vmax is None else vmax
+                steps = 32
+                colours = _plotter._plotter._colormap_colors(cmap or "viridis", steps)
+                idx = _np.clip(((v - lo) / ((hi - lo) or 1) * (steps - 1)).round(), 0, steps - 1).astype(int)
+                size = None if s is None else float(_np.sqrt(_np.mean(s)))
+                label = kw.pop("label", None)
+                opts = _common(kw, self._ax)
+                first = None
+                for k in sorted(set(idx.tolist())):
+                    m = idx == k
+                    line = self._ax.plot(x[m], y[m], style="none", marker=_FMT_MARKERS.get(marker, "o"),
+                                         markersize=size, color=colours[k],
+                                         label=str(label) if (first is None and label is not None) else None,
+                                         **{kk: vv for kk, vv in opts.items() if kk not in ("style", "marker", "color")})
+                    first = first or line
+                return first
             else:
                 kw["color"] = c
         size = None if s is None else float(_np.sqrt(_np.mean(s)))
@@ -371,6 +387,57 @@ class PltAxes:
         if label is not None:
             m.label = str(label)
         return m
+
+    def hlines(self, y, xmin, xmax, colors=None, linestyles="-", label=None, **kw):
+        """Horizontal segments from xmin to xmax at each y (one dataset)."""
+        y = _np.atleast_1d(_np.asarray(y, dtype=float))
+        x0 = _np.broadcast_to(_np.asarray(xmin, dtype=float), y.shape)
+        x1 = _np.broadcast_to(_np.asarray(xmax, dtype=float), y.shape)
+        xs = _np.column_stack([x0, x1, _np.full_like(y, _np.nan)]).ravel()
+        ys = _np.column_stack([y, y, _np.full_like(y, _np.nan)]).ravel()
+        return self.plot(xs, ys, color=colors, linestyle=linestyles, label=label, **kw)[0]
+
+    def vlines(self, x, ymin, ymax, colors=None, linestyles="-", label=None, **kw):
+        """Vertical segments from ymin to ymax at each x (one dataset)."""
+        x = _np.atleast_1d(_np.asarray(x, dtype=float))
+        y0 = _np.broadcast_to(_np.asarray(ymin, dtype=float), x.shape)
+        y1 = _np.broadcast_to(_np.asarray(ymax, dtype=float), x.shape)
+        xs = _np.column_stack([x, x, _np.full_like(x, _np.nan)]).ravel()
+        ys = _np.column_stack([y0, y1, _np.full_like(x, _np.nan)]).ravel()
+        return self.plot(xs, ys, color=colors, linestyle=linestyles, label=label, **kw)[0]
+
+    def axvspan(self, xmin, xmax, ymin=0, ymax=1, alpha=0.25, color=None, label=None, **kw):
+        """Shaded vertical band from xmin to xmax over the current y range."""
+        lo, hi = self._ax.ylim()
+        return self._ax.fill_between([xmin, xmax], [hi, hi], [lo, lo], color=_mpl_color(color),
+                                     alpha=alpha, label=None if label is None else str(label))
+
+    def axhspan(self, ymin, ymax, xmin=0, xmax=1, alpha=0.25, color=None, label=None, **kw):
+        """Shaded horizontal band from ymin to ymax over the current x range."""
+        lo, hi = self._ax.xlim()
+        return self._ax.fill_between([lo, hi], [ymax, ymax], [ymin, ymin], color=_mpl_color(color),
+                                     alpha=alpha, label=None if label is None else str(label))
+
+    def fill_betweenx(self, y, x1, x2=0, alpha=0.3, color=None, label=None, **kw):
+        """Area between two curves x1(y) and x2(y) (a closed, filled outline)."""
+        y = _np.asarray(y, dtype=float)
+        x1 = _np.broadcast_to(_np.asarray(x1, dtype=float), y.shape)
+        x2 = _np.broadcast_to(_np.asarray(x2, dtype=float), y.shape)
+        xs = _np.concatenate([x1, x2[::-1], x1[:1]])
+        ys = _np.concatenate([y, y[::-1], y[:1]])
+        col = _mpl_color(color) or self._ax._take_color()
+        r, g, b, _ = _plotter._plotter._rgba(col)
+        return self._ax.plot(xs, ys, color=col, fill=(r, g, b, alpha), style="none",
+                             label=None if label is None else str(label))
+
+    def set_aspect(self, *_, **__):
+        pass  # the aspect ratio follows the window / figure size
+
+    def minorticks_on(self):
+        self.figure._fig.set_style({"xtick.minor.visible": True, "ytick.minor.visible": True})
+
+    def minorticks_off(self):
+        self.figure._fig.set_style({"xtick.minor.visible": False, "ytick.minor.visible": False})
 
     def axvline(self, x=0, ymin=0, ymax=1, **kw):
         # ymin / ymax (partial lines) are accepted; markers always span the panel.
@@ -664,7 +731,7 @@ class PltAxes:
 
 class _PltFigure:
     def __init__(self, figsize=None, num=None):
-        w, h = figsize if figsize is not None else (8.0, 6.0)
+        w, h = figsize if figsize is not None else _DEFAULT_FIGSIZE
         self._fig = _plotter.figure(None if num is None else str(num),
                                     size=(int(w * _DPI), int(h * _DPI)))
         self._size = (int(w * _DPI), int(h * _DPI))
@@ -751,6 +818,15 @@ class _PltFigure:
     def legend(self, *args, **kw):
         """Figure legend: shown on the first panel (plotter legends live inside a panel)."""
         return self.axes[0].legend(*args, **kw)
+
+    def colorbar(self, mappable=None, ax=None, label=None, **kw):
+        target = ax if ax is not None else self.gca()
+        return target.colorbar(mappable, label=label, **kw)
+
+    def text(self, x, y, s, **kw):
+        """Text at figure fraction (x, y) (approximated on the first panel)."""
+        ax = self.axes[0]
+        return ax.text(x, y, s, transform=ax.transAxes, **kw)
 
     def subplots_adjust(self, *_, **__):
         pass  # layout is automatic; use subplots(gridspec_kw=...) for spacing
@@ -915,6 +991,51 @@ contour = _ax_call("contour")
 contourf = _ax_call("contourf")
 imshow = _ax_call("imshow")
 pcolormesh = _ax_call("pcolormesh")
+
+
+hlines = _ax_call("hlines")
+vlines = _ax_call("vlines")
+axvspan = _ax_call("axvspan")
+axhspan = _ax_call("axhspan")
+fill_betweenx = _ax_call("fill_betweenx")
+minorticks_on = _ax_call("minorticks_on")
+minorticks_off = _ax_call("minorticks_off")
+
+
+def figtext(x, y, s, **kw):
+    return gcf().text(x, y, s, **kw)
+
+
+class _RcParams(dict):
+    """Minimal matplotlib.rcParams: the common keys map to plotter style keys
+    (applied to new figures and the current one); others are kept and ignored."""
+
+    _MAP = {"font.size": "font.size", "font.family": "font.family", "axes.labelsize": "axes.labelsize",
+            "axes.titlesize": "axes.titlesize", "axes.linewidth": "axes.linewidth",
+            "axes.grid": "axes.grid", "lines.linewidth": "lines.linewidth",
+            "lines.markersize": "lines.markersize", "legend.fontsize": "legend.fontsize",
+            "legend.frameon": "legend.frameon", "xtick.labelsize": "xtick.labelsize",
+            "ytick.labelsize": "ytick.labelsize", "xtick.direction": "xtick.direction",
+            "ytick.direction": "ytick.direction", "xtick.minor.visible": "xtick.minor.visible",
+            "ytick.minor.visible": "ytick.minor.visible"}
+
+    def __setitem__(self, key, value):
+        super().__setitem__(key, value)
+        if key == "figure.figsize":
+            global _DEFAULT_FIGSIZE
+            _DEFAULT_FIGSIZE = tuple(value)
+        elif key in self._MAP:
+            style.set({self._MAP[key]: value})
+            if _current is not None and not _current.closed:
+                _current._fig.set_style({self._MAP[key]: value})
+
+    def update(self, *args, **kw):
+        for k, v in dict(*args, **kw).items():
+            self[k] = v
+
+
+rcParams = _RcParams()
+_DEFAULT_FIGSIZE = (8.0, 6.0)
 
 
 def colorbar(mappable=None, label=None, ax=None, **kw):

@@ -1038,7 +1038,13 @@ ObjectId FigureWindow::openBruker(const QString& path, QString* error)
     m_editor->undoStack()->beginMacro("Open Bruker spectrum");
     const ObjectId id = m_editor->addMatrix(std::move(s.matrix));
     AxesInfo a = m_model->axesInfo();
-    auto axisLabel = [](const QString& nuc, const char* dim) {
+    auto axisLabel = [](const QString& nucIn, const char* dim) {
+        // "1H" -> "¹H", "13C" -> "¹³C" (mass number as a superscript, as printed in papers).
+        static const QString sup = QStringLiteral("⁰¹²³⁴⁵⁶⁷⁸⁹");
+        QString nuc;
+        int i = 0;
+        for (; i < nucIn.size() && nucIn[i].isDigit(); ++i) nuc += sup[nucIn[i].digitValue()];
+        nuc += nucIn.mid(i);
         return nuc.isEmpty() ? QString("%1 (ppm)").arg(dim) : QString("%1 %2 (ppm)").arg(dim, nuc);
     };
     a.xLabel = axisLabel(s.nucleusF2, "F2");

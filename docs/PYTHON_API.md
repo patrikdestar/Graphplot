@@ -105,7 +105,7 @@ Plotting options:
 - Images: `image=True` draws a colour map under the contours, `contours=False`
   the image alone; `cmap` is `'auto'` (white–blue, or blue–white–red for
   signed data), `'viridis'`, `'magma'`, `'inferno'`, `'plasma'`, `'cividis'`,
-  `'gray'`, `'blues'` or `'rdbu'` (`'_r'` reverses); `vmin`/`vmax` fix the
+  `'gray'`, `'greys'`, `'blues'`, `'reds'`, `'greens'`, `'oranges'`, `'purples'`, `'rdbu'`, `'coolwarm'`, `'bwr'`, `'seismic'`, `'hot'`, `'jet'` or `'turbo'` (`'_r'` reverses); `vmin`/`vmax` fix the
   colour limits (diverging maps are otherwise centred on zero);
   `colorbar=True` shows the scale beside the panel, labelled with the name.
   The `Contour` handle has matching properties: `cmap`, `contours`,
@@ -320,13 +320,13 @@ import plotter.pyplot as plt
 | Supported | Not supported |
 |---|---|
 | `figure`, `subplots` (incl. `gridspec_kw` height ratios / hspace), `subplot(211)`, `fig.add_subplot`, `clf`, `cla`, `suptitle`, `get_fignums`, `ion`/`ioff`/`draw` (no-ops), `fig.set_size_inches`, `fig.legend`, `gcf`, `gca`, `sca`, `close` (figure, number, name or `'all'`), `show`, `pause`, `savefig(dpi=, format=)` to a path or a binary file object | non-uniform `pcolormesh` grids |
-| `plot` with format strings (`'r--o'`, `'C1--'`, several x/y/fmt groups), `step`, `bar`, `barh`, `semilogx`/`semilogy`/`loglog`, `axis([...])`, `scatter`, `errorbar(fmt=)`, `hist` (one or several datasets; `step`, `stepfilled`/`bar`, `errorbar`), `stairs` | polar and 3D axes |
+| `plot` with format strings (`'r--o'`, `'C1--'`, several x/y/fmt groups), `step`, `bar` (categories, colour lists, `yerr`), `barh`, `semilogx`/`semilogy`/`loglog`, `axis([...])`, `hlines`/`vlines`, `axvspan`/`axhspan` (cover the range at call time), `fill_betweenx`, `scatter` (incl. `c=values, cmap=`), `errorbar(fmt=)`, `hist` (one or several datasets; `step`, `stepfilled`/`bar`, `errorbar`), `stairs` | polar and 3D axes |
 | `fill_between` (incl. `where=`), `contour`/`contourf` (X, Y, Z), `imshow` (origin, extent, cmap, vmin/vmax), `pcolormesh` (uniform grids, edges or centres), `colorbar(mappable, label=)`, `axhline`, `axvline`, `text` (incl. `transform=ax.transAxes`), `annotate` | twin axes, RGB images |
-| `xlabel`, `ylabel`, `title`, `xlim`, `ylim`, `xscale`, `yscale`, `legend(labels, loc=name or code, frameon=)`, `ax.set(...)`, `xticks`/`yticks`, `ax.set_xticks`/`set_xticklabels`, `grid`, `plt.style.use`; colours `'C0'`…, `'tab:blue'`…, `'0.5'` | `rcParams` (use `plotter.style.set`) |
+| `xlabel`, `ylabel`, `title`, `xlim`, `ylim`, `xscale`, `yscale`, `legend(labels, loc=name or code, frameon=)`, `ax.set(...)`, `xticks`/`yticks`, `minorticks_on`/`off` (figure-wide), `figtext`, `rcParams` (common keys map to style keys), `ax.set_xticks`/`set_xticklabels`, `grid`, `plt.style.use`; colours `'C0'`…, `'tab:blue'`…, `'0.5'` | `rcParams` (use `plotter.style.set`) |
 
 Axes methods use the matplotlib names (`set_xlabel`, `set_xlim`,
 `set_yscale`, `invert_xaxis`, `get_xlim`, `autoscale`, …). `suptitle` sets the
-first panel's title; `tight_layout`, `relim` and `tick_params` are accepted
+figure-wide title; `tight_layout`, `relim` and `tick_params` are accepted
 and do nothing (layout is automatic; ticks come from the style).
 `figure(num=...)` returns the open figure with that number or name. `ax.panel` and `fig.native` give access to
 the full plotter API (peaks, regions, undo, styles).

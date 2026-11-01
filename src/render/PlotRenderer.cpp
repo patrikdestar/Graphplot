@@ -1170,7 +1170,9 @@ void PlotRenderer::applyStyle()
         applyNumberFormat(axis, st);
         if (auto t = axis->ticker().dynamicCast<StyledTicker>()) {
             t->unicodeMinus = st.unicodeMinus;
-            t->setTickCount(std::max(1, ts.count));
+            int count = std::max(1, ts.count);
+            if (!isX && m_maxTicksY > 0) count = std::min(count, m_maxTicksY);  // short panels (timeline rows)
+            t->setTickCount(count);
         }
         axis->grid()->setPen(cosmetic(st.gridColor, st.gridWidth, gridPenStyle(st.gridStyle)));
         axis->grid()->setSubGridPen(cosmetic(st.minorGridColor, st.gridWidth, gridPenStyle(st.gridStyle)));

@@ -62,6 +62,15 @@ public:
                                                                                        : "mm:ss.zzz");
         QCPAxisTickerDateTime::generate(range + origin, locale, formatChar, precision, ticks, subTicks,
                                         tickLabels);
+        // Ticks on whole seconds need no ".000".
+        const bool wholeSeconds = std::all_of(ticks.begin(), ticks.end(), [](double t) {
+            return std::abs(t - std::round(t)) < 1e-6;
+        });
+        if (wholeSeconds && span <= 120 && span > 2) {
+            setDateTimeFormat("hh:mm:ss");
+            QCPAxisTickerDateTime::generate(range + origin, locale, formatChar, precision, ticks, subTicks,
+                                            tickLabels);
+        }
         for (double& t : ticks) t -= origin;
         if (subTicks)
             for (double& t : *subTicks) t -= origin;
@@ -163,6 +172,14 @@ Timeline::Timeline(FigureWindow* window) : QObject(window), m_win(window), m_plo
         m_navRenderer->setExportMode(on);
         applyThemeColors();
         rebuildPinVisuals();
+    });
+
+    // Short rows get fewer y ticks (about one per 35 px) so labels never overlap.
+    connect(m_plot, &QCustomPlot::afterLayout, this, [this] {
+        for (int row : m_order) {
+            PlotRenderer* r = rowRenderer(row);
+            r->setMaxTicksY(std::max(2, r->axisRect()->rect().height() / 35));
+        }
     });
 
     // Time-only zooming in rows: Y follows the data (auto-fit) or Shift+wheel.

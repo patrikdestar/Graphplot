@@ -768,6 +768,18 @@ PYBIND11_MODULE(_plotter, mod)
         inGui([&] { Appearance::instance()->setTooltipsEnabled(on, save); });
     });
 
+    mod.def("_colormap_colors", [](const std::string& name, int n) {
+        // n colours sampled evenly from a colour map (for per-point colours).
+        QCPColorGradient g;
+        if (!colormapGradient(QString::fromStdString(name).toLower(), false, &g))
+            throw py::value_error("unknown colour map '" + name + "'");
+        std::vector<std::string> out;
+        for (int i = 0; i < n; ++i) {
+            const double v = n > 1 ? double(i) / (n - 1) : 0.5;
+            out.push_back(QColor::fromRgba(g.color(v, QCPRange(0, 1))).name().toStdString());
+        }
+        return out;
+    });
     mod.def("_headless", [] {
         // No screen: windows can never be closed by a user (CI, servers).
         const QString p = QGuiApplication::platformName();

@@ -230,7 +230,7 @@ class PlotterTests(unittest.TestCase):
             self.assertAlmostEqual(y1, 160.0 - (si1 - 1) * 24000.0 / (150.9 * si1))
         self.assertTrue(self.fig.x_reversed and self.fig.y_reversed)
         self.assertFalse(self.fig.diagonal)  # heteronuclear
-        self.assertEqual(self.fig.xlabel, "F2 1H (ppm)")
+        self.assertEqual(self.fig.xlabel, "F2 ¹H (ppm)")  # mass number as a superscript
         with self.assertRaises(RuntimeError):
             self.fig.open_bruker("/nonexistent")
 
@@ -1034,6 +1034,24 @@ class PlotterTests(unittest.TestCase):
         self.assertEqual(h.suptitle, "Run 42")
         h.close()
 
+    def test_pyplot_round6_additions(self):
+        import plotter.pyplot as plt
+        plt.rcParams["font.size"] = 11
+        plt.figure()
+        x = np.linspace(0, 1, 50)
+        first = plt.scatter(x, x, c=x, cmap="coolwarm", label="pts")
+        self.assertEqual(first.label, "pts")
+        self.assertGreater(len(plt.gca().get_lines()), 5)  # colour-mapped in steps
+        plt.hlines([0.2, 0.4], 0, 1)
+        plt.vlines([0.5], 0, 1)
+        plt.axvspan(0.1, 0.2)
+        plt.fill_betweenx(x, x, x + 0.1)
+        plt.minorticks_on()
+        plt.figtext(0.1, 0.1, "note")
+        plt.gcf().colorbar(plt.gca().imshow(np.eye(3)))
+        plt.close("all")
+        plt.rcParams["font.size"] = 10
+
     def test_pyplot_compat_round2(self):
         import io
         import plotter.pyplot as plt
@@ -1087,8 +1105,7 @@ class PlotterTests(unittest.TestCase):
         self.assertEqual(c.n_levels, 5)
         c2 = ax.contour(xx, yy, np.exp(-(xx ** 2 + yy ** 2)), levels=[0.1, 0.2, 0.4, 0.8])
         self.assertEqual(sorted(c2.levels()), [0.1, 0.2, 0.4, 0.8])  # exactly the levels asked for
-        with self.assertWarns(UserWarning):
-            plt.scatter([1, 2, 3, 4, 5], [1, 2, 3, 4, 5], c=[1, 2, 3, 4, 5])  # per-point values
+        plt.scatter([1, 2, 3, 4, 5], [1, 2, 3, 4, 5], c=[1, 2, 3, 4, 5])  # per-point values: colour-mapped
         plt.close("all")
 
     def test_savefig(self):

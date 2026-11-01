@@ -20,6 +20,17 @@ const Map kMaps[] = {
     {"plasma", {"#0d0887", "#46039f", "#7201a8", "#9c179e", "#bd3786", "#d8576b", "#ed7953", "#fb9f3a", "#fdca26", "#f0f921"}},
     {"cividis", {"#00224e", "#123570", "#3b496c", "#575d6d", "#707173", "#8a8678", "#a59c74", "#c3b369", "#e1cc55", "#fee838"}},
     {"gray", {"#000000", "#ffffff"}},
+    {"greys", {"#ffffff", "#d9d9d9", "#969696", "#525252", "#000000"}},
+    {"reds", {"#fff5f0", "#fcbba1", "#fb6a4a", "#cb181d", "#67000d"}},
+    {"greens", {"#f7fcf5", "#c7e9c0", "#74c476", "#238b45", "#00441b"}},
+    {"oranges", {"#fff5eb", "#fdd0a2", "#fd8d3c", "#d94801", "#7f2704"}},
+    {"purples", {"#fcfbfd", "#dadaeb", "#9e9ac8", "#6a51a3", "#3f007d"}},
+    {"hot", {"#0b0000", "#ff0000", "#ffff00", "#ffffff"}},
+    {"turbo", {"#30123b", "#4662d7", "#36aaf9", "#1ae4b6", "#72fe5e", "#c8ef34", "#faba39", "#f66b19", "#ca2a04", "#7a0403"}},
+    {"jet", {"#000080", "#0000ff", "#00ffff", "#ffff00", "#ff0000", "#800000"}},
+    {"coolwarm", {"#3b4cc0", "#7396f5", "#b0cbfc", "#dddcdc", "#f6bfa6", "#ea7b60", "#b40426"}},
+    {"bwr", {"#0000ff", "#ffffff", "#ff0000"}},
+    {"seismic", {"#00004c", "#0000ff", "#ffffff", "#ff0000", "#7f0000"}},
     {"blues", {"#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"}},
     // As matplotlib's RdBu: red for low values, blue for high ones ("rdbu_r" is the reverse).
     {"rdbu", {"#67001f", "#b2182b", "#d6604d", "#f4a582", "#f7f7f7", "#92c5de", "#4393c3", "#2166ac", "#053061"}},
@@ -40,7 +51,8 @@ bool colormapIsDiverging(const QString& nameIn, bool signedData)
     if (name.endsWith("_r")) name.chop(2);
     // Centred on zero only for data with both signs (otherwise the range is
     // the data's, and half the map would be unused).
-    return signedData && (name == "rdbu" || name.isEmpty() || name == "auto");
+    return signedData && (name == "rdbu" || name == "coolwarm" || name == "bwr" || name == "seismic" ||
+                          name.isEmpty() || name == "auto");
 }
 
 bool colormapGradient(const QString& nameIn, bool signedData, QCPColorGradient* out)

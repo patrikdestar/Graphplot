@@ -122,6 +122,14 @@ public:
     // Multi-panel figures: the panel draws its title above its own frame (and
     // the figure header shows the suptitle); single panels use the header.
     void setOwnTitle(bool on);
+    // Upper limit for the number of y ticks (0 = the style's); short panels
+    // such as timeline rows use fewer so labels do not overlap.
+    void setMaxTicksY(int n)
+    {
+        if (n == m_maxTicksY) return;
+        m_maxTicksY = n;
+        applyStyle();
+    }
     // Draw the region also in exports (default: no, it is a selection aid).
     void setRegionInExports(bool on) { m_regionInExports = on; }
 
@@ -230,6 +238,7 @@ private:
     bool m_autoHome = true;
     bool m_regionInExports = false;
     bool m_ownTitle = false;
+    int m_maxTicksY = 0;
     QList<PlotRenderer*> m_shareX, m_shareY;
     // The view follows the data (re-fits when data is added or changed) until
     // the user or code sets the view; autoscale() resumes following.
