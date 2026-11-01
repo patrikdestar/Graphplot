@@ -112,10 +112,10 @@ public:
                   QVector<double>& ticks, QVector<double>* subTicks, QVector<QString>* tickLabels) override
     {
         const double ratio = range.lower > 0 ? range.upper / range.lower : 0;
-        if (ratio > 0 && ratio < 3) {  // less than half a decade: evenly spaced round ticks
-            m_linear.setTickCount(5);
+        if (ratio > 0 && ratio < 10) {  // under a decade: evenly spaced round ticks
+            m_linear.setTickCount(tickCount());
             m_linear.generate(range, locale, 'g', 6, ticks, subTicks, nullptr);
-        } else if (ratio > 0 && ratio < 100) {  // one or two decades: 1-2-5 ticks (0.2, 0.5, 1, 2, 5)
+        } else if (ratio > 0 && ratio < 100) {  // one or two decades: 1-2-5 ticks (10, 20, 50, 100)
             ticks.clear();
             const int k0 = int(std::floor(std::log10(range.lower))), k1 = int(std::ceil(std::log10(range.upper)));
             for (int k = k0; k <= k1; ++k)
@@ -135,26 +135,44 @@ public:
             QCPAxisTickerLog::generate(range, locale, formatChar, precision, ticks, subTicks, tickLabels);
             return;
         }
-        if (tickLabels) {
-            tickLabels->clear();
-            for (double t : ticks) tickLabels->push_back(plain(t, locale));
-        }
+        if (tickLabels) *tickLabels = labelsFor(ticks, locale);
     }
 
-    // Plain decimals in an everyday range (no mixed "0.00015" / "5·10⁻⁵");
-    // exponent form (drawn as 10ⁿ) only far outside it.
-    static QString plain(double v, const QLocale& locale)
+    // One format for the whole axis: plain decimals when every tick is in an
+    // everyday range, otherwise mantissa·10^n for all; with enough digits that
+    // neighbouring labels differ.
+    static QVector<QString> labelsFor(const QVector<double>& ticks, const QLocale& locale)
     {
-        const double a = std::abs(v);
-        if (a == 0 || (a >= 1e-5 && a < 1e7)) {
-            QString s = locale.toString(v, 'f', std::max(0, 6 - int(std::floor(std::log10(std::max(a, 1e-300)))) - 1));
+        QVector<QString> out;
+        if (ticks.isEmpty()) return out;
+        double minStep = std::numeric_limits<double>::infinity(), maxAbs = 0;
+        bool plainRange = true;
+        for (int i = 0; i < ticks.size(); ++i) {
+            const double a = std::abs(ticks[i]);
+            maxAbs = std::max(maxAbs, a);
+            if (a != 0 && (a < 1e-5 || a >= 1e7)) plainRange = false;
+            if (i > 0) minStep = std::min(minStep, std::abs(ticks[i] - ticks[i - 1]));
+        }
+        if (!std::isfinite(minStep) || minStep <= 0) minStep = maxAbs > 0 ? maxAbs : 1;
+        auto trim = [&locale](QString s) {
             if (s.contains(locale.decimalPoint())) {
                 while (s.endsWith('0')) s.chop(1);
                 if (s.endsWith(locale.decimalPoint())) s.chop(1);
             }
             return s;
+        };
+        if (plainRange) {
+            const int decimals = std::clamp(int(std::ceil(-std::log10(minStep))) + 1, 0, 12);
+            for (double t : ticks) out << trim(locale.toString(t, 'f', decimals));
+        } else {
+            const int digits = std::clamp(int(std::ceil(std::log10(maxAbs / minStep))) + 1, 1, 14);
+            for (double t : ticks) {
+                QString e = locale.toString(t, 'e', digits);  // "1.2345e+07", drawn as 1.2345·10^7
+                const int k = e.indexOf('e');
+                out << trim(e.left(k)) + e.mid(k);
+            }
         }
-        return locale.toString(v, 'g', 3);
+        return out;
     }
 
 private:
@@ -2067,41 +2085,67 @@ void PlotRenderer::setMaxTicksY(int n)
 void PlotRenderer::fitTickCounts()
 {
     // Fewer ticks where labels would run together: by label width on x, by
-    // panel height on y (small ratio panels). Called after each layout pass.
+    // panel height on y (small ratio panels). Called after each layout pass;
+    // repeats within the pass because fewer ticks can mean wider labels.
     const QRect ar = m_rect->rect();
     if (ar.width() < 20 || ar.height() < 20) return;
     const Style st = displayStyle();
-    bool changed = false;
-    auto apply = [&](QCPAxis* axis, int& autoMax, int styleCount, int limit) {
-        auto t = axis->ticker().dynamicCast<StyledTicker>();
-        if (!t) return;
-        const int want = limit >= styleCount ? 0 : std::max(2, limit);
-        if (want == autoMax) return;
-        autoMax = want;
+    // Any automatic ticker (numbers, dates, log); not fixed or text ticks.
+    auto adjustable = [](QCPAxis* axis) -> QSharedPointer<QCPAxisTicker> {
+        QSharedPointer<QCPAxisTicker> t = axis->ticker();
+        if (!t || t.dynamicCast<QCPAxisTickerText>() || t.dynamicCast<QCPAxisTickerFixed>()) return {};
+        return t;
+    };
+    auto setCount = [&](QCPAxis* axis, int styleCount, int limit) {
         int count = std::max(1, styleCount);
         if (axis == m_y && m_maxTicksY > 0) count = std::min(count, m_maxTicksY);
-        if (want > 0) count = std::min(count, want);
-        t->setTickCount(count);
-        changed = true;
+        if (limit > 0) count = std::min(count, limit);
+        if (auto t = adjustable(axis)) t->setTickCount(count);
     };
-    if (m_x->visible() && std::abs(m_x->tickLabelRotation()) < 1) {
-        const QFontMetrics fm(m_x->tickLabelFont());
-        int widest = 0;
-        for (const QString& l : m_x->tickVectorLabels()) widest = std::max(widest, fm.horizontalAdvance(l));
-        const int styleCount = std::max(1, st.xtick.count);
-        const int slot = widest + fm.horizontalAdvance("00");  // label plus a gap
-        if (widest > 0) {
-            // Shrink when crowded; relax only with clear room (no back-and-forth).
-            const int fits = ar.width() / std::max(1, slot);
-            const int labels = m_x->tickVectorLabels().size();
-            if (labels > fits) apply(m_x, m_autoTicksX, styleCount, fits);
-            else if (m_autoTicksX > 0 && fits >= 2 * labels) apply(m_x, m_autoTicksX, styleCount, fits / 2 + 1);
+    bool changed = false;
+    // x: by label width (horizontal labels only; rotation is the user's way out).
+    const int styleX = std::max(1, st.xtick.count);
+    if (adjustable(m_x)) {
+        if (!m_x->visible() || std::abs(m_x->tickLabelRotation()) >= 1) {
+            if (m_autoTicksX != 0) {
+                m_autoTicksX = 0;
+                setCount(m_x, styleX, 0);
+                changed = true;
+            }
+        } else {
+            const QFontMetrics fm(m_x->tickLabelFont());
+            for (int round = 0; round < 4; ++round) {
+                int widest = 0;
+                const QVector<QString> labels = m_x->tickVectorLabels();
+                for (const QString& l : labels) widest = std::max(widest, fm.horizontalAdvance(l));
+                if (widest == 0) break;
+                const int slot = widest + fm.horizontalAdvance("00");  // label plus a gap
+                const int fits = std::max(2, ar.width() / std::max(1, slot));
+                int want = m_autoTicksX;
+                if (labels.size() > fits)
+                    want = std::max(2, (m_autoTicksX > 0 ? std::min(m_autoTicksX - 1, fits) : fits));
+                else if (m_autoTicksX > 0 && fits >= 2 * labels.size())
+                    want = (fits / 2 + 1 >= styleX) ? 0 : fits / 2 + 1;  // clear room: relax
+                if (want == m_autoTicksX) break;
+                m_autoTicksX = want;
+                setCount(m_x, styleX, want);
+                m_rect->update(QCPLayoutElement::upPreparation);  // new tick vectors and labels
+                changed = true;
+                if (want == 2) break;
+            }
         }
     }
-    {
+    // y: by panel height.
+    if (adjustable(m_y)) {
         const QFontMetrics fm(m_y->tickLabelFont());
-        const int styleCount = std::max(1, st.ytick.count);
-        apply(m_y, m_autoTicksY, styleCount, ar.height() / std::max(1, 2 * fm.height()));
+        const int styleY = std::max(1, st.ytick.count);
+        const int limit = ar.height() / std::max(1, 2 * fm.height());
+        const int want = limit >= styleY ? 0 : std::max(2, limit);
+        if (want != m_autoTicksY) {
+            m_autoTicksY = want;
+            setCount(m_y, styleY, want);
+            changed = true;
+        }
     }
     if (changed) m_rect->update(QCPLayoutElement::upPreparation);
     fitEndLabels();

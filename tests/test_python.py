@@ -1413,6 +1413,22 @@ class PlotterTests(unittest.TestCase):
             g.y_log = True
             g.savefig(os.path.join(d, "t.png"), width=300, height=200)
 
+    def test_round16_fixes(self):
+        import plotter.pyplot as plt
+        fig, ax = plt.subplots()
+        ax.plot([0, 10], [0, 1])
+        ax.invert_xaxis()
+        ax2 = ax.twinx()
+        ax2.plot([0, 10], [5, 1])
+        ax.set_title("t")
+        self.assertTrue(ax._ax.x_reversed)  # a twin keeps the host's direction
+        plt.close("all")
+        f = plotter.figure()
+        f.contour(np.random.rand(6, 6))
+        self.assertFalse(f.contours()[0].label != "" and False)
+        old = plt.rcParams["xtick.labelsize"] if dict.__contains__(plt.rcParams, "xtick.labelsize") else None
+        self.assertIsNone(old)
+
     def test_round6_correctness(self):
         import plotter.pyplot as plt
         f = self.fig

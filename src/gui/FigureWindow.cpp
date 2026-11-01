@@ -19,6 +19,7 @@
 #include "render/Exporter.h"
 #include "render/PlotRenderer.h"
 
+#include <memory>
 #include <QActionGroup>
 #include <QApplication>
 #include <QCloseEvent>
@@ -135,17 +136,21 @@ void FigureWindow::wireAxes(const Axes& ax)
     // Shared axes share their direction too (invert_xaxis on one panel flips
     // all panels sharing that x). Partners follow through their models, so
     // undo of the original change brings them back as well.
-    connect(model, &PlotModel::axesInfoChanged, this, [this, renderer, model] {
-        if (!m_syncDirections) return;
+    // Only an actual change of direction is passed on (not every label edit).
+    auto last = std::make_shared<std::pair<bool, bool>>(model->axesInfo().xReversed, model->axesInfo().yReversed);
+    connect(model, &PlotModel::axesInfoChanged, this, [this, renderer, model, last] {
         const AxesInfo& info = model->axesInfo();
+        const bool xChanged = info.xReversed != last->first, yChanged = info.yReversed != last->second;
+        *last = {info.xReversed, info.yReversed};
+        if (!m_syncDirections || (!xChanged && !yChanged)) return;
         for (PlotRenderer* p : renderer->sharedX())
-            if (p->model()->axesInfo().xReversed != info.xReversed) {
+            if (xChanged && p->model()->axesInfo().xReversed != info.xReversed) {
                 AxesInfo o = p->model()->axesInfo();
                 o.xReversed = info.xReversed;
                 p->model()->setAxesInfo(o);
             }
         for (PlotRenderer* p : renderer->sharedY())
-            if (p->model()->axesInfo().yReversed != info.yReversed) {
+            if (yChanged && p->model()->axesInfo().yReversed != info.yReversed) {
                 AxesInfo o = p->model()->axesInfo();
                 o.yReversed = info.yReversed;
                 p->model()->setAxesInfo(o);
@@ -455,6 +460,7 @@ void FigureWindow::setGrid(const GridSpec& spec)
         PlotRenderer* r = cellRenderer(i);
         auto align = [](const QList<PlotRenderer*>& partners, PlotModel* m, bool x) {
             for (PlotRenderer* p : partners) {
+                if (p->twinHost()) continue;  // twins follow their host, they do not lead
                 const AxesInfo& lead = p->model()->axesInfo();
                 AxesInfo o = m->axesInfo();
                 bool& mine = x ? o.xReversed : o.yReversed;
@@ -700,6 +706,7 @@ int FigureWindow::createTwinPanel(int host)
     model->setStyle(m_axes[size_t(host)].model->style());
     AxesInfo info = model->axesInfo();
     info.gridVisible = false;  // the host draws the grid
+    info.xReversed = m_axes[size_t(host)].model->axesInfo().xReversed;  // the shared x keeps its direction
     model->setAxesInfo(info);
     auto* editor = new PlotEditor(model, m_stack, this);
     auto* renderer = new PlotRenderer(model, m_plot, rect, hostRenderer, this);
