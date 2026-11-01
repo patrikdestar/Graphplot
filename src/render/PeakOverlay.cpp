@@ -23,16 +23,27 @@ QPointF PeakOverlay::toPixel(const Peak& p) const
 
 QFont PeakOverlay::labelFont() const
 {
-    QFont f = mParentPlot->font();
+    QFont f = m_app.fontFamily.family().isEmpty() ? mParentPlot->font() : m_app.fontFamily;
     f.setPointSizeF(m_app.fontSize);
     return f;
+}
+
+const RichTextBlock& PeakOverlay::block(const QString& label) const
+{
+    auto it = m_cache.find(label);
+    if (it == m_cache.end()) {
+        if (m_cache.size() > 2000) m_cache.clear();
+        auto b = std::make_shared<RichTextBlock>();
+        b->set(label, labelFont(), m_app.math);
+        it = m_cache.insert(label, b);
+    }
+    return **it;
 }
 
 QRectF PeakOverlay::labelRect(const Peak& p) const
 {
     if (p.label.isEmpty()) return {};
-    const QFontMetricsF fm(labelFont());
-    const QRectF text = fm.boundingRect(QRectF(0, 0, 1e6, 1e6), Qt::AlignLeft | Qt::AlignTop, p.label);
+    const QSizeF text = block(p.label).size();
     // The offset is the label's bottom-left corner relative to the peak.
     const QPointF anchor = toPixel(p) + p.labelOffset;
     return QRectF(anchor.x(), anchor.y() - text.height(), text.width(), text.height());
@@ -65,8 +76,6 @@ void PeakOverlay::draw(QCPPainter* painter)
 {
     const auto& peaks = m_model->peaks();
     if (peaks.empty()) return;
-    const QFont font = labelFont();
-    painter->setFont(font);
     const QRect clip = clipRect();
     for (const Peak& p : peaks) {
         const QPointF c = toPixel(p);
@@ -94,8 +103,7 @@ void PeakOverlay::draw(QCPPainter* painter)
         painter->setBrush(QColor(255, 255, 255, 200));
         painter->drawRect(r.adjusted(-1, 0, 1, 0));
         painter->setBrush(Qt::NoBrush);
-        painter->setPen(hl ? m_app.highlight : m_app.labelColor);
-        painter->drawText(r, Qt::AlignLeft | Qt::AlignTop, p.label);
+        block(p.label).draw(painter, r.topLeft(), hl ? m_app.highlight : m_app.labelColor);
     }
 }
 

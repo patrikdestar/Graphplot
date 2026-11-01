@@ -4,6 +4,7 @@
 #include "commands/PlotEditor.h"
 #include "gui/FigureWindow.h"
 #include "model/PlotModel.h"
+#include "model/Style.h"
 #include "render/PlotRenderer.h"
 
 #include <QApplication>
@@ -116,6 +117,9 @@ int main(int argc, char** argv)
     parser.addPositionalArgument("files", "Column data files (CSV/TSV/whitespace), or Bruker 2D "
                                           "spectra (experiment folder, pdata/N folder or 2rr file).");
     parser.process(app);
+    QStringList styleErrors;
+    reloadDefaultStyle(&styleErrors);  // user default style file, if any
+    for (const QString& e : styleErrors) qWarning("style: %s", qPrintable(e));
 
     FigureWindow w;
     const QStringList files = parser.positionalArguments();

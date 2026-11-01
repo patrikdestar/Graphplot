@@ -42,7 +42,7 @@ std::optional<T> take(std::vector<T>& v, ObjectId id)
 
 }  // namespace
 
-PlotModel::PlotModel(QObject* parent) : QObject(parent) {}
+PlotModel::PlotModel(QObject* parent) : QObject(parent) { m_axes.gridVisible = m_style.grid; }
 
 // ---- Datasets ----------------------------------------------------------
 
@@ -106,7 +106,7 @@ bool PlotModel::setDatasetData(ObjectId id, QVector<double> x, QVector<double> y
     return true;
 }
 
-QColor PlotModel::takeNextDatasetColor() { return paletteColor(m_colorCounter++); }
+QColor PlotModel::takeNextDatasetColor() { return m_style.paletteColor(m_colorCounter++); }
 
 // ---- Matrices -------------------------------------------------------------
 
@@ -269,6 +269,13 @@ void PlotModel::setRegion(const Region& rIn)
     if (r == m_region) return;
     m_region = r;
     emit regionChanged();
+}
+
+void PlotModel::setStyle(const Style& s)
+{
+    if (s == m_style) return;
+    m_style = s;
+    emit styleChanged();
 }
 
 void PlotModel::setAxesInfo(const AxesInfo& info)

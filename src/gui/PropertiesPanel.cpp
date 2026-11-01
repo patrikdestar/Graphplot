@@ -702,8 +702,10 @@ void PropertiesPanel::refreshCurrentPage()
         }
         m_anX->setValue(a->x);
         m_anY->setValue(a->y);
-        m_anColor->setColor(a->color);
-        m_anFontSize->setValue(a->fontSize);
+        // Unset values follow the style; show the effective ones.
+        const Style& st = m_model->style();
+        m_anColor->setColor(a->color.isValid() ? a->color : st.annotationColor);
+        m_anFontSize->setValue(a->fontSize > 0 ? a->fontSize : st.annotationSize);
         break;
     }
     case ObjectKind::Region: {

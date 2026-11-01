@@ -273,6 +273,39 @@ class PlotterTests(unittest.TestCase):
             self.assertAlmostEqual(manual.x, 1.15, places=2)  # snapped to the maximum
             self.assertGreater(manual.intensity, c.base_level)
 
+    def test_styles(self):
+        self.assertIn("science", plotter.style.available())
+        keys = plotter.style.keys()
+        self.assertIn("xtick.direction", keys)
+        errors = self.fig.use_style("science")
+        self.assertEqual(errors, [])
+        self.assertEqual(self.fig.get_style_param("xtick.minor.visible"), "true")
+        self.fig.set_style({"font.size": 14, "axes.prop_cycle": ["red", (0, 0.5, 1.0)]},
+                           xtick_direction="out")
+        self.assertEqual(self.fig.get_style_param("xtick.direction"), "out")
+        self.assertEqual(self.fig.get_style_param("axes.prop_cycle"), "#e34948, #0080ff")
+        self.fig.undo()
+        self.assertEqual(self.fig.get_style_param("xtick.direction"), "in")
+        with self.assertRaises(ValueError):
+            self.fig.set_style({"axes.linewidth": "thick"})
+        with tempfile.TemporaryDirectory() as d:
+            fn = os.path.join(d, "s.gpstyle")
+            self.fig.save_style(fn)
+            with open(fn) as f:
+                self.assertIn("xtick.direction: in", f.read())
+            # global default affects new figures only
+            plotter.style.use(fn)
+            try:
+                g = plotter.figure()
+                self.assertEqual(g.get_style_param("xtick.direction"), "in")
+                self.assertEqual(self.fig.get_style_param("xtick.direction"), "in")
+                plotter.style.set({"font.size": 21})
+                self.assertEqual(plotter.style.get("font.size"), "21")
+                g.close()
+            finally:
+                plotter.style.reload()
+        self.assertEqual(plotter.style.get("font.size"), "10")
+
     def test_savefig(self):
         self.fig.plot(self.x, np.sin(self.x), label="s")
         self.fig.marker(50, label="M")

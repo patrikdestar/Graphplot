@@ -211,6 +211,22 @@ private:
     Region m_before, m_after;
 };
 
+class SetStyleCommand : public QUndoCommand {
+public:
+    SetStyleCommand(PlotModel* model, Style before, Style after, const QString& text,
+                    QUndoCommand* parent = nullptr)
+        : QUndoCommand(text, parent), m_model(model), m_before(std::move(before)),
+          m_after(std::move(after))
+    {
+    }
+    void redo() override { m_model->setStyle(m_after); }
+    void undo() override { m_model->setStyle(m_before); }
+
+private:
+    PlotModel* m_model;
+    Style m_before, m_after;
+};
+
 class SetAxesInfoCommand : public QUndoCommand {
 public:
     SetAxesInfoCommand(PlotModel* model, AxesInfo before, AxesInfo after,

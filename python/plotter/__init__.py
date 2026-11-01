@@ -37,9 +37,10 @@ import sys as _sys
 from ._plotter import Annotation, Contour, Figure, Line, Marker, Peak
 from ._plotter import process_events as _process_events
 from ._plotter import _run_until_closed
+from . import style
 
 __all__ = [
-    "figure", "show", "pause", "figures", "close_all",
+    "style", "figure", "show", "pause", "figures", "close_all",
     "Figure", "Line", "Contour", "Marker", "Annotation", "Peak",
 ]
 
@@ -127,6 +128,7 @@ def _region_mask(self: Figure, x):
 
 
 Figure.region_mask = _region_mask
+Figure.set_style = style._figure_set_style
 
 # IPython: "%gui plotter" keeps windows live in the terminal IPython shell.
 try:  # pragma: no cover - only when IPython is installed

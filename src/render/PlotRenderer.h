@@ -10,13 +10,14 @@
 
 #include <QHash>
 #include <QObject>
+#include <QFont>
 #include <QPointF>
 
 class QCustomPlot;
 class QCPAbstractPlottable;
 class QCPItemStraightLine;
-class QCPItemText;
 class QCPItemRect;
+class QCPItemText;
 class QCPLayer;
 class QCPTextElement;
 class QCPColorMap;
@@ -24,6 +25,9 @@ class QCPColorMap;
 namespace gp {
 
 class ContourPlottable;
+class RichTextItem;
+class HeaderElement;
+class RichAxisLabels;
 class PeakOverlay;
 
 struct ViewRange {
@@ -67,6 +71,9 @@ public:
     void setHighlight(const ObjectRef& ref);
     ObjectRef highlight() const { return m_highlight; }
 
+    // Fonts from the current style (also used by the GUI for consistency).
+    QFont styleFont(double pointSize, bool bold = false) const { return font(pointSize, bold); }
+
     // Temporarily hide selection highlighting (used for export).
     void setExportMode(bool on);
 
@@ -88,7 +95,7 @@ signals:
 private:
     struct MarkerVisual {
         QCPItemStraightLine* line = nullptr;
-        QCPItemText* label = nullptr;
+        RichTextItem* label = nullptr;
     };
     struct MatrixVisual {
         ContourPlottable* contour = nullptr;
@@ -126,6 +133,9 @@ private:
 
     void applyRegion();
     void applyAxesInfo();
+    void applyStyle();
+    void updateHeader();
+    QFont font(double pointSize, bool bold = false) const;
     void maybeCaptureHome();
 
     PlotModel* m_model;
@@ -133,14 +143,16 @@ private:
     QCPLayer* m_imageLayer = nullptr;
     QCPLayer* m_regionLayer = nullptr;
     QCPLayer* m_objectLayer = nullptr;
-    QCPTextElement* m_title = nullptr;
+    HeaderElement* m_header = nullptr;
+    RichAxisLabels* m_axisLabels = nullptr;
+    RichTextItem* m_insideLabel = nullptr;
     QCPItemStraightLine* m_diagonal = nullptr;
     PeakOverlay* m_peaks = nullptr;
 
     QHash<ObjectId, QCPAbstractPlottable*> m_plottables;
     QHash<ObjectId, MatrixVisual> m_matrices;
     QHash<ObjectId, MarkerVisual> m_markers;
-    QHash<ObjectId, QCPItemText*> m_annotations;
+    QHash<ObjectId, RichTextItem*> m_annotations;
     RegionVisual m_region;
 
     ObjectRef m_highlight;

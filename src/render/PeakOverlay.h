@@ -5,7 +5,11 @@
 #pragma once
 
 #include "model/PlotModel.h"
+#include "RichText.h"
 #include "qcustomplot.h"
+
+#include <QHash>
+#include <memory>
 
 namespace gp {
 
@@ -17,6 +21,8 @@ struct PeakAppearance {
     double lineWidth = 1.2;
     double fontSize = 9.0;    // points
     bool showLabels = true;
+    QFont fontFamily;         // label font (family/size from the style)
+    bool math = true;         // interpret $math$ in labels
 };
 
 class PeakOverlay : public QCPLayerable {
@@ -24,7 +30,11 @@ class PeakOverlay : public QCPLayerable {
 public:
     PeakOverlay(QCustomPlot* plot, QCPAxis* xAxis, QCPAxis* yAxis, PlotModel* model);
 
-    void setAppearance(const PeakAppearance& a) { m_app = a; }
+    void setAppearance(const PeakAppearance& a)
+    {
+        m_app = a;
+        m_cache.clear();
+    }
     const PeakAppearance& appearance() const { return m_app; }
     void setHighlight(ObjectId id) { m_highlight = id; }
     void setExportMode(bool on) { m_export = on; }
@@ -44,6 +54,7 @@ protected:
 private:
     QPointF toPixel(const Peak& p) const;
     QFont labelFont() const;
+    const RichTextBlock& block(const QString& label) const;
 
     QCPAxis* m_x;
     QCPAxis* m_y;
@@ -51,6 +62,7 @@ private:
     PeakAppearance m_app;
     ObjectId m_highlight = kInvalidId;
     bool m_export = false;
+    mutable QHash<QString, std::shared_ptr<RichTextBlock>> m_cache;  // laid-out labels
 };
 
 }  // namespace gp

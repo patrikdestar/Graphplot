@@ -34,6 +34,7 @@ add_library(graphplot_model STATIC
   src/model/Contour.h src/model/Contour.cpp
   src/model/BrukerReader.h src/model/BrukerReader.cpp
   src/model/PeakPicker.h src/model/PeakPicker.cpp
+  src/model/Style.h src/model/Style.cpp
   src/commands/Commands.h src/commands/Commands.cpp
   src/commands/PlotEditor.h src/commands/PlotEditor.cpp)
 target_include_directories(graphplot_model PUBLIC src)
@@ -46,10 +47,13 @@ add_library(graphplot_ui STATIC
   src/render/Exporter.h src/render/Exporter.cpp
   src/render/ContourPlottable.h src/render/ContourPlottable.cpp
   src/render/PeakOverlay.h src/render/PeakOverlay.cpp
+  src/render/RichText.h src/render/RichText.cpp
+  src/render/RichElements.h src/render/RichElements.cpp
   src/interaction/InteractionController.h src/interaction/InteractionController.cpp
   src/gui/Icons.h src/gui/Icons.cpp
   src/gui/PropertiesPanel.h src/gui/PropertiesPanel.cpp
   src/gui/PeakTable.h src/gui/PeakTable.cpp
+  src/gui/StyleEditor.h src/gui/StyleEditor.cpp
   src/gui/FigureWindow.h src/gui/FigureWindow.cpp)
 target_link_libraries(graphplot_ui PUBLIC graphplot_model qcustomplot Qt6::Widgets Qt6::Svg)
 

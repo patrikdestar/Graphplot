@@ -8,6 +8,7 @@
 #pragma once
 
 #include "PlotTypes.h"
+#include "Style.h"
 
 #include <QObject>
 #include <optional>
@@ -75,6 +76,10 @@ public:
     const Region& region() const { return m_region; }
     void setRegion(const Region& r);  // normalises xmin <= xmax
 
+    // ---- Style (all visual settings) -------------------------------------
+    const Style& style() const { return m_style; }
+    void setStyle(const Style& s);
+
     // ---- Axes labels / decorations ---------------------------------------
     const AxesInfo& axesInfo() const { return m_axes; }
     void setAxesInfo(const AxesInfo& info);
@@ -114,6 +119,7 @@ signals:
 
     void regionChanged();
     void axesInfoChanged();
+    void styleChanged();
 
 private:
     ObjectId newId() { return ++m_lastId; }
@@ -125,6 +131,7 @@ private:
     std::vector<Peak> m_peaks;
     Region m_region;
     AxesInfo m_axes;
+    Style m_style = defaultStyle();
     ObjectId m_lastId = 0;
     int m_colorCounter = 0;
 };

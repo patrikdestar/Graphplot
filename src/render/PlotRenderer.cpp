@@ -2,6 +2,7 @@
 
 #include "ContourPlottable.h"
 #include "PeakOverlay.h"
+#include "RichElements.h"
 #include "qcustomplot.h"
 
 #include <algorithm>
@@ -11,9 +12,6 @@ namespace gp {
 
 namespace {
 
-const QColor kInk(0x0b, 0x0b, 0x0b);
-const QColor kInkSecondary(0x52, 0x51, 0x4e);
-const QColor kGrid(0xe4, 0xe3, 0xde);
 const QColor kRegionFill(0x2a, 0x78, 0xd6, 38);
 const QColor kRegionEdge(0x2a, 0x78, 0xd6, 160);
 const QColor kHighlight(0x2a, 0x78, 0xd6);
@@ -42,6 +40,37 @@ QCPScatterStyle::ScatterShape toScatterShape(ScatterShape s)
     case ScatterShape::Diamond: return QCPScatterStyle::ssDiamond;
     }
     return QCPScatterStyle::ssNone;
+}
+
+// Tick labels: optional real minus sign ("−") as in typeset documents.
+class StyledTicker : public QCPAxisTicker {
+public:
+    bool unicodeMinus = true;
+
+protected:
+    QString getTickLabel(double tick, const QLocale& locale, QChar formatChar, int precision) override
+    {
+        QString s = QCPAxisTicker::getTickLabel(tick, locale, formatChar, precision);
+        // Leave exponent notation to QCustomPlot's "beautiful powers" parser.
+        if (unicodeMinus && !s.contains('e')) s.replace('-', QChar(0x2212));
+        return s;
+    }
+};
+
+Qt::PenStyle gridPenStyle(const QString& s)
+{
+    if (s == "--") return Qt::DashLine;
+    if (s == ":") return Qt::DotLine;
+    if (s == "-.") return Qt::DashDotLine;
+    return Qt::SolidLine;
+}
+
+Qt::Alignment locToAlignment(const QString& loc)
+{
+    Qt::Alignment a;
+    a |= loc.contains("upper") ? Qt::AlignTop : loc.contains("lower") ? Qt::AlignBottom : Qt::AlignVCenter;
+    a |= loc.contains("left") ? Qt::AlignLeft : loc.contains("right") ? Qt::AlignRight : Qt::AlignHCenter;
+    return a;
 }
 
 bool isSorted(const QVector<double>& v)
@@ -119,6 +148,10 @@ PlotRenderer::PlotRenderer(PlotModel* model, QCustomPlot* plot, QObject* parent)
         applyRegion();
         replotObjectLayers();
     });
+    connect(m_model, &PlotModel::styleChanged, this, [this] {
+        applyStyle();
+        replot();
+    });
     connect(m_model, &PlotModel::axesInfoChanged, this, [this] {
         applyAxesInfo();
         replot();
@@ -137,49 +170,31 @@ PlotRenderer::~PlotRenderer() = default;
 void PlotRenderer::setupAppearance()
 {
     QCustomPlot* p = m_plot;
-    p->setBackground(Qt::white);
-    p->setAntialiasedElements(QCP::aePlottables | QCP::aeItems | QCP::aeLegendItems);
+    p->setAntialiasedElements(QCP::aePlottables | QCP::aeItems | QCP::aeLegendItems |
+                              QCP::aeAxes | QCP::aeOther);
+    p->setNotAntialiasedElements(QCP::aeGrid);  // crisp 1-px grid lines
     p->setPlottingHints(QCP::phCacheLabels | QCP::phImmediateRefresh);
     p->setInteractions({});  // all interaction is handled by InteractionController
-    p->axisRect()->setupFullAxesBox(true);  // closed frame, ticks on all sides
-    p->axisRect()->setBackground(Qt::white);
-
-    QFont tickFont = p->font();
-    tickFont.setPointSizeF(9);
-    QFont labelFont = p->font();
-    labelFont.setPointSizeF(10);
-
+    p->axisRect()->setupFullAxesBox(true);  // closed frame
     for (QCPAxis* axis : p->axisRect()->axes()) {
-        QPen axisPen(kInkSecondary, 1);
-        axisPen.setCosmetic(true);
-        axis->setBasePen(axisPen);
-        axis->setTickPen(axisPen);
-        axis->setSubTickPen(axisPen);
-        axis->setTickLength(5, 0);  // inward ticks, typical for scientific plots
-        axis->setSubTickLength(3, 0);
-        axis->setTickLabelFont(tickFont);
-        axis->setTickLabelColor(kInkSecondary);
-        axis->setLabelFont(labelFont);
-        axis->setLabelColor(kInk);
-        QPen gridPen(kGrid, 1);
-        gridPen.setCosmetic(true);
-        axis->grid()->setPen(gridPen);
+        auto ticker = QSharedPointer<StyledTicker>::create();
+        axis->setTicker(ticker);
         axis->grid()->setZeroLinePen(Qt::NoPen);
-        axis->grid()->setSubGridVisible(false);
     }
     p->xAxis2->grid()->setVisible(false);
     p->yAxis2->grid()->setVisible(false);
-
     p->legend->setVisible(true);
-    p->legend->setBrush(QColor(255, 255, 255, 230));
-    p->legend->setBorderPen(QPen(kGrid));
-    QFont legendFont = p->font();
-    legendFont.setPointSizeF(9);
-    p->legend->setFont(legendFont);
-    p->legend->setTextColor(kInk);
     p->legend->setIconSize(24, 10);
-    p->axisRect()->insetLayout()->setInsetAlignment(0, Qt::AlignTop | Qt::AlignRight);
     p->legend->setSelectableParts(QCPLegend::spNone);
+
+    // Rich-text axis labels (drawn on the "axes" layer) and header row.
+    m_axisLabels = new RichAxisLabels(p, p->axisRect());
+    m_axisLabels->setLayer("axes");
+    m_header = new HeaderElement(p, p->axisRect());
+    m_insideLabel = new RichTextItem(p);
+    m_insideLabel->setLayer("legend");
+    m_insideLabel->setSelectable(false);
+    m_insideLabel->position->setType(QCPItemPosition::ptAxisRectRatio);
 
     // Dedicated layers: the region is drawn below the curves, markers and
     // annotations above them. Both are buffered so that dragging an object
@@ -222,7 +237,7 @@ void PlotRenderer::setupAppearance()
     m_diagonal = new QCPItemStraightLine(p);
     m_diagonal->setLayer(m_regionLayer);
     m_diagonal->setSelectable(false);
-    QPen diagPen(kInkSecondary, 1, Qt::DashLine);
+    QPen diagPen(QColor(0x52, 0x51, 0x4e), 1, Qt::DashLine);
     diagPen.setCosmetic(true);
     m_diagonal->setPen(diagPen);
     m_diagonal->point1->setCoords(0, 0);
@@ -235,17 +250,17 @@ void PlotRenderer::setupAppearance()
     m_region.label->setLayer(m_objectLayer);
     m_region.label->position->setTypeY(QCPItemPosition::ptAxisRectRatio);
     m_region.label->setPositionAlignment(Qt::AlignBottom | Qt::AlignHCenter);
-    m_region.label->setColor(kInk);
+    m_region.label->setColor(QColor(0x0b, 0x0b, 0x0b));
     m_region.label->setPadding(QMargins(4, 2, 4, 2));
     m_region.label->setBrush(QColor(255, 255, 255, 220));
     m_region.label->setPen(QPen(kRegionEdge));
-    m_region.label->setFont(tickFont);
     m_region.label->setClipToAxisRect(true);
     m_region.label->setVisible(false);
 }
 
 void PlotRenderer::rebuildAll()
 {
+    applyStyle();
     for (const auto& d : m_model->datasets()) onDatasetAdded(d.id);
     for (const auto& m : m_model->matrices()) onMatrixAdded(m.id);
     for (const auto& m : m_model->markers()) onMarkerAdded(m.id);
@@ -496,11 +511,13 @@ void PlotRenderer::syncLegend()
     m_plot->legend->clearItems();
     for (const auto& d : m_model->datasets()) {
         QCPAbstractPlottable* p = m_plottables.value(d.id);
-        if (p && d.style.visible && !d.name.isEmpty()) p->addToLegend();
+        if (p && d.style.visible && !d.name.isEmpty())
+            m_plot->legend->addItem(new RichLegendItem(m_plot->legend, p, m_model->style().mathText));
     }
     for (const auto& m : m_model->matrices()) {
         const MatrixVisual v = m_matrices.value(m.id);
-        if (v.contour && m.style.visible && !m.name.isEmpty()) v.contour->addToLegend();
+        if (v.contour && m.style.visible && !m.name.isEmpty())
+            m_plot->legend->addItem(new RichLegendItem(m_plot->legend, v.contour, m_model->style().mathText));
     }
     m_plot->legend->setVisible(m_model->axesInfo().legendVisible &&
                                m_plot->legend->itemCount() > 0);
@@ -631,15 +648,12 @@ void PlotRenderer::onMarkerAdded(ObjectId id)
     v.line = new QCPItemStraightLine(m_plot);
     v.line->setLayer(m_objectLayer);
     v.line->setSelectable(false);
-    v.label = new QCPItemText(m_plot);
+    v.label = new RichTextItem(m_plot);
     v.label->setLayer(m_objectLayer);
     v.label->setSelectable(false);
     v.label->setPadding(QMargins(4, 2, 4, 2));
     v.label->setBrush(QColor(255, 255, 255, 225));
-    v.label->setColor(kInk);
-    QFont f = m_plot->font();
-    f.setPointSizeF(9);
-    v.label->setFont(f);
+    v.label->setClipToAxisRect(true);
     m_markers.insert(id, v);
     applyMarker(id);
     replotObjectLayers();
@@ -697,11 +711,12 @@ void PlotRenderer::applyMarker(ObjectId id)
                               fmt(m->position);
         text = text.isEmpty() ? value : text + "\n" + value;
     }
-    v.label->setText(text);
+    const Style& st = m_model->style();
+    v.label->setText(text, font(st.xtick.labelSize), st.mathText);
+    v.label->setColor(st.labelColor);
     v.label->setVisible(!text.isEmpty());
     QPen border(m->color, hl ? 1.5 : 1.0);
     v.label->setPen(border);
-    v.label->setTextAlignment(Qt::AlignLeft);
 }
 
 // ---- annotations -------------------------------------------------------------------------
@@ -709,12 +724,11 @@ void PlotRenderer::applyMarker(ObjectId id)
 void PlotRenderer::onAnnotationAdded(ObjectId id)
 {
     if (m_annotations.contains(id)) return;
-    auto* t = new QCPItemText(m_plot);
+    auto* t = new RichTextItem(m_plot);
     t->setLayer(m_objectLayer);
     t->setSelectable(false);
     t->position->setType(QCPItemPosition::ptPlotCoords);
     t->setPositionAlignment(Qt::AlignLeft | Qt::AlignBottom);
-    t->setTextAlignment(Qt::AlignLeft);
     t->setPadding(QMargins(3, 2, 3, 2));
     m_annotations.insert(id, t);
     applyAnnotation(id);
@@ -731,21 +745,16 @@ void PlotRenderer::onAnnotationRemoved(ObjectId id)
 void PlotRenderer::applyAnnotation(ObjectId id)
 {
     const Annotation* a = m_model->annotation(id);
-    QCPItemText* t = m_annotations.value(id);
+    RichTextItem* t = m_annotations.value(id);
     if (!a || !t) return;
+    const Style& st = m_model->style();
     const bool hl = !m_exportMode && m_highlight == ObjectRef{ObjectKind::Annotation, id};
     t->position->setCoords(a->x, a->y);
-    t->setText(a->text.isEmpty() ? QStringLiteral(" ") : a->text);
-    t->setColor(a->color);
-    QFont f = m_plot->font();
-    f.setPointSizeF(std::max(1.0, a->fontSize));
-    t->setFont(f);
-    if (hl) {
-        QPen pen(kHighlight, 1, Qt::DashLine);
-        t->setPen(pen);
-    } else {
-        t->setPen(Qt::NoPen);
-    }
+    // Unset size/colour follow the style (annotation.size / annotation.color).
+    t->setText(a->text.isEmpty() ? QStringLiteral(" ") : a->text,
+               font(a->fontSize > 0 ? a->fontSize : st.annotationSize), st.mathText);
+    t->setColor(a->color.isValid() ? a->color : st.annotationColor);
+    t->setPen(hl ? QPen(kHighlight, 1, Qt::DashLine) : QPen(Qt::NoPen));
 }
 
 // ---- region / axes ---------------------------------------------------------------------------
@@ -770,11 +779,139 @@ void PlotRenderer::applyRegion()
                                 .arg(fmt(r.xmin), fmt(r.xmax), fmt(r.xmax - r.xmin)));
 }
 
+QFont PlotRenderer::font(double pointSize, bool bold) const
+{
+    const Style& st = m_model->style();
+    QFont f = m_plot->font();
+    QStringList families;
+    for (const QString& part : st.fontFamily.split(',', Qt::SkipEmptyParts)) {
+        const QString name = part.trimmed();
+        if (name == "sans-serif") f.setStyleHint(QFont::SansSerif);
+        else if (name == "serif") f.setStyleHint(QFont::Serif);
+        else if (name == "monospace") f.setStyleHint(QFont::Monospace);
+        else families << name;
+    }
+    if (!families.isEmpty()) f.setFamilies(families);
+    f.setPointSizeF(std::max(1.0, pointSize));
+    f.setBold(bold);
+    return f;
+}
+
+void PlotRenderer::applyStyle()
+{
+    const Style& st = m_model->style();
+    QCustomPlot* p = m_plot;
+    p->setFont(font(st.fontSize));
+    p->setBackground(st.figureFace);
+    p->axisRect()->setBackground(st.axesFace);
+    const int pad = int(std::lround(st.figurePadding));
+    p->plotLayout()->setMargins(QMargins(pad, pad, pad, pad));
+
+    auto cosmetic = [](const QColor& c, double w, Qt::PenStyle style = Qt::SolidLine) {
+        QPen pen(c, w, style, Qt::FlatCap);
+        pen.setCosmetic(true);
+        return pen;
+    };
+    const QString fmt = st.formatter == "sci" ? "gbc" : st.formatter == "plain" ? "g" : "gbd";
+    for (QCPAxis* axis : p->axisRect()->axes()) {
+        const bool isX = axis->orientation() == Qt::Horizontal;
+        const TickStyle& ts = isX ? st.xtick : st.ytick;
+        const bool mirror = axis == p->xAxis2 || axis == p->yAxis2;
+        axis->setBasePen(cosmetic(st.axesEdge, st.axesLineWidth));
+        axis->setTickPen(cosmetic(st.axesEdge, ts.width));
+        axis->setSubTickPen(cosmetic(st.axesEdge, ts.width));
+        const double inMaj = ts.direction == "out" ? 0 : ts.majorSize;
+        const double outMaj = ts.direction == "in" ? 0 : ts.majorSize;
+        const double inMin = ts.direction == "out" ? 0 : ts.minorSize;
+        const double outMin = ts.direction == "in" ? 0 : ts.minorSize;
+        axis->setTickLength(int(std::lround(inMaj)), int(std::lround(outMaj)));
+        axis->setSubTickLength(int(std::lround(inMin)), int(std::lround(outMin)));
+        const bool ticksOn = !mirror || ts.mirror;
+        axis->setTicks(ticksOn);
+        axis->setSubTicks(ticksOn && ts.minorVisible);
+        axis->setTickLabelFont(font(ts.labelSize));
+        axis->setTickLabelColor(ts.labelColor);
+        axis->setNumberFormat(fmt);
+        axis->setNumberPrecision(st.formatter == "plain" ? 10 : 6);
+        if (auto t = axis->ticker().dynamicCast<StyledTicker>()) {
+            t->unicodeMinus = st.unicodeMinus;
+            t->setTickCount(std::max(1, ts.count));
+        }
+        axis->grid()->setPen(cosmetic(st.gridColor, st.gridWidth, gridPenStyle(st.gridStyle)));
+        axis->grid()->setSubGridPen(cosmetic(st.minorGridColor, st.gridWidth, gridPenStyle(st.gridStyle)));
+        axis->grid()->setSubGridVisible(!mirror && st.minorGrid);
+        axis->setLabelColor(st.labelColor);
+        axis->setLabelFont(font(st.labelSize));
+        axis->setPadding(0);
+    }
+    // Mirrored axes follow the primary tick ranges (setupFullAxesBox).
+    p->xAxis2->setTicker(p->xAxis->ticker());
+    p->yAxis2->setTicker(p->yAxis->ticker());
+
+    // Legend
+    QCPLegend* lg = p->legend;
+    lg->setFont(font(st.legendFontSize));
+    lg->setTextColor(st.labelColor);
+    lg->setBorderPen(st.legendFrame ? QPen(st.legendEdge) : QPen(Qt::NoPen));
+    lg->setBrush(st.legendFrame ? QBrush(st.legendFace) : QBrush(Qt::NoBrush));
+    lg->setRowSpacing(st.legendFrame ? 0 : 2);
+    p->axisRect()->insetLayout()->setInsetAlignment(0, locToAlignment(st.legendLoc));
+
+    // In-frame label (e.g. "**CMS** *Simulation*")
+    const Qt::Alignment ia = locToAlignment(st.labelInsideLoc);
+    m_insideLabel->setText(st.labelInside, font(st.labelInsideSize), st.mathText);
+    m_insideLabel->setColor(st.labelColor);
+    m_insideLabel->setPositionAlignment(ia);
+    m_insideLabel->position->setCoords(ia & Qt::AlignLeft ? 0.03 : 0.97, ia & Qt::AlignTop ? 0.03 : 0.97);
+    m_insideLabel->setVisible(!st.labelInside.isEmpty());
+
+    // Peaks
+    PeakAppearance pa = m_peaks->appearance();
+    pa.color = st.peakColor;
+    pa.labelColor = st.peakLabelColor;
+    pa.crossSize = st.peakSize;
+    pa.lineWidth = st.peakLineWidth;
+    pa.fontSize = st.peakLabelSize;
+    pa.fontFamily = font(st.peakLabelSize);
+    pa.math = st.mathText;
+    m_peaks->setAppearance(pa);
+    m_region.label->setFont(font(st.xtick.labelSize));
+
+    for (const auto& m : m_model->markers()) applyMarker(m.id);
+    for (const auto& a : m_model->annotations()) applyAnnotation(a.id);
+    applyAxesInfo();
+}
+
+void PlotRenderer::updateHeader()
+{
+    const AxesInfo& info = m_model->axesInfo();
+    const Style& st = m_model->style();
+    m_header->setTexts(info.title, font(st.titleSize, st.titleBold), st.titleColor, st.labelTopLeft,
+                       st.labelTopRight, font(st.labelSize), st.labelColor, st.mathText);
+    QCPLayoutGrid* layout = m_plot->plotLayout();
+    const bool inLayout = layout->hasElement(0, 0) && layout->element(0, 0) == m_header;
+    if (!m_header->isEmpty() && !inLayout) {
+        layout->insertRow(0);
+        layout->addElement(0, 0, m_header);
+    } else if (m_header->isEmpty() && inLayout) {
+        layout->take(m_header);
+        layout->simplify();
+    }
+}
+
 void PlotRenderer::applyAxesInfo()
 {
     const AxesInfo& info = m_model->axesInfo();
-    m_plot->xAxis->setLabel(info.xLabel);
-    m_plot->yAxis->setLabel(info.yLabel);
+    const Style& st = m_model->style();
+    // Rich-text labels: QCustomPlot reserves the space (a blank label in the
+    // label font plus extra padding for taller rich text), RichAxisLabels draws.
+    const QFont lf = font(st.labelSize);
+    m_axisLabels->setLabels(info.xLabel, info.yLabel, lf, st.labelColor, st.mathText);
+    const double lineH = QFontMetricsF(lf).height();
+    m_plot->xAxis->setLabel(info.xLabel.isEmpty() ? QString() : QStringLiteral(" "));
+    m_plot->yAxis->setLabel(info.yLabel.isEmpty() ? QString() : QStringLiteral(" "));
+    m_plot->xAxis->setLabelPadding(int(std::lround(st.labelPad + std::max(0.0, m_axisLabels->xSize().height() - lineH))));
+    m_plot->yAxis->setLabelPadding(int(std::lround(st.labelPad + std::max(0.0, m_axisLabels->ySize().height() - lineH))));
     m_plot->xAxis->grid()->setVisible(info.gridVisible);
     m_plot->yAxis->grid()->setVisible(info.gridVisible);
     m_plot->xAxis->setRangeReversed(info.xReversed);
@@ -785,26 +922,9 @@ void PlotRenderer::applyAxesInfo()
     PeakAppearance pa = m_peaks->appearance();
     pa.showLabels = info.showPeakLabels;
     m_peaks->setAppearance(pa);
-    replotObjectLayers();
-
-    if (!info.title.isEmpty()) {
-        if (!m_title) {
-            m_plot->plotLayout()->insertRow(0);
-            m_title = new QCPTextElement(m_plot, info.title);
-            QFont f = m_plot->font();
-            f.setPointSizeF(11);
-            f.setBold(true);
-            m_title->setFont(f);
-            m_title->setTextColor(kInk);
-            m_plot->plotLayout()->addElement(0, 0, m_title);
-        }
-        m_title->setText(info.title);
-    } else if (m_title) {
-        m_plot->plotLayout()->remove(m_title);
-        m_plot->plotLayout()->simplify();
-        m_title = nullptr;
-    }
+    updateHeader();
     syncLegend();
+    replotObjectLayers();
 }
 
 }  // namespace gp

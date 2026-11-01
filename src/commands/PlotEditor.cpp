@@ -18,6 +18,8 @@ ObjectId PlotEditor::addDataset(Dataset d)
 {
     if (d.id == kInvalidId) d.id = m_model->allocateId();
     if (!d.style.color.isValid()) d.style.color = m_model->takeNextDatasetColor();
+    if (!(d.style.lineWidth > 0)) d.style.lineWidth = m_model->style().lineWidth;
+    if (!(d.style.scatterSize > 0)) d.style.scatterSize = m_model->style().markerSize;
     if (d.name.isEmpty()) d.name = QString("Dataset %1").arg(m_model->datasets().size() + 1);
     const ObjectId id = d.id;
     auto* cmd = new AddDatasetCommand(m_model, std::move(d));
@@ -59,6 +61,11 @@ ObjectId PlotEditor::addMatrix(Matrix m)
 {
     if (m.id == kInvalidId) m.id = m_model->allocateId();
     if (!m.style.positiveColor.isValid()) m.style.positiveColor = m_model->takeNextDatasetColor();
+    const Style& st = m_model->style();
+    if (m.style.levelCount <= 0) m.style.levelCount = st.contourLevels;
+    if (!(m.style.factor > 1)) m.style.factor = st.contourFactor;
+    if (!(m.style.lineWidth > 0)) m.style.lineWidth = st.contourLineWidth;
+    if (!m.style.negativeColor.isValid()) m.style.negativeColor = st.contourNegativeColor;
     if (!(m.style.baseLevel > 0))
         m.style.baseLevel = defaultBaseLevel(m, m.style.factor, m.style.levelCount);
     if (m.name.isEmpty()) m.name = QString("2D data %1").arg(m_model->matrices().size() + 1);
@@ -242,6 +249,18 @@ void PlotEditor::setRegion(const Region& afterIn, std::optional<Region> before)
         return;
     }
     m_stack->push(new SetRegionCommand(m_model, b, after));
+}
+
+void PlotEditor::setStyle(const Style& style, const QString& text)
+{
+    if (style == m_model->style()) return;
+    // The per-figure grid toggle follows the style's axes.grid.
+    m_stack->beginMacro(text);
+    m_stack->push(new SetStyleCommand(m_model, m_model->style(), style, text));
+    AxesInfo a = m_model->axesInfo();
+    a.gridVisible = style.grid;
+    setAxesInfo(a);
+    m_stack->endMacro();
 }
 
 void PlotEditor::setAxesInfo(const AxesInfo& info)

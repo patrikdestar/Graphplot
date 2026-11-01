@@ -30,8 +30,10 @@ add_custom_command(TARGET _plotter POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
           "${PROJECT_SOURCE_DIR}/python/plotter/__init__.py"
           "${PROJECT_SOURCE_DIR}/python/plotter/_ipython.py"
+          "${PROJECT_SOURCE_DIR}/python/plotter/style.py"
           "${PLOTTER_PKG_DIR}/")
 
 install(TARGETS _plotter LIBRARY DESTINATION plotter)
 install(FILES "${PROJECT_SOURCE_DIR}/python/plotter/__init__.py"
-              "${PROJECT_SOURCE_DIR}/python/plotter/_ipython.py" DESTINATION plotter)
+              "${PROJECT_SOURCE_DIR}/python/plotter/_ipython.py"
+              "${PROJECT_SOURCE_DIR}/python/plotter/style.py" DESTINATION plotter)

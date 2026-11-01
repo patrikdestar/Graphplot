@@ -8,6 +8,8 @@
 #include "model/BrukerReader.h"
 #include "model/Contour.h"
 #include "model/PeakPicker.h"
+#include "model/Style.h"
+#include "render/RichText.h"
 #include "render/PeakOverlay.h"
 #include "render/ContourPlottable.h"
 #include "render/PlotRenderer.h"
@@ -707,6 +709,103 @@ private slots:
         QCOMPARE(back[0].comment, ps[0].comment);
         QCOMPARE(back[1].label, QString("a,b"));
         QCOMPARE(back[0].intensity, 1e6);
+    }
+
+    // ---- styles & rich text ----------------------------------------------------------------
+    void styleTextRoundTrip()
+    {
+        Style s;
+        QVERIFY(builtinStyle("science", &s));
+        const QString text = s.toText("test");
+        Style back;
+        QStringList errors;
+        QVERIFY(back.parse(text, &errors));
+        QVERIFY2(errors.isEmpty(), qPrintable(errors.join("; ")));
+        for (const auto& k : Style::keys())
+            QVERIFY2(back.value(k.key) == s.value(k.key), qPrintable(k.key + ": " + s.value(k.key) + " vs " + back.value(k.key)));
+        QCOMPARE(back, s);  // every key survives the round trip
+        // Every key is listed with a description.
+        for (const auto& k : Style::keys()) {
+            QVERIFY(!k.description.isEmpty());
+            QVERIFY(!s.value(k.key).isNull());
+        }
+    }
+
+    void styleParsingAndErrors()
+    {
+        QTemporaryDir dir;
+        QFile base(dir.filePath("base.gpstyle"));
+        QVERIFY(base.open(QIODevice::WriteOnly));
+        base.write("inherit: science\nfont.size: 13\n");
+        base.close();
+        QFile f(dir.filePath("mine.gpstyle"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("# my style\n"
+                "inherit: base.gpstyle      # relative to this file\n"
+                "axes.prop_cycle: #ff0000, blue  ,#00ff00   # colours after ':' are not comments\n"
+                "xtick.direction: out\n"
+                "no.such.key: 3\n"
+                "axes.linewidth: thick\n"
+                "label.top.left: \"**ATLAS** *Internal*\"\n");
+        f.close();
+        Style s;
+        QStringList errors;
+        QVERIFY(loadStyle(f.fileName(), &s, &errors));
+        QCOMPARE(errors.size(), 2);  // unknown key + bad number, both reported with line numbers
+        QVERIFY(errors[0].contains("line 5"));
+        QCOMPARE(s.fontSize, 13.0);          // from base.gpstyle
+        QVERIFY(s.ytick.minorVisible);       // from science (inherited twice)
+        QCOMPARE(s.xtick.direction, QString("out"));
+        QCOMPARE(s.palette.size(), 3);
+        QCOMPARE(s.palette[0], QColor("#ff0000"));
+        QCOMPARE(s.labelTopLeft, QString("**ATLAS** *Internal*"));
+    }
+
+    void figureStyleIsUndoableAndDrivesRendering()
+    {
+        auto w = makeWindow();
+        QVERIFY(w->applyStyle("science"));
+        QCOMPARE(w->model()->style().xtick.direction, QString("in"));
+        QVERIFY(w->plot()->xAxis->subTicks());   // minor ticks on
+        QVERIFY(!w->model()->axesInfo().gridVisible);  // grid follows the style
+        QCOMPARE(w->plot()->xAxis2->ticks(), true);    // mirrored ticks
+        w->editor()->undo();
+        QCOMPARE(*&w->model()->style(), *&defaultStyle());
+        QVERIFY(w->model()->axesInfo().gridVisible);
+        QVERIFY(!w->plot()->xAxis->subTicks());
+    }
+
+    void userDefaultStyleFile()
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath("default.gpstyle");
+        QFile f(path);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("inherit: nmr\nfont.size: 15\n");
+        f.close();
+        qputenv("GRAPHPLOT_STYLE", path.toUtf8());
+        reloadDefaultStyle();
+        QCOMPARE(defaultStyle().fontSize, 15.0);
+        PlotModel m;  // new figures start from the default style
+        QCOMPARE(m.style().fontSize, 15.0);
+        QCOMPARE(m.style().xtick.direction, QString("out"));
+        qunsetenv("GRAPHPLOT_STYLE");
+        reloadDefaultStyle();
+        QCOMPARE(defaultStyle().fontSize, 10.0);
+    }
+
+    void richTextConversion()
+    {
+        const QString h = richTextToHtml("m$_{\\gamma\\gamma}$ / $10^{-3}$ **CMS** *Prelim*");
+        QVERIFY(h.contains("<sub>γγ</sub>"));
+        QVERIFY(h.contains("<sup>−3</sup>"));
+        QVERIFY(h.contains("<b>CMS</b>"));
+        QVERIFY(h.contains("<i>Prelim</i>"));
+        QVERIFY(richTextToHtml("$x^2$").contains("<i>x</i><sup>2</sup>"));
+        QVERIFY(richTextToHtml("$\\mathrm{GeV}$") == "GeV");
+        QVERIFY(richTextToHtml("a < b & 5$").contains("&lt;"));     // escaped, lone $ kept
+        QCOMPARE(richTextToHtml("$x$", false), QString("$x$"));       // math disabled
+        QVERIFY(richTextToHtml("price \\$5").contains("$5"));
     }
 
     // ---- data loading -----------------------------------------------------------------------

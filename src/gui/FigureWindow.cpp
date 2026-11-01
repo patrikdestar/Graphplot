@@ -3,6 +3,7 @@
 #include "Icons.h"
 #include "PeakTable.h"
 #include "PropertiesPanel.h"
+#include "StyleEditor.h"
 #include "commands/PlotEditor.h"
 #include "model/BrukerReader.h"
 #include "model/DataLoader.h"
@@ -15,6 +16,7 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QDir>
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QLabel>
@@ -259,6 +261,7 @@ void FigureWindow::buildActions()
     view->addAction(setHome);
     view->addSeparator();
     view->addAction(m_dock->toggleViewAction());
+    buildStyleMenu();
     tb->addAction(autoscale);
     tb->addAction(reset);
     tb->addAction(m_levelsAction);
@@ -279,6 +282,57 @@ void FigureWindow::buildActions()
     tb->addAction(undo);
     tb->addAction(redo);
     tb->addAction(exportAct);
+}
+
+bool FigureWindow::applyStyle(const QString& nameOrPath, QStringList* errors)
+{
+    Style s;
+    if (!loadStyle(nameOrPath, &s, errors)) return false;
+    m_editor->setStyle(s, QString("Style: %1").arg(QFileInfo(nameOrPath).completeBaseName()));
+    return true;
+}
+
+void FigureWindow::buildStyleMenu()
+{
+    QMenu* menu = menuBar()->addMenu("&Style");
+    for (const QString& name : builtinStyleNames()) {
+        QString text = name;
+        text[0] = text[0].toUpper();
+        menu->addAction(text, this, [this, name] { applyStyle(name); });
+    }
+    menu->addSeparator();
+    menu->addAction("&Edit style…", this, [this] {
+        StyleEditor dlg(m_editor, this);
+        dlg.exec();
+    });
+    menu->addAction("&Load style file…", this, [this] {
+        const QString fn = QFileDialog::getOpenFileName(this, "Load style", m_lastDir,
+                                                        "Graphplot styles (*.gpstyle);;All files (*)");
+        if (fn.isEmpty()) return;
+        QStringList errors;
+        applyStyle(fn, &errors);
+        if (!errors.isEmpty())
+            QMessageBox::warning(this, "Load style", "Some entries were ignored:\n" + errors.join("\n"));
+    });
+    menu->addAction("&Save style as…", this, [this] {
+        const QString fn = QFileDialog::getSaveFileName(this, "Save style", m_lastDir + "/my.gpstyle",
+                                                        "Graphplot styles (*.gpstyle)");
+        QString err;
+        if (!fn.isEmpty() && !saveStyle(fn, m_model->style(), &err))
+            QMessageBox::warning(this, "Save style", err);
+    });
+    menu->addSeparator();
+    menu->addAction("Use as my &default style", this, [this] {
+        const QString path = userDefaultStylePath();
+        QDir().mkpath(QFileInfo(path).absolutePath());
+        QString err;
+        if (!saveStyle(path, m_model->style(), &err)) {
+            QMessageBox::warning(this, "Default style", err);
+            return;
+        }
+        setDefaultStyle(m_model->style());
+        statusBar()->showMessage("New figures will use this style (saved to " + path + ")", 6000);
+    });
 }
 
 void FigureWindow::showContextMenu(ObjectRef ref, QPoint globalPos, QPointF dataPos)

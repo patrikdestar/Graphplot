@@ -65,6 +65,12 @@ private:
     void onOpenBruker();
     void updateLevelStatus();
     void onExport();
+    void buildStyleMenu();
+public:
+    // Applies a built-in style name or a style file to this figure (undoable).
+    bool applyStyle(const QString& nameOrPath, QStringList* errors = nullptr);
+
+private:
 
     PlotModel* m_model;
     PlotEditor* m_editor;

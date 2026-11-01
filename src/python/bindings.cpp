@@ -19,6 +19,7 @@
 #include "gui/PeakTable.h"
 #include "model/Contour.h"
 #include "model/PeakPicker.h"
+#include "model/Style.h"
 #include "model/PlotModel.h"
 #include "qcustomplot.h"
 #include "render/PlotRenderer.h"
@@ -414,6 +415,7 @@ Matrix matrixFromNumpy(const py::object& zobj, const py::object& x, const py::ob
 PYBIND11_MODULE(_plotter, mod)
 {
     mod.doc() = "Native part of the 'plotter' package (Graphplot C++/Qt bindings).";
+    gp::reloadDefaultStyle();  // the user's default style file, if any (once, at import)
 
     mod.def("process_events", &pyglue::processEvents, py::arg("ms") = 0,
             "Run the Qt event loop for `ms` milliseconds (keeps windows responsive in scripts).");
@@ -431,6 +433,53 @@ PYBIND11_MODULE(_plotter, mod)
         py::arg("figures"), py::arg("timeout") = -1.0);
     mod.def("_has_app", [] { return QCoreApplication::instance() != nullptr; });
 
+    // ---- global (default) style: used for figures created afterwards -----------
+    mod.def("_style_builtins", [] {
+        std::vector<std::string> out;
+        for (const QString& n : builtinStyleNames()) out.push_back(n.toStdString());
+        return out;
+    });
+    mod.def("_style_keys", [] {
+        std::vector<std::pair<std::string, std::string>> out;
+        for (const auto& k : Style::keys()) out.emplace_back(k.key.toStdString(), k.description.toStdString());
+        return out;
+    });
+    mod.def("_style_use", [](const std::string& nameOrPath) {
+        Style s;
+        QStringList errors;
+        if (!loadStyle(QString::fromStdString(nameOrPath), &s, &errors))
+            throw std::runtime_error(errors.join("; ").toStdString());
+        setDefaultStyle(s);
+        std::vector<std::string> out;
+        for (const QString& e : errors) out.push_back(e.toStdString());
+        return out;
+    });
+    mod.def("_style_get", [](const std::string& key) {
+        const QString v = defaultStyle().value(QString::fromStdString(key));
+        if (v.isNull()) throw py::key_error("unknown style key '" + key + "'");
+        return v.toStdString();
+    });
+    mod.def("_style_set", [](const std::string& key, const std::string& value) {
+        Style s = defaultStyle();
+        QString err;
+        if (!s.set(QString::fromStdString(key), QString::fromStdString(value), &err))
+            throw py::value_error(err.toStdString());
+        setDefaultStyle(s);
+    });
+    mod.def("_style_text", [] { return defaultStyle().toText().toStdString(); });
+    mod.def("_style_save", [](const std::string& fn) {
+        QString err;
+        if (!saveStyle(QString::fromStdString(fn), defaultStyle(), &err)) throw std::runtime_error(err.toStdString());
+    });
+    mod.def("_style_default_path", [] { return userDefaultStylePath().toStdString(); });
+    mod.def("_style_reload", [] {
+        QStringList errors;
+        reloadDefaultStyle(&errors);
+        std::vector<std::string> out;
+        for (const QString& e : errors) out.push_back(e.toStdString());
+        return out;
+    });
+
     // ---- Figure ------------------------------------------------------------------------
     py::class_<Figure, FigurePtr> fig(mod, "Figure", "A plot window.");
     fig.def(py::init(&makeFigure), py::arg("title") = py::none(), py::arg("width") = 1000,
@@ -439,8 +488,10 @@ PYBIND11_MODULE(_plotter, mod)
     fig.def(
         "plot",
         [](FigurePtr self, const py::object& x, const py::object& y, const py::object& label,
-           const py::object& color, double width, const std::string& style,
-           const py::object& marker, double markersize, bool visible, bool replace) {
+           const py::object& color, const py::object& widthObj, const std::string& style,
+           const py::object& marker, const py::object& markersizeObj, bool visible, bool replace) {
+            const double width = widthObj.is_none() ? 0.0 : widthObj.cast<double>();
+            const double markersize = markersizeObj.is_none() ? 0.0 : markersizeObj.cast<double>();
             QVector<double> xv, yv;
             if (y.is_none()) {  // plot(y)
                 yv = toVector(x, "y");
@@ -471,6 +522,8 @@ PYBIND11_MODULE(_plotter, mod)
                         ed->undoStack()->beginMacro("Update dataset");
                         ed->setDatasetData(oid, d.x, d.y, true);
                         if (!d.style.color.isValid()) d.style.color = old->style.color;
+                        if (!(d.style.lineWidth > 0)) d.style.lineWidth = old->style.lineWidth;
+                        if (!(d.style.scatterSize > 0)) d.style.scatterSize = old->style.scatterSize;
                         ed->setDatasetAppearance(oid, d.name, d.style);
                         ed->undoStack()->endMacro();
                         return oid;
@@ -487,14 +540,14 @@ PYBIND11_MODULE(_plotter, mod)
             return Line{{self, id}};
         },
         py::arg("x"), py::arg("y") = py::none(), py::kw_only(), py::arg("label") = py::none(),
-        py::arg("color") = py::none(), py::arg("width") = 1.5, py::arg("style") = "-",
-        py::arg("marker") = py::none(), py::arg("markersize") = 6.0, py::arg("visible") = true,
+        py::arg("color") = py::none(), py::arg("width") = py::none(), py::arg("style") = "-",
+        py::arg("marker") = py::none(), py::arg("markersize") = py::none(), py::arg("visible") = true,
         py::arg("replace") = false,
         R"doc(Plot y against x (or y against its index if only one array is given).
 
 label     dataset name shown in the legend
 color     name ('blue', 'C3', '#ff8800') or (r, g, b[, a]) tuple; default: next palette colour
-width     line width in pixels
+width     line width in pixels (default: style 'lines.linewidth')
 style     '-', '--', ':', '-.' or 'none'
 marker    point symbol: 'o', 's', '^', 'd', 'x', '+' or None
 replace   if True and a dataset with the same label exists, update it in place
@@ -503,13 +556,17 @@ Returns a Line handle.)doc");
     fig.def(
         "contour",
         [](FigurePtr self, const py::object& z, const py::object& x, const py::object& y,
-           const py::object& label, int levels, double factor, const py::object& base,
+           const py::object& label, const py::object& levelsObj, const py::object& factorObj,
+           const py::object& base,
            const py::object& color, const py::object& negativeColor, bool negative, bool image,
-           double linewidth) {
+           const py::object& linewidthObj) {
+            const int levels = levelsObj.is_none() ? 0 : levelsObj.cast<int>();
+            const double factor = factorObj.is_none() ? 0.0 : factorObj.cast<double>();
+            const double linewidth = linewidthObj.is_none() ? 0.0 : linewidthObj.cast<double>();
             Matrix m = matrixFromNumpy(z, x, y);
             if (!label.is_none()) m.name = QString::fromStdString(label.cast<std::string>());
-            if (levels < 1) throw py::value_error("levels must be >= 1");
-            if (!(factor > 1.0)) throw py::value_error("factor must be > 1");
+            if (!levelsObj.is_none() && levels < 1) throw py::value_error("levels must be >= 1");
+            if (!factorObj.is_none() && !(factor > 1.0)) throw py::value_error("factor must be > 1");
             m.style.levelCount = levels;
             m.style.factor = factor;
             m.style.baseLevel = base.is_none() ? 0.0 : base.cast<double>();
@@ -530,10 +587,10 @@ Returns a Line handle.)doc");
             return Contour{{self, id}};
         },
         py::arg("z"), py::arg("x") = py::none(), py::arg("y") = py::none(), py::kw_only(),
-        py::arg("label") = py::none(), py::arg("levels") = 12, py::arg("factor") = 1.4,
+        py::arg("label") = py::none(), py::arg("levels") = py::none(), py::arg("factor") = py::none(),
         py::arg("base") = py::none(), py::arg("color") = py::none(),
         py::arg("negative_color") = py::none(), py::arg("negative") = true,
-        py::arg("image") = false, py::arg("linewidth") = 1.0,
+        py::arg("image") = false, py::arg("linewidth") = py::none(),
         R"doc(Show 2D data z[row=y, column=x] as contour lines on a regular grid.
 
 x, y      grid coordinates: full uniformly spaced arrays or (start, stop); default: indices
@@ -715,7 +772,8 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
     fig.def(
         "annotate",
         [](FigurePtr self, const std::string& text, double x, double y, const py::object& color,
-           double fontsize) {
+           const py::object& fontsizeObj) {
+            const double fontsize = fontsizeObj.is_none() ? 0.0 : fontsizeObj.cast<double>();
             Annotation a;
             a.text = QString::fromStdString(text);
             a.x = x;
@@ -726,7 +784,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
             return AnnotationH{{self, inGui([&] { return self->editor()->addAnnotation(a); })}};
         },
         py::arg("text"), py::arg("x"), py::arg("y"), py::kw_only(), py::arg("color") = py::none(),
-        py::arg("fontsize") = 10.0, "Add a text annotation anchored (bottom-left) at data (x, y).");
+        py::arg("fontsize") = py::none(), "Add a text annotation anchored (bottom-left) at data (x, y).");
 
     // -- region
     fig.def(
@@ -935,6 +993,52 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
             });
         },
         py::arg("visible") = true);
+
+    // -- per-figure style (undoable)
+    fig.def(
+        "use_style",
+        [](FigurePtr self, const std::string& nameOrPath) {
+            QStringList errors;
+            const bool ok = inGui([&] {
+                return self->w()->applyStyle(QString::fromStdString(nameOrPath), &errors);
+            });
+            if (!ok) throw std::runtime_error(errors.join("; ").toStdString());
+            std::vector<std::string> out;
+            for (const QString& e : errors) out.push_back(e.toStdString());
+            return out;
+        },
+        py::arg("name_or_path"),
+        "Apply a built-in style ('default', 'science', 'nmr', 'presentation') or a .gpstyle file\n"
+        "to this figure. Returns a list of ignored entries (empty when everything was valid).");
+    fig.def(
+        "_set_style_params",
+        [](FigurePtr self, const std::vector<std::pair<std::string, std::string>>& kv) {
+            inGui([&] {
+                Style s = self->model()->style();
+                for (const auto& [k, v] : kv) {
+                    QString err;
+                    if (!s.set(QString::fromStdString(k), QString::fromStdString(v), &err))
+                        throw py::value_error(err.toStdString());
+                }
+                self->editor()->setStyle(s, "Change style");
+            });
+        });
+    fig.def(
+        "get_style_param",
+        [](FigurePtr self, const std::string& key) {
+            const QString v = inGui([&] { return self->model()->style().value(QString::fromStdString(key)); });
+            if (v.isNull()) throw py::key_error("unknown style key '" + key + "'");
+            return v.toStdString();
+        },
+        py::arg("key"));
+    fig.def(
+        "save_style",
+        [](FigurePtr self, const std::string& fn) {
+            QString err;
+            if (!inGui([&] { return saveStyle(QString::fromStdString(fn), self->model()->style(), &err); }))
+                throw std::runtime_error(err.toStdString());
+        },
+        py::arg("filename"), "Write this figure's complete style to a .gpstyle file.");
 
     // -- contour level scrolling (same as the mouse wheel / keys in the window)
     fig.def(
@@ -1243,7 +1347,12 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
                           h.edit([&](Annotation& a) { a.color = c; });
                       })
         .def_property("fontsize",
-                      [](AnnotationH& h) { return inGui([&] { return h.get().fontSize; }); },
+                      [](AnnotationH& h) {
+                          return inGui([&] {
+                              const double f = h.get().fontSize;
+                              return f > 0 ? f : h.fig->model()->style().annotationSize;
+                          });
+                      },
                       [](AnnotationH& h, double v) { h.edit([&](Annotation& a) { a.fontSize = v; }); })
         .def("remove", [](AnnotationH& h) { inGui([&] { h.fig->editor()->removeAnnotation(h.id); }); })
         .def("__repr__", [](AnnotationH& h) {

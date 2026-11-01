@@ -1,5 +1,7 @@
 #include "GuiThread.h"
 
+#include "model/Style.h"
+
 #include <QApplication>
 #include <QEventLoop>
 #include <QTimer>

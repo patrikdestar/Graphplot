@@ -30,10 +30,10 @@ struct ObjectRef {
 
 struct DatasetStyle {
     QColor color;  // invalid = "use next palette colour" (see PlotEditor::addDataset)
-    double lineWidth = 1.5;
+    double lineWidth = 0.0;    // <= 0: style default (lines.linewidth)
     LineStyle lineStyle = LineStyle::Solid;
     ScatterShape scatter = ScatterShape::None;
-    double scatterSize = 6.0;
+    double scatterSize = 0.0;  // <= 0: style default (lines.markersize)
     bool visible = true;
     bool operator==(const DatasetStyle&) const = default;
 };
@@ -52,12 +52,12 @@ struct Dataset {
 // (TopSpin-style geometric levels), optionally mirrored for negative values.
 struct ContourStyle {
     double baseLevel = 0.0;  // <= 0 means "choose automatically" when added
-    double factor = 1.4;
-    int levelCount = 12;
+    double factor = 0.0;     // <= 1: style default (contour.factor)
+    int levelCount = 0;      // <= 0: style default (contour.levels)
     bool showNegative = true;
     QColor positiveColor;    // invalid = next palette colour
-    QColor negativeColor = QColor(0xe3, 0x49, 0x48);
-    double lineWidth = 1.0;
+    QColor negativeColor;    // invalid = style default (contour.negativecolor)
+    double lineWidth = 0.0;  // <= 0: style default (contour.linewidth)
     bool showImage = false;  // colour-map image underneath the contours
     bool visible = true;
     bool operator==(const ContourStyle&) const = default;
@@ -92,8 +92,8 @@ struct Annotation {
     double x = 0.0;  // anchor in data coordinates
     double y = 0.0;
     QString text;
-    QColor color = QColor(0x0b, 0x0b, 0x0b);
-    double fontSize = 10.0;  // points
+    QColor color;            // invalid = style default (annotation.color)
+    double fontSize = 0.0;   // points; <= 0 = style default (annotation.size)
     bool operator==(const Annotation&) const = default;
 };
 

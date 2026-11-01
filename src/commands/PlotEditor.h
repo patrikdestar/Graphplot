@@ -89,6 +89,7 @@ public:
 
     // ---- axes ------------------------------------------------------------
     void setAxesInfo(const AxesInfo& info);
+    void setStyle(const Style& style, const QString& text = "Change style");
 
     // Removes any kind of object (dataset, marker, annotation, region).
     void removeObject(const ObjectRef& ref);
