@@ -135,6 +135,23 @@ public:
     // Takes effect in the current replot (it is called from afterLayout).
     void setMaxTicksY(int n);
     void startFresh();  // after clearing the panel: the next data is fitted again
+    // The view-fitting state (follow flags, home, current view), saved and
+    // restored around an undoable clear.
+    struct FitState {
+        bool followX = true, followY = true, hasHome = false;
+        ViewRange home, view;
+    };
+    FitState fitState() const { return {m_followX, m_followY, m_hasHome, m_home, viewRange()}; }
+    void setFitState(const FitState& s)
+    {
+        m_followX = s.followX;
+        m_followY = s.followY;
+        m_hasHome = s.hasHome;
+        m_home = s.home;
+        setViewRange(s.view);
+        m_followX = s.followX;  // setting the view is not a user limit
+        m_followY = s.followY;
+    }
     // Fit the axes that still follow the data (limits set by the user stay).
     void fitFollowing()
     {

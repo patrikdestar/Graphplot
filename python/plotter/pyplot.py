@@ -458,14 +458,19 @@ class PltAxes:
             mask = _np.broadcast_to(_np.asarray(where, dtype=bool), y1.shape)
             idx = _np.flatnonzero(mask)
             runs = _np.split(idx, _np.flatnonzero(_np.diff(idx) > 1) + 1) if idx.size else []
+            runs = [r for r in runs if r.size >= 2]
+            if not runs:  # nothing to fill: an empty band (still a Line, as documented)
+                runs = [_np.array([], dtype=int)]
             col = _mpl_color(color) or self._ax._take_color()
             first = None
-            for run in runs:
-                if run.size < 2:
-                    continue
-                band = self._ax.fill_between(x[run], y1[run], y2[run], color=col, alpha=alpha, step=step,
-                                             label=None if (label is None or first is not None) else str(label))
-                first = first or band
+            self._ax._begin_macro("Fill between")  # one undo step
+            try:
+                for run in runs:
+                    band = self._ax.fill_between(x[run], y1[run], y2[run], color=col, alpha=alpha, step=step,
+                                                 label=None if (label is None or first is not None) else str(label))
+                    first = first or band
+            finally:
+                self._ax._end_macro()
             return first
         return self._ax.fill_between(x, y1, y2, label=None if label is None else str(label),
                                      color=_mpl_color(color), alpha=alpha, step=step)

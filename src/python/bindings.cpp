@@ -42,6 +42,7 @@
 #include <QPointer>
 #include <QSet>
 #include <QTimer>
+#include <QUndoCommand>
 #include <QUndoStack>
 #include <cmath>
 #include <memory>
@@ -688,6 +689,32 @@ void Figure::fire(const std::string& event, const std::function<py::tuple()>& ma
 }
 
 // ---- Figure creation ---------------------------------------------------------------------
+
+// Undoable "start like a new panel" after Figure.clear: fitting and colour
+// cycle restart; undo restores the previous fitting state, view and colours.
+class FreshStartCommand : public QUndoCommand {
+public:
+    FreshStartCommand(PlotRenderer* r, PlotModel* m)
+        : QUndoCommand("Clear figure"), m_r(r), m_m(m), m_before(r->fitState()), m_colors(m->colorCounter())
+    {
+    }
+    void redo() override
+    {
+        m_r->startFresh();
+        m_m->resetColorCycle();
+    }
+    void undo() override
+    {
+        m_r->setFitState(m_before);
+        m_m->setColorCounter(m_colors);
+    }
+
+private:
+    QPointer<PlotRenderer> m_r;
+    PlotModel* m_m;
+    PlotRenderer::FitState m_before;
+    int m_colors;
+};
 
 FigurePtr makeFigure(const py::object& title, int width, int height)
 {
@@ -1475,10 +1502,10 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
                 info.xTime = false;
                 ed->setAxesInfo(info);
             }
-            ed->undoStack()->endMacro();
             // Like a new panel: the next data is fitted and gets the first colour.
-            self->renderer()->startFresh();
-            m->resetColorCycle();
+            // Part of the undo step, so undo also brings back colours and view.
+            ed->undoStack()->push(new FreshStartCommand(self->renderer(), m));
+            ed->undoStack()->endMacro();
         });
     }, "Remove all datasets, markers, annotations and the selection (undoable).");
 

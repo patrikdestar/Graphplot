@@ -1365,6 +1365,20 @@ class PlotterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             tl.savefig(os.path.join(d, "n.png"))
 
+    def test_round14_fixes(self):
+        import plotter.pyplot as plt
+        band = plt.fill_between([1, 2, 3], [0, 1, 2], [1, 2, 3], where=[False, True, False])
+        self.assertIsNotNone(band)  # always a Line
+        plt.close("all")
+        x = np.linspace(0, 100, 50)
+        f = plotter.figure()
+        first = f.plot(x, x)
+        f.set_xlim(10, 20)
+        f.clear()
+        f.undo()  # undo of clear brings back the view and the colour cycle
+        self.assertEqual(f.xlim(), (10.0, 20.0))
+        self.assertNotEqual(f.plot(x, x).color, first.color)
+
     def test_round6_correctness(self):
         import plotter.pyplot as plt
         f = self.fig

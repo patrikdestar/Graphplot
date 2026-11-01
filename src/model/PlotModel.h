@@ -140,6 +140,8 @@ private:
 
 public:
     void resetColorCycle() { m_colorCounter = 0; }  // a cleared panel starts at the first colour
+    int colorCounter() const { return m_colorCounter; }
+    void setColorCounter(int n) { m_colorCounter = n; }
 };
 
 }  // namespace gp
