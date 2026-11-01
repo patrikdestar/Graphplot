@@ -192,8 +192,22 @@ QString richTextToHtml(const QString& text, bool enabled)
             const bool dbl = i + 1 < text.size() && text[i + 1] == '*';
             const QString marker = dbl ? "**" : "*";
             bool& state = dbl ? bold : italic;
-            // Open only if a matching closing marker exists later.
-            if (state || text.indexOf(marker, i + marker.size()) > 0) {
+            // A single '*' pairs only with another single '*' (not the first
+            // star of a later "**"); like Markdown, "a * b" is not emphasis:
+            // an opening star must be followed, a closing one preceded, by a
+            // non-space character.
+            auto loneStarAfter = [&](qsizetype from) {
+                for (qsizetype j = from; j < text.size(); ++j)
+                    if (text[j] == '*' && (j + 1 >= text.size() || text[j + 1] != '*') && text[j - 1] != '*' &&
+                        !text[j - 1].isSpace())
+                        return true;
+                return false;
+            };
+            const qsizetype after = i + marker.size();
+            const bool canOpen = after < text.size() && !text[after].isSpace() &&
+                                 (dbl ? text.indexOf(marker, after) > 0 : loneStarAfter(after + 1));
+            const bool canClose = i > 0 && !text[i - 1].isSpace();
+            if (state ? canClose : canOpen) {
                 flushPlain();
                 out += state ? (dbl ? "</b>" : "</i>") : (dbl ? "<b>" : "<i>");
                 state = !state;

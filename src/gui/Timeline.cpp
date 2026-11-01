@@ -301,7 +301,6 @@ void Timeline::setRowVisible(int row, bool visible)
     m_rows[row].visible = visible;
     relayout();
     scheduleAutoFit();  // the row may have missed window changes while hidden
-    if (m_cursor) updateCursorVisuals();
     emit rowsChanged();
 }
 
@@ -351,13 +350,22 @@ ObjectId Timeline::moveSignal(const SignalRef& from, int toRow)
     Dataset copy = *d;
     copy.id = kInvalidId;
     QUndoStack* stack = m_win->undoStack();
+    // Decided before the move: removing the signal re-points the navigator.
+    const bool wasNavigator = m_navSignal == from;
     stack->beginMacro(QString("Move %1 to %2").arg(copy.name, rowName(toRow)));
     const ObjectId nid = m_win->axes(toRow).editor->addDataset(copy);
     m_win->axes(from.row).editor->removeDataset(from.id);
     stack->endMacro();
-    if (m_navSignal == from) setNavigatorSignal({toRow, nid});
+    if (wasNavigator) setNavigatorSignal({toRow, nid});
     scheduleAutoFit();
     return nid;
+}
+
+int Timeline::firstVisibleRow() const
+{
+    for (int row : m_order)
+        if (m_rows.value(row).visible) return row;
+    return m_order.isEmpty() ? 0 : m_order.front();
 }
 
 void Timeline::relayout()
@@ -395,6 +403,9 @@ void Timeline::relayout()
     m_navRenderer->axisRect()->setMarginGroup(QCP::msLeft | QCP::msRight, g);
 
     rebuildPinVisuals();
+    // setPanelVisible(true) shows every item of a panel, including the cursor
+    // line and readout: put them back in their correct state.
+    updateCursorVisuals();
     m_plot->replot(QCustomPlot::rpQueuedReplot);
 }
 
@@ -914,7 +925,8 @@ bool Timeline::eventFilter(QObject* watched, QEvent* event)
         // Drags owned by the timeline.
         if (m_drag != Drag::None) {
             // Pins move in row time (all rows share it), the window in navigator time.
-            QCPAxis* axis = m_drag == Drag::Pin ? rowRenderer(m_order.front())->xAxis()
+            // (any visible row: hidden rows keep stale geometry)
+            QCPAxis* axis = m_drag == Drag::Pin ? rowRenderer(firstVisibleRow())->xAxis()
                                                 : m_navRenderer->xAxis();
             const double t = axis->pixelToCoord(px.x());
             // Ignore jitter: a click with a 1-2 px wobble is still a click.

@@ -158,7 +158,9 @@ public:
     bool mergeWith(const QUndoCommand* other) override
     {
         auto* o = static_cast<const EditCommand*>(other);
-        if (!o->m_mergeable || o->m_after.id != m_after.id || o->text() != text() ||
+        // Panels share one undo stack and ids are only unique per panel:
+        // never merge edits of different panels.
+        if (o->m_model != m_model || !o->m_mergeable || o->m_after.id != m_after.id || o->text() != text() ||
             m_lastEdit.elapsed() > kMergeWindowMs)
             return false;
         m_after = o->m_after;
@@ -199,7 +201,9 @@ public:
     bool mergeWith(const QUndoCommand* other) override
     {
         auto* o = static_cast<const ScaleLevelsCommand*>(other);
-        if (o->m_changes.size() != m_changes.size() || m_lastEdit.elapsed() > kMergeWindowMs) return false;
+        if (o->m_model != m_model || o->m_changes.size() != m_changes.size() ||
+            m_lastEdit.elapsed() > kMergeWindowMs)
+            return false;
         for (size_t i = 0; i < m_changes.size(); ++i)
             if (o->m_changes[i].after.id != m_changes[i].after.id) return false;
         for (size_t i = 0; i < m_changes.size(); ++i) m_changes[i].after = o->m_changes[i].after;

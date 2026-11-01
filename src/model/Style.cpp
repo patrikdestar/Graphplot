@@ -8,6 +8,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QStandardPaths>
+#include <QRegularExpression>
 #include <QTextStream>
 #include <functional>
 
@@ -302,9 +303,14 @@ bool Style::parse(const QString& text, QStringList* errors, const QString& baseD
         ++lineNo;
         // Strip comments: '#' starts a comment unless it begins a colour (#rrggbb)
         // directly after the separator or a comma.
+        // Inside a quoted value, "" is a literal quote.
         bool inQuotes = false;
         for (qsizetype i = 0; i < line.size(); ++i) {
-            if (line[i] == '"') inQuotes = !inQuotes;
+            if (line[i] == '"') {
+                if (inQuotes && i + 1 < line.size() && line[i + 1] == '"') ++i;
+                else inQuotes = !inQuotes;
+                continue;
+            }
             if (line[i] != '#' || inQuotes) continue;
             qsizetype j = i - 1;
             while (j >= 0 && line[j].isSpace()) --j;
@@ -325,7 +331,7 @@ bool Style::parse(const QString& text, QStringList* errors, const QString& baseD
         const QString key = line.left(colon).trimmed();
         QString value = line.mid(colon + 1).trimmed();
         if (value.size() >= 2 && value.startsWith('"') && value.endsWith('"'))
-            value = value.mid(1, value.size() - 2);
+            value = value.mid(1, value.size() - 2).replace("\"\"", "\"");
         if (key == "inherit") {
             Style base;
             QString path = value;
@@ -362,9 +368,13 @@ QString Style::toText(const QString& header) const
         if (group != lastGroup && !lastGroup.isEmpty()) s << "\n";
         lastGroup = group;
         QString v = e.get(*this);
-        // Quote values that would otherwise be ambiguous (empty, or with '#').
-        if (v.isEmpty() || (v.contains('#') && !v.startsWith('#')) || v.contains('"'))
-            v = '"' + v + '"';
+        // Quote values that would otherwise be ambiguous: empty, with a quote,
+        // or with a '#' that is not part of colours ("#1 #2" would be cut at
+        // the second '#'). Quotes inside are doubled.
+        static const QRegularExpression colours(R"(^#[0-9a-fA-F]{3,8}(\s*,\s*#[0-9a-fA-F]{3,8})*$)");
+        if (v.isEmpty() || v.contains('"') || (v.contains('#') && !colours.match(v).hasMatch()) ||
+            v != v.trimmed())
+            v = '"' + QString(v).replace("\"", "\"\"") + '"';
         const QString kv = e.key + ": " + v;
         s << kv.leftJustified(44) << " # " << e.description << "\n";
     }

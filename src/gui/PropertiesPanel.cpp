@@ -35,6 +35,25 @@ namespace gp {
 
 namespace {
 
+// Spin boxes clamp and round what they display. To never change a value the
+// user didn't touch (e.g. a level factor of 1.005 shown as 1.01), each box
+// remembers the value it showed after loading, and a commit writes the box
+// value back only if it differs from that.
+template <typename Box, typename T>
+void showValue(Box* box, T v)
+{
+    box->setValue(v);
+    box->setProperty("gpShown", box->value());
+}
+
+template <typename Box, typename T>
+T edited(const Box* box, T modelValue)
+{
+    const QVariant shown = box->property("gpShown");
+    if (shown.isValid() && shown.value<T>() == T(box->value())) return modelValue;
+    return T(box->value());
+}
+
 constexpr int kKindRole = Qt::UserRole + 1;
 constexpr int kIdRole = Qt::UserRole + 2;
 
@@ -317,7 +336,7 @@ QWidget* PropertiesPanel::buildDatasetPage()
     m_dsName = new QLineEdit;
     m_dsColor = new ColorButton;
     m_dsWidth = new QDoubleSpinBox;
-    m_dsWidth->setRange(0.1, 20);
+    m_dsWidth->setRange(0.01, 100);
     m_dsWidth->setSingleStep(0.5);
     m_dsWidth->setKeyboardTracking(false);
     m_dsLineStyle = makeLineStyleCombo(true);
@@ -330,7 +349,7 @@ QWidget* PropertiesPanel::buildDatasetPage()
         m_dsScatter->addItem(name, int(s));
     }
     m_dsScatterSize = new QDoubleSpinBox;
-    m_dsScatterSize->setRange(1, 40);
+    m_dsScatterSize->setRange(0.5, 200);
     m_dsScatterSize->setKeyboardTracking(false);
     m_dsVisible = new QCheckBox("Visible");
     m_dsLegend = new QCheckBox("In legend");
@@ -395,7 +414,7 @@ QWidget* PropertiesPanel::buildMarkerPage()
     m_mkColor = new ColorButton;
     m_mkLineStyle = makeLineStyleCombo(false);
     m_mkWidth = new QDoubleSpinBox;
-    m_mkWidth->setRange(0.5, 10);
+    m_mkWidth->setRange(0.1, 50);
     m_mkWidth->setSingleStep(0.5);
     m_mkWidth->setKeyboardTracking(false);
     m_mkShowValue = new QCheckBox("Show coordinate");
@@ -426,7 +445,7 @@ QWidget* PropertiesPanel::buildAnnotationPage()
     m_anY = makeCoordSpin();
     m_anColor = new ColorButton;
     m_anFontSize = new QDoubleSpinBox;
-    m_anFontSize->setRange(4, 72);
+    m_anFontSize->setRange(1, 400);
     m_anFontSize->setKeyboardTracking(false);
     form->addRow("Text", m_anText);
     form->addRow("X", m_anX);
@@ -530,18 +549,19 @@ QWidget* PropertiesPanel::buildMatrixPage()
     baseRow->addWidget(lower);
     baseRow->addWidget(higher);
     m_mxFactor = new QDoubleSpinBox;
-    m_mxFactor->setRange(1.01, 10);
+    m_mxFactor->setRange(1.001, 100);
     m_mxFactor->setSingleStep(0.05);
     m_mxFactor->setDecimals(3);
     m_mxFactor->setKeyboardTracking(false);
     m_mxCount = new QSpinBox;
-    m_mxCount->setRange(1, 100);
+    m_mxCount->setRange(1, 1000);
     m_mxCount->setKeyboardTracking(false);
     m_mxPosColor = new ColorButton;
     m_mxNegColor = new ColorButton;
     m_mxNegative = new QCheckBox("Negative levels");
+    m_mxNegative->setObjectName("matrixNegative");
     m_mxWidth = new QDoubleSpinBox;
-    m_mxWidth->setRange(0.1, 10);
+    m_mxWidth->setRange(0.01, 50);
     m_mxWidth->setSingleStep(0.25);
     m_mxWidth->setKeyboardTracking(false);
     m_mxImage = new QCheckBox("Colour-map image");
@@ -750,10 +770,10 @@ void PropertiesPanel::refreshCurrentPage()
             b5(m_dsScatterSize), b6(m_dsVisible);
         if (!m_dsName->hasFocus()) m_dsName->setText(d->name);
         m_dsColor->setColor(d->style.color);
-        m_dsWidth->setValue(d->style.lineWidth);
+        showValue(m_dsWidth, d->style.lineWidth);
         setComboData(m_dsLineStyle, int(d->style.lineStyle));
         setComboData(m_dsScatter, int(d->style.scatter));
-        m_dsScatterSize->setValue(d->style.scatterSize);
+        showValue(m_dsScatterSize, d->style.scatterSize);
         m_dsVisible->setChecked(d->style.visible);
         const QSignalBlocker b7(m_dsLegend), b8(m_dsStep), b9(m_dsFill);
         m_dsLegend->setChecked(d->style.inLegend);
@@ -781,7 +801,7 @@ void PropertiesPanel::refreshCurrentPage()
         m_mkPosition->setValue(m->position);
         m_mkColor->setColor(m->color);
         setComboData(m_mkLineStyle, int(m->lineStyle));
-        m_mkWidth->setValue(m->lineWidth);
+        showValue(m_mkWidth, m->lineWidth);
         m_mkShowValue->setChecked(m->showValue);
         break;
     }
@@ -798,7 +818,7 @@ void PropertiesPanel::refreshCurrentPage()
         // Unset values follow the style; show the effective ones.
         const Style& st = m_model->style();
         m_anColor->setColor(a->color.isValid() ? a->color : st.annotationColor);
-        m_anFontSize->setValue(a->fontSize > 0 ? a->fontSize : st.annotationSize);
+        showValue(m_anFontSize, a->fontSize > 0 ? a->fontSize : st.annotationSize);
         break;
     }
     case ObjectKind::Region: {
@@ -845,12 +865,12 @@ void PropertiesPanel::refreshCurrentPage()
             b5(m_mxNegative), b6(m_mxWidth), b7(m_mxImage), b8(m_mxVisible);
         if (!m_mxName->hasFocus()) m_mxName->setText(m->name);
         if (!m_mxBase->hasFocus()) m_mxBase->setText(QString::number(m->style.baseLevel, 'g', 6));
-        m_mxFactor->setValue(m->style.factor);
-        m_mxCount->setValue(m->style.levelCount);
+        showValue(m_mxFactor, m->style.factor);
+        showValue(m_mxCount, m->style.levelCount);
         m_mxPosColor->setColor(m->style.positiveColor);
         m_mxNegColor->setColor(m->style.negativeColor);
         m_mxNegative->setChecked(m->style.showNegative);
-        m_mxWidth->setValue(m->style.lineWidth);
+        showValue(m_mxWidth, m->style.lineWidth);
         m_mxImage->setChecked(m->style.showImage);
         m_mxVisible->setChecked(m->style.visible);
         const std::vector<double> lv = contourLevels(m->style);
@@ -892,10 +912,10 @@ void PropertiesPanel::commitDataset(bool mergeable)
     if (m_current.kind != ObjectKind::Dataset || !d) return;
     DatasetStyle s = d->style;
     s.color = m_dsColor->color();
-    s.lineWidth = m_dsWidth->value();
+    s.lineWidth = edited(m_dsWidth, d->style.lineWidth);
     s.lineStyle = LineStyle(m_dsLineStyle->currentData().toInt());
     s.scatter = ScatterShape(m_dsScatter->currentData().toInt());
-    s.scatterSize = m_dsScatterSize->value();
+    s.scatterSize = edited(m_dsScatterSize, d->style.scatterSize);
     s.visible = m_dsVisible->isChecked();
     s.inLegend = m_dsLegend->isChecked();
     s.step = StepMode(m_dsStep->currentData().toInt());
@@ -912,7 +932,7 @@ void PropertiesPanel::commitMarker(bool mergeable)
     m.position = m_mkPosition->value();
     m.color = m_mkColor->color();
     m.lineStyle = LineStyle(m_mkLineStyle->currentData().toInt());
-    m.lineWidth = m_mkWidth->value();
+    m.lineWidth = edited(m_mkWidth, cur->lineWidth);
     m.showValue = m_mkShowValue->isChecked();
     m_editor->updateMarker(m, std::nullopt, mergeable);
 }
@@ -928,7 +948,8 @@ void PropertiesPanel::commitAnnotation(bool mergeable)
     // Colour / size stay "follow the style" unless the user changed them.
     const Style& st = m_model->style();
     if (cur->color.isValid() || m_anColor->color() != st.annotationColor) a.color = m_anColor->color();
-    if (cur->fontSize > 0 || m_anFontSize->value() != st.annotationSize) a.fontSize = m_anFontSize->value();
+    const double size = edited(m_anFontSize, cur->fontSize > 0 ? cur->fontSize : st.annotationSize);
+    if (cur->fontSize > 0 || size != st.annotationSize) a.fontSize = size;
     m_editor->updateAnnotation(a, std::nullopt, mergeable);
 }
 
@@ -946,12 +967,12 @@ void PropertiesPanel::commitMatrix(bool mergeable)
     bool ok = false;
     const double base = m_mxBase->text().toDouble(&ok);
     if (ok && base > 0) s.baseLevel = base;
-    s.factor = m_mxFactor->value();
-    s.levelCount = m_mxCount->value();
+    s.factor = edited(m_mxFactor, m->style.factor);
+    s.levelCount = edited(m_mxCount, m->style.levelCount);
     s.positiveColor = m_mxPosColor->color();
     s.negativeColor = m_mxNegColor->color();
     s.showNegative = m_mxNegative->isChecked();
-    s.lineWidth = m_mxWidth->value();
+    s.lineWidth = edited(m_mxWidth, m->style.lineWidth);
     s.showImage = m_mxImage->isChecked();
     s.visible = m_mxVisible->isChecked();
     m_editor->setMatrixAppearance(m->id, m_mxName->text(), s, mergeable);

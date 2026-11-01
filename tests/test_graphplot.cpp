@@ -19,6 +19,7 @@
 #include "render/PlotRenderer.h"
 
 #include <QElapsedTimer>
+#include <QCheckBox>
 #include <QLineEdit>
 #include <QMimeData>
 
@@ -1416,6 +1417,64 @@ private slots:
         QFile pdf(dir.filePath("f.pdf"));
         QVERIFY(pdf.open(QIODevice::ReadOnly));
         QVERIFY(pdf.readAll().contains("MediaBox [0 0 576"));
+    }
+
+    void auditRound3()
+    {
+        // Single '*' only pairs with a lone '*'; "a * b" is not emphasis.
+        QCOMPARE(richTextToHtml("2*3 = 6, see **note**"), QString("2*3 = 6, see <b>note</b>"));
+        QCOMPARE(richTextToHtml("a * b and c * d"), QString("a * b and c * d"));
+        QCOMPARE(richTextToHtml("*it* and **bold**"), QString("<i>it</i> and <b>bold</b>"));
+        // Style text values with '#' and quotes survive save + load.
+        Style st;
+        QVERIFY(builtinStyle("default", &st));
+        st.labelInside = "#1 #2";
+        st.labelTopLeft = "12\" pipe";
+        Style back;
+        QStringList errors;
+        QVERIFY2(back.parse(st.toText(), &errors), qPrintable(errors.join("; ")));
+        QCOMPARE(back.labelInside, st.labelInside);
+        QCOMPARE(back.labelTopLeft, st.labelTopLeft);
+
+        // Edits in different panels never merge into one undo step.
+        auto w = makeWindow();
+        GridSpec g;
+        g.cols = 2;
+        w->setGrid(g);
+        w->axes(1).editor->addDataset(ramp("other"));  // same id sequence as panel 0
+        const ObjectId a = w->axes(0).editor->addMatrix(peaks(21));
+        const ObjectId b = w->axes(1).editor->addMatrix(peaks(21));
+        QCOMPARE(a, b);  // ids are per panel: the case that used to merge
+        const double la = w->axes(0).model->matrix(a)->style.baseLevel;
+        w->axes(0).editor->scaleContourLevels({a}, 2);
+        w->axes(1).editor->scaleContourLevels({b}, 2);
+        w->undoStack()->undo();
+        w->undoStack()->undo();
+        QCOMPARE(w->axes(0).model->matrix(a)->style.baseLevel, la);
+        QCOMPARE(w->axes(1).model->matrix(b)->style.baseLevel, la);
+
+        // The properties page never changes values the user didn't touch.
+        Matrix m = *w->axes(0).model->matrix(a);
+        m.style.levelCount = 150;
+        m.style.factor = 1.0005;
+        w->axes(0).editor->setMatrixAppearance(a, m.name, m.style, false);
+        w->setCurrentAxes(0);
+        w->controller()->setSelection({ObjectKind::Matrix, a});
+        QCoreApplication::processEvents();
+        auto* neg = w->findChild<QCheckBox*>("matrixNegative");
+        QVERIFY(neg);
+        neg->click();
+        QCOMPARE(w->axes(0).model->matrix(a)->style.levelCount, 150);
+        QCOMPARE(w->axes(0).model->matrix(a)->style.factor, 1.0005);
+    }
+
+    void timelineNavigatorFollowsMovedSignal()
+    {
+        auto f = makeTimeline();
+        f.tl->setNavigatorSignal({f.gps, f.speed});
+        f.tl->moveSignal({f.gps, f.speed}, f.imu);
+        QCOMPARE(f.tl->navigatorSignal().row, f.imu);
+        QCOMPARE(f.tl->signalName(f.tl->navigatorSignal()), QString("IMU / speed"));
     }
 
     // ---- data loading -----------------------------------------------------------------------
