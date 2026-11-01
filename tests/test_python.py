@@ -1423,11 +1423,14 @@ class PlotterTests(unittest.TestCase):
         ax.set_title("t")
         self.assertTrue(ax._ax.x_reversed)  # a twin keeps the host's direction
         plt.close("all")
-        f = plotter.figure()
-        f.contour(np.random.rand(6, 6))
-        self.assertFalse(f.contours()[0].label != "" and False)
-        old = plt.rcParams["xtick.labelsize"] if dict.__contains__(plt.rcParams, "xtick.labelsize") else None
-        self.assertIsNone(old)
+        # font.size scales the other text sizes (as matplotlib).
+        before = float(plotter.style.get("xtick.labelsize"))
+        size = float(plotter.style.get("font.size"))
+        plt.rcParams["font.size"] = size * 2
+        try:
+            self.assertAlmostEqual(float(plotter.style.get("xtick.labelsize")), before * 2, places=1)
+        finally:
+            plt.rcParams["font.size"] = size
 
     def test_round6_correctness(self):
         import plotter.pyplot as plt
