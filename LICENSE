@@ -1,0 +1,57 @@
+Graphplot - Proprietary License
+
+Copyright (c) 2026 Justinas Minkevicius <oompagoo@gmail.com>
+All rights reserved.
+
+1. Scope
+
+   This license applies to all files in this repository ("the Software"),
+   except the third-party components listed in section 6, which remain under
+   their own licenses.
+
+2. No permission without consent
+
+   No right or license is granted to anyone except the copyright holder.
+   Without the prior written permission of the copyright holder, you may not
+   use, run, copy, modify, merge, publish, distribute, sublicense, sell, rent,
+   or create derivative works of the Software, in whole or in part, for any
+   purpose, whether commercial or non-commercial. This includes personal,
+   private, educational and research use.
+
+3. Obtaining permission
+
+   Requests for permission should be sent to:
+       Justinas Minkevicius <oompagoo@gmail.com>
+
+   Permission is only valid if given in writing (e-mail is sufficient) by the
+   copyright holder. It applies only to the persons, purposes and period
+   stated in it, and may not be transferred.
+
+4. Access does not imply permission
+
+   Being able to view, download or clone the Software (for example from a
+   hosting service) does not grant any of the rights described in section 2.
+
+5. No warranty, no liability
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   AUTHOR OR COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR ITS
+   USE.
+
+6. Third-party components (not covered by this license)
+
+   - third_party/qcustomplot/  QCustomPlot 2.1.1, Copyright (C) Emanuel
+     Eichhammer, licensed under the GNU General Public License v3
+     (see third_party/qcustomplot/GPL.txt).
+   - Build-time and run-time dependencies that are not included in this
+     repository (Qt 6, pybind11, NumPy, ...) are subject to their own
+     licenses.
+
+   Note: QCustomPlot's GPLv3 license has requirements of its own for
+   programs that are built with it and distributed. Those requirements apply
+   independently of this license. To distribute builds under terms other
+   than the GPL, a commercial QCustomPlot license must be obtained from its
+   author, or QCustomPlot must be replaced.

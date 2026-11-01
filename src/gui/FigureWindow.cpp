@@ -407,6 +407,18 @@ void FigureWindow::buildActions()
     view->addSeparator();
     view->addAction(m_dock->toggleViewAction());
     buildStyleMenu();
+    QMenu* help = menuBar()->addMenu("&Help");
+    help->addAction("&About Graphplot", this, [this] {
+        QMessageBox::about(
+            this, "About Graphplot",
+            "<h3>Graphplot</h3>"
+            "<p>Interactive scientific plotting with Python control.</p>"
+            "<p>Author: <b>Justinas Minkevicius</b><br>"
+            "<a href='mailto:oompagoo@gmail.com'>oompagoo@gmail.com</a></p>"
+            "<p>Copyright &copy; 2026 Justinas Minkevicius. All rights reserved.<br>"
+            "Any use without the author's written permission is prohibited.</p>"
+            "<p>Includes QCustomPlot (GPLv3) by Emanuel Eichhammer and uses Qt.</p>");
+    });
     tb->addAction(autoscale);
     tb->addAction(reset);
     tb->addAction(m_levelsAction);

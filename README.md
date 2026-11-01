@@ -1,5 +1,7 @@
 # Graphplot
 
+*by Justinas Minkevicius · proprietary, all rights reserved (see [LICENSE](LICENSE))*
+
 An interactive scientific plotting application in C++20 / Qt 6, controllable
 from Python with NumPy arrays.
 
@@ -228,8 +230,17 @@ label.top.left: "**My Experiment** *Preliminary*"
   technical difficulties and their solutions.
 - [docs/STYLE_REFERENCE.md](docs/STYLE_REFERENCE.md): all style keys.
 
-## License note
+## Author and license
 
-QCustomPlot is licensed under **GPLv3**. Distributing a binary that links it
-makes the combined work subject to the GPL; commercial licences are available
-from its author.
+**Author:** Justinas Minkevicius <oompagoo@gmail.com>
+
+Copyright (c) 2026 Justinas Minkevicius. All rights reserved.
+
+Any use of this software is prohibited without the author's prior written
+permission. This includes commercial, personal, private, educational and
+research use. To request permission, write to the address above. See
+[LICENSE](LICENSE) for the full terms.
+
+Third-party code keeps its own license and is excluded from these terms.
+QCustomPlot (`third_party/qcustomplot`) is licensed under GPLv3; see the note
+in [LICENSE](LICENSE) about distributing builds that include it.

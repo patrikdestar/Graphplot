@@ -1,4 +1,6 @@
 // Standalone Graphplot application.
+// Copyright (c) 2026 Justinas Minkevicius <oompagoo@gmail.com>. All rights reserved.
+// Proprietary - see LICENSE.
 //   graphplot [data files...]
 // Without arguments a small demo data set is shown.
 #include "commands/PlotEditor.h"
@@ -106,6 +108,7 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
     QApplication::setApplicationName("Graphplot");
     QApplication::setOrganizationName("Graphplot");
+    QApplication::setApplicationVersion("0.1.0");
 
     QCommandLineParser parser;
     parser.setApplicationDescription("Interactive scientific plotting");

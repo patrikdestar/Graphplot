@@ -32,6 +32,10 @@ thread runs the event loop (prompt idle, ``show()``, ``pause()``, ...).
 """
 from __future__ import annotations
 
+__author__ = "Justinas Minkevicius <oompagoo@gmail.com>"
+__copyright__ = "Copyright (c) 2026 Justinas Minkevicius. All rights reserved."
+__license__ = "Proprietary - no use without the author's written permission (see LICENSE)"
+
 import sys as _sys
 
 from ._plotter import Annotation, Contour, Figure, Line, Marker, Peak
