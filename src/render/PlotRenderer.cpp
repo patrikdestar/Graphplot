@@ -75,6 +75,35 @@ public:
     }
 };
 
+// Log axis ticks. Over less than about a decade the powers of ten give one or
+// no tick and mantissas rounded by the "10^n" format repeat ("2·10^0" twice),
+// so short ranges get evenly spaced round ticks with plain numbers instead.
+class LogTicker : public QCPAxisTickerLog {
+public:
+    LogTicker()
+    {
+        setLogBase(10);
+        setSubTickCount(8);
+    }
+    void generate(const QCPRange& range, const QLocale& locale, QChar formatChar, int precision,
+                  QVector<double>& ticks, QVector<double>* subTicks, QVector<QString>* tickLabels) override
+    {
+        if (range.lower > 0 && range.upper / range.lower < 20) {
+            m_linear.setTickCount(5);
+            m_linear.generate(range, locale, 'g', 6, ticks, subTicks, nullptr);
+            if (tickLabels) {
+                tickLabels->clear();
+                for (double t : ticks) tickLabels->push_back(locale.toString(t, 'g', 6));
+            }
+            return;
+        }
+        QCPAxisTickerLog::generate(range, locale, formatChar, precision, ticks, subTicks, tickLabels);
+    }
+
+private:
+    QCPAxisTicker m_linear;
+};
+
 // A figure-wide axis label (supxlabel / supylabel), drawn in the space the
 // figure layout reserves below / left of all panels; the y label is rotated.
 class FigureLabelItem : public QCPAbstractItem {
@@ -325,7 +354,10 @@ bool PlotRenderer::measureTwinMargin()
 
 void PlotRenderer::updateRightPadding()
 {
+    // Plot area | twin's right axis (ticks, labels, label) | colour bar.
     m_y2->setPadding(m_colorBarWidth + m_twinMargin);
+    if (m_colorBar) m_colorBar->setOffset(m_twin ? m_twinMargin : 0);
+    if (m_twin) m_twin->m_axisLabels->setRightBand(m_twinMargin);
 }
 
 PlotRenderer::PlotRenderer(PlotModel* model, QCustomPlot* plot, QCPAxisRect* rect, bool primary,
@@ -872,21 +904,21 @@ void PlotRenderer::onDatasetAdded(ObjectId id)
     replot();
 }
 
-void PlotRenderer::resetFollowIfEmpty()
+void PlotRenderer::startFresh()
 {
-    // An empty panel (cleared figure, cla, everything deleted) starts afresh:
-    // the next data is fitted, as in a new figure.
-    if (m_model->datasets().empty() && m_model->matrices().empty()) {
-        m_followX = m_followY = true;
+    // A cleared panel (Figure.clear / cla / clf) fits its next data as a new
+    // one would. Panels that keep their x window (timeline rows) refit y only.
+    if (m_autoHome) {
+        m_followX = true;
         m_hasHome = false;
     }
+    m_followY = true;
 }
 
 void PlotRenderer::onDatasetRemoved(ObjectId id)
 {
     removeErrorBars(id);
     if (auto* p = m_plottables.take(id)) m_plot->removePlottable(p);
-    resetFollowIfEmpty();
     // Bands that were filled towards this dataset lose their partner.
     for (const auto& d : m_model->datasets())
         if (d.style.fillTo == id) applyDatasetAppearance(d.id);
@@ -1108,7 +1140,6 @@ void PlotRenderer::onMatrixRemoved(ObjectId id)
     const MatrixVisual v = m_matrices.take(id);
     if (v.contour) m_plot->removePlottable(v.contour);
     if (v.image) m_plot->removePlottable(v.image);
-    resetFollowIfEmpty();
     if (m_highlight.kind == ObjectKind::Matrix && m_highlight.id == id) m_highlight = {};
     syncLegend();
     updateColorBar();  // the removed image may have had the colour bar
@@ -1807,7 +1838,7 @@ void PlotRenderer::applyAxesInfo()
         for (QCPAxis* ax : {a, mirror}) {
             if (log && ax->scaleType() != QCPAxis::stLogarithmic) {
                 ax->setScaleType(QCPAxis::stLogarithmic);
-                auto t = QSharedPointer<QCPAxisTickerLog>::create();
+                auto t = QSharedPointer<LogTicker>::create();
                 t->setLogBase(10);
                 t->setSubTickCount(8);
                 ax->setTicker(t);
@@ -1868,7 +1899,7 @@ void PlotRenderer::applyAxesInfo()
             QSharedPointer<QCPAxisTicker> t = saved;
             if (log != !saved.dynamicCast<QCPAxisTickerLog>().isNull()) {
                 if (log) {
-                    auto lt = QSharedPointer<QCPAxisTickerLog>::create();
+                    auto lt = QSharedPointer<LogTicker>::create();
                     lt->setLogBase(10);
                     lt->setSubTickCount(8);
                     t = lt;

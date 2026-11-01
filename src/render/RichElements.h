@@ -83,6 +83,9 @@ public:
     // Twin panels: the y label is drawn right of `outer`'s frame (the host's
     // right margin).
     void setYOnRight(QCPAxisRect* outer) { m_rightOuter = outer; }
+    // Width of the right axis band (ticks, labels, this label) next to the
+    // plot area; the label sits at its outer edge (before a colour bar).
+    void setRightBand(int width) { m_rightBand = width; }
     // Panel title above the frame (multi-panel figures; empty = none).
     void setTitle(const QString& title, const QFont& font, const QColor& color, bool math);
     QSizeF titleSize() const { return m_title.size(); }
@@ -98,6 +101,7 @@ private:
     RichTextBlock m_x, m_y, m_title;
     QColor m_color, m_titleColor;
     QCPAxisRect* m_rightOuter = nullptr;
+    int m_rightBand = -1;
 };
 
 // Legend entry with a rich-text name.

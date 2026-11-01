@@ -137,6 +137,9 @@ private:
     Style m_style = defaultStyle();
     ObjectId m_lastId = 0;
     int m_colorCounter = 0;
+
+public:
+    void resetColorCycle() { m_colorCounter = 0; }  // a cleared panel starts at the first colour
 };
 
 }  // namespace gp

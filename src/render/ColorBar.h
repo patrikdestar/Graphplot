@@ -28,6 +28,8 @@ class ColorBar : public QCPLayerable {
     Q_OBJECT
 public:
     ColorBar(QCustomPlot* plot, QCPAxisRect* axisRect);
+    // Space between the plot area and the bar (a twin panel's right axis).
+    void setOffset(int px) { m_offset = px; }
 
     void set(const QCPColorGradient& gradient, const QCPRange& range, const QString& label, const QFont& font,
              const QColor& edge, const QColor& text, bool math);
@@ -49,6 +51,7 @@ private:
     QColor m_edge, m_text;
     RichTextBlock m_label;
     static constexpr int kGap = 10, kBarWidth = 14, kTick = 4;
+    int m_offset = 0;
 };
 
 }  // namespace gp

@@ -453,8 +453,20 @@ class PltAxes:
         y1 = _np.asarray(y1, dtype=float) + 0 * x
         y2 = _np.broadcast_to(_np.asarray(y2, dtype=float), y1.shape)
         if where is not None:
-            # Outside `where` the band collapses to zero height.
-            y1 = _np.where(_np.asarray(where, dtype=bool), y1, y2)
+            # As matplotlib: only the runs where `where` is True are filled
+            # (one band per run, sharing the colour and the label).
+            mask = _np.broadcast_to(_np.asarray(where, dtype=bool), y1.shape)
+            idx = _np.flatnonzero(mask)
+            runs = _np.split(idx, _np.flatnonzero(_np.diff(idx) > 1) + 1) if idx.size else []
+            col = _mpl_color(color) or self._ax._take_color()
+            first = None
+            for run in runs:
+                if run.size < 2:
+                    continue
+                band = self._ax.fill_between(x[run], y1[run], y2[run], color=col, alpha=alpha, step=step,
+                                             label=None if (label is None or first is not None) else str(label))
+                first = first or band
+            return first
         return self._ax.fill_between(x, y1, y2, label=None if label is None else str(label),
                                      color=_mpl_color(color), alpha=alpha, step=step)
 
@@ -1287,6 +1299,7 @@ class _PltFigure:
         custom ticks or log scales (as matplotlib's clf)."""
         for ax in self.axes:
             ax.cla()
+        self._fig.supxlabel = self._fig.supylabel = ""
         if getattr(self, "_grid", (1, 1)) != (1, 1):
             self._fig.subplots(1, 1)
             self._grid = (1, 1)

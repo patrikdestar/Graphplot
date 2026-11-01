@@ -144,7 +144,7 @@ void ColorBar::draw(QCPPainter* painter)
 {
     const QRect ar = m_rect->rect();
     if (!ar.isValid() || !(m_range.upper > m_range.lower)) return;
-    const QRect bar(ar.right() + kGap, ar.top(), kBarWidth, ar.height());
+    const QRect bar(ar.right() + m_offset + kGap, ar.top(), kBarWidth, ar.height());
     // The gradient, one line per pixel (top = maximum).
     for (int y = 0; y < bar.height(); ++y) {
         const double v = m_range.upper - (m_range.upper - m_range.lower) * (y + 0.5) / bar.height();

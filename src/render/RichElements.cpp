@@ -165,7 +165,10 @@ void RichAxisLabels::draw(QCPPainter* painter)
     }
     if (!m_y.isEmpty()) {
         const QSizeF s = m_y.size();
-        if (m_rightOuter)
+        if (m_rightOuter && m_rightBand > 0)
+            m_y.drawVertical(painter, QPointF(m_rightOuter->rect().right() + m_rightBand - s.height() / 2 - 4,
+                                              ar.center().y()), m_color);
+        else if (m_rightOuter)
             m_y.drawVertical(painter, QPointF(m_rightOuter->outerRect().right() - s.height() / 2 - 1, ar.center().y()),
                              m_color);
         else

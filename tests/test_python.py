@@ -1332,6 +1332,39 @@ class PlotterTests(unittest.TestCase):
         c.set_data(np.random.rand(10, 10), x=(10, 20), y=(10, 20))
         self.assertGreater(g.xlim()[0], 9)  # re-fitted to the new grid
 
+    def test_round13_fixes(self):
+        import plotter.pyplot as plt
+        x = np.linspace(0, 100, 50)
+        # Undo of a deletion that emptied the panel keeps the user's limits.
+        f = plotter.figure()
+        line = f.plot(x, x ** 2)
+        f.set_xlim(10, 20)
+        f.set_ylim(0, 500)
+        f.remove(line)
+        f.undo()
+        self.assertEqual(f.xlim(), (10.0, 20.0))
+        # clf resets the colour cycle and the figure-wide labels.
+        fig = plt.figure()
+        plt.plot([0, 1])
+        fig.supxlabel("SX")
+        plt.clf()
+        l, = plt.plot([0, 1], [1, 0])
+        self.assertEqual(l.get_color(), plotter.figure().plot([0, 1]).color)
+        self.assertEqual(fig._fig.supxlabel, "")
+        # fill_between(where=) fills only the True runs.
+        band = plt.fill_between([1, 2, 3, 4, 5], [0, 1, 2, 3, 4], [1, 2, 3, 4, 5],
+                                where=[True, True, False, True, True])
+        self.assertIsNotNone(band)
+        plt.close("all")
+        # Timeline readouts exist in every row of an export of an unshown timeline.
+        tl = plotter.timeline(size=(800, 400))
+        t = np.linspace(0, 100, 101)
+        tl.add_signals("a", t, {"s1": np.sin(t / 5)})
+        tl.add_signals("c", t, {"z": t})
+        tl.cursor_time = 50
+        with tempfile.TemporaryDirectory() as d:
+            tl.savefig(os.path.join(d, "n.png"))
+
     def test_round6_correctness(self):
         import plotter.pyplot as plt
         f = self.fig

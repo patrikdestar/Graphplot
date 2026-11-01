@@ -122,7 +122,8 @@ public:
     bool autoFitY() const { return m_autoFit; }
     void setAutoFitY(bool on);
     bool clockTime() const { return m_clock; }
-    void setClockTime(bool on);  // only possible when the data has absolute times
+    void setClockTime(bool on);
+    void positionReadouts();  // only possible when the data has absolute times
     bool hasAbsoluteTime() const { return m_absolute; }
     double timeOrigin() const { return m_origin; }  // Unix epoch seconds of t = 0
     void setTimeOrigin(double epochSeconds);         // marks the data as absolute

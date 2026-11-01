@@ -165,7 +165,9 @@ Timeline::Timeline(FigureWindow* window) : QObject(window), m_win(window), m_plo
         updateCursorVisuals();
     });
     // Exports: the navigator and marker labels use the figure's colours too.
+    connect(m_plot, &QCustomPlot::afterLayout, this, &Timeline::positionReadouts);
     connect(m_win, &FigureWindow::exportModeChanged, this, [this](bool on) {
+        if (on && m_cursor) updateCursorVisuals();  // current readings (e.g. after moving a signal)
         // A script may export right after plotting, before the event loop ran
         // the pending Y auto-fit: do it now so the file shows fitted rows.
         if (on && m_fitScheduled) autoFitNow();
@@ -396,6 +398,7 @@ ObjectId Timeline::moveSignal(const SignalRef& from, int toRow)
     stack->endMacro();
     if (wasNavigator) setNavigatorSignal({toRow, nid});
     scheduleAutoFit();
+    if (m_cursor) updateCursorVisuals();  // the readout moves with the signal
     return nid;
 }
 
@@ -777,6 +780,28 @@ void Timeline::setCursorTime(std::optional<double> t)
     emit cursorChanged(t);
 }
 
+void Timeline::positionReadouts()
+{
+    // Pixel geometry: done again after every layout pass (exports of a window
+    // never shown, resizes), not only when the cursor moves.
+    if (!m_cursor) return;
+    const double t = *m_cursor;
+    for (int row : m_order) {
+        RowVisual& v = m_rows[row];
+        if (!v.readout->visible()) continue;
+        // Right of the line, or left when close to the right edge.
+        PlotRenderer* rr = rowRenderer(row);
+        const double px = rr->xAxis()->coordToPixel(t);
+        const QRect ar = rr->axisRect()->rect();
+        const bool left = px > ar.left() + ar.width() * 0.72;
+        // A small gap (6 px) between the line and the box.
+        // Start below the time-marker labels at the top of the row (~22 px).
+        const double yRatio = ar.height() > 0 ? std::min(0.5, 22.0 / ar.height()) : 0.1;
+        v.readout->position->setCoords(rr->xAxis()->pixelToCoord(px + (left ? -6 : 6)), yRatio);
+        v.readout->setPositionAlignment((left ? Qt::AlignRight : Qt::AlignLeft) | Qt::AlignTop);
+    }
+}
+
 void Timeline::updateCursorVisuals()
 {
     const bool on = m_cursor.has_value();
@@ -802,17 +827,8 @@ void Timeline::updateCursorVisuals()
         }
         v.readout->setVisible(!lines.isEmpty());
         v.readout->setHtml(lines.join("<br>"), f);
-        // Right of the line, or left when close to the right edge.
-        PlotRenderer* rr = rowRenderer(row);
-        const double px = rr->xAxis()->coordToPixel(t);
-        const QRect ar = rr->axisRect()->rect();
-        const bool left = px > ar.left() + ar.width() * 0.72;
-        // A small gap (6 px) between the line and the box.
-        // Start below the time-marker labels at the top of the row (~22 px).
-        const double yRatio = ar.height() > 0 ? std::min(0.5, 22.0 / ar.height()) : 0.1;
-        v.readout->position->setCoords(rr->xAxis()->pixelToCoord(px + (left ? -6 : 6)), yRatio);
-        v.readout->setPositionAlignment((left ? Qt::AlignRight : Qt::AlignLeft) | Qt::AlignTop);
     }
+    positionReadouts();
     m_navCursor->setVisible(on);
     m_navTimeLabel->setVisible(on);
     if (on) {
