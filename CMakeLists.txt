@@ -63,6 +63,7 @@ target_link_libraries(graphplot PRIVATE graphplot_ui)
 
 # ---- Python module -------------------------------------------------------------------
 if(GRAPHPLOT_BUILD_PYTHON)
+  find_package(Python 3.8 COMPONENTS Interpreter Development.Module REQUIRED)
   add_subdirectory(src/python)
 endif()
 

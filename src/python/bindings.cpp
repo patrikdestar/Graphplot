@@ -1,0 +1,1026 @@
+// pybind11 module "_plotter" (wrapped by the pure-Python package "plotter").
+//
+// Python objects:
+//   Figure      - one FigureWindow (toolbar, plot, properties panel)
+//   Line        - handle to a 1D dataset
+//   Contour     - handle to a 2D dataset drawn as contours
+//   Marker      - handle to a vertical/horizontal marker
+//   Annotation  - handle to a text annotation
+//
+// Handles store (figure, object id). They stay valid across undo/redo,
+// because commands restore objects with their original id; using a handle
+// whose object no longer exists raises LookupError.
+//
+// All C++ state is touched on the GUI thread only (see GuiThread.h).
+#include "GuiThread.h"
+
+#include "commands/PlotEditor.h"
+#include "gui/FigureWindow.h"
+#include "model/Contour.h"
+#include "model/PlotModel.h"
+#include "qcustomplot.h"
+#include "render/PlotRenderer.h"
+
+#include <pybind11/functional.h>
+#include <pybind11/numpy.h>
+#include <pybind11/stl.h>
+
+#include <QApplication>
+#include <QPointer>
+#include <QSet>
+#include <QTimer>
+#include <QUndoStack>
+#include <cmath>
+#include <memory>
+
+namespace py = pybind11;
+using namespace gp;
+using gp::pyglue::inGui;
+
+namespace {
+
+// ---- conversions ------------------------------------------------------------------
+
+QVector<double> toVector(const py::handle& obj, const char* what)
+{
+    auto arr = py::array_t<double, py::array::c_style | py::array::forcecast>::ensure(obj);
+    if (!arr) throw py::type_error(std::string(what) + " must be convertible to a float array");
+    if (arr.ndim() != 1)
+        throw py::value_error(std::string(what) + " must be one-dimensional");
+    QVector<double> v(arr.size());
+    std::copy(arr.data(), arr.data() + arr.size(), v.begin());
+    return v;
+}
+
+py::array_t<double> toNumpy(const QVector<double>& v)
+{
+    py::array_t<double> a(v.size());
+    std::copy(v.begin(), v.end(), a.mutable_data());
+    return a;
+}
+
+QColor toColor(const py::handle& obj, const char* what = "color")
+{
+    if (obj.is_none()) return {};
+    if (py::isinstance<py::str>(obj)) {
+        const QColor c = parseColor(QString::fromStdString(obj.cast<std::string>()));
+        if (!c.isValid())
+            throw py::value_error(std::string("unknown ") + what + " '" + obj.cast<std::string>() + "'");
+        return c;
+    }
+    if (py::isinstance<py::sequence>(obj)) {
+        auto seq = obj.cast<std::vector<double>>();
+        if (seq.size() == 3 || seq.size() == 4) {
+            const bool unit = std::all_of(seq.begin(), seq.end(), [](double v) { return v <= 1.0; });
+            const double k = unit ? 255.0 : 1.0;
+            QColor c;
+            c.setRgb(int(std::lround(seq[0] * k)), int(std::lround(seq[1] * k)),
+                     int(std::lround(seq[2] * k)),
+                     seq.size() == 4 ? int(std::lround(seq[3] * k)) : 255);
+            return c;
+        }
+    }
+    throw py::type_error(std::string(what) + " must be a name, '#rrggbb' or an (r, g, b[, a]) tuple");
+}
+
+std::string colorName(const QColor& c)
+{
+    return c.alpha() == 255 ? c.name().toStdString() : c.name(QColor::HexArgb).toStdString();
+}
+
+LineStyle toLineStyle(const std::string& s)
+{
+    bool ok = false;
+    const LineStyle ls = parseLineStyle(QString::fromStdString(s), &ok);
+    if (!ok) throw py::value_error("unknown line style '" + s + "' (use '-', '--', ':', '-.', 'none')");
+    return ls;
+}
+
+ScatterShape toScatter(const py::handle& obj)
+{
+    if (obj.is_none()) return ScatterShape::None;
+    const std::string s = obj.cast<std::string>();
+    bool ok = false;
+    const ScatterShape sh = parseScatterShape(QString::fromStdString(s), &ok);
+    if (!ok) throw py::value_error("unknown marker symbol '" + s + "' (use o, s, ^, d, x, +)");
+    return sh;
+}
+
+Orientation toOrientation(const std::string& s)
+{
+    if (s == "v" || s == "vertical" || s == "x") return Orientation::Vertical;
+    if (s == "h" || s == "horizontal" || s == "y") return Orientation::Horizontal;
+    throw py::value_error("orientation must be 'v' or 'h'");
+}
+
+// ---- Figure ---------------------------------------------------------------------------
+
+class Figure : public std::enable_shared_from_this<Figure> {
+public:
+    explicit Figure(QPointer<FigureWindow> w) : m_w(std::move(w)) {}
+
+    // Returns the window or raises if it has been closed/destroyed.
+    FigureWindow* w() const
+    {
+        if (!m_w) throw std::runtime_error("the figure has been closed");
+        return m_w;
+    }
+    bool alive() const { return !m_w.isNull(); }
+    PlotModel* model() const { return w()->model(); }
+    PlotEditor* editor() const { return w()->editor(); }
+
+    // Callbacks ------------------------------------------------------------------------
+    // Events are delivered once an edit is complete (not on every intermediate
+    // mouse-move during a drag), coalesced per event loop iteration.
+    void connectCallbacks();
+    void addCallback(const std::string& event, py::function fn)
+    {
+        if (event != "region_changed" && event != "marker_changed" && event != "levels_changed" &&
+            event != "closed")
+            throw py::value_error("unknown event '" + event +
+                                  "' (region_changed, marker_changed, levels_changed, closed)");
+        m_callbacks.emplace_back(event, std::move(fn));
+    }
+    void clearCallbacks() { m_callbacks.clear(); }
+    void fire(const std::string& event, const std::function<py::tuple()>& makeArgs);
+
+    // Monotonic counters used by wait_for_*().
+    quint64 regionVersion = 0;
+    quint64 markerVersion = 0;
+    bool closed = false;
+
+private:
+    void scheduleFlush();
+    void flush();
+
+    QPointer<FigureWindow> m_w;
+    std::vector<std::pair<std::string, py::function>> m_callbacks;
+    bool m_regionDirty = false;
+    QSet<ObjectId> m_dirtyMarkers;
+    QSet<ObjectId> m_dirtyMatrices;
+    bool m_flushScheduled = false;
+};
+
+using FigurePtr = std::shared_ptr<Figure>;
+
+// Handle base: (figure, id)
+struct Handle {
+    FigurePtr fig;
+    ObjectId id;
+};
+
+struct Line : Handle {
+    const Dataset& get() const
+    {
+        const Dataset* d = fig->model()->dataset(id);
+        if (!d) throw py::key_error("this dataset no longer exists");
+        return *d;
+    }
+    void setStyle(const std::function<void(QString&, DatasetStyle&)>& f)
+    {
+        inGui([&] {
+            const Dataset& d = get();
+            QString name = d.name;
+            DatasetStyle s = d.style;
+            f(name, s);
+            fig->editor()->setDatasetAppearance(id, name, s);
+        });
+    }
+};
+struct Contour : Handle {
+    const Matrix& get() const
+    {
+        const Matrix* m = fig->model()->matrix(id);
+        if (!m) throw py::key_error("this 2D dataset no longer exists");
+        return *m;
+    }
+    void setStyle(const std::function<void(QString&, ContourStyle&)>& f)
+    {
+        inGui([&] {
+            const Matrix& m = get();
+            QString name = m.name;
+            ContourStyle s = m.style;
+            f(name, s);
+            fig->editor()->setMatrixAppearance(id, name, s);
+        });
+    }
+};
+struct MarkerH : Handle {
+    Marker get() const
+    {
+        const Marker* m = fig->model()->marker(id);
+        if (!m) throw py::key_error("this marker no longer exists");
+        return *m;
+    }
+    void edit(const std::function<void(Marker&)>& f)
+    {
+        inGui([&] {
+            Marker m = get();
+            f(m);
+            fig->editor()->updateMarker(m);
+        });
+    }
+};
+struct AnnotationH : Handle {
+    Annotation get() const
+    {
+        const Annotation* a = fig->model()->annotation(id);
+        if (!a) throw py::key_error("this annotation no longer exists");
+        return *a;
+    }
+    void edit(const std::function<void(Annotation&)>& f)
+    {
+        inGui([&] {
+            Annotation a = get();
+            f(a);
+            fig->editor()->updateAnnotation(a);
+        });
+    }
+};
+
+void Figure::connectCallbacks()
+{
+    FigureWindow* win = w();
+    PlotModel* m = win->model();
+    std::weak_ptr<Figure> weak = weak_from_this();
+    auto self = [weak]() { return weak.lock(); };
+
+    QObject::connect(m, &PlotModel::regionChanged, win, [self] {
+        if (auto f = self()) {
+            f->m_regionDirty = true;
+            f->scheduleFlush();
+        }
+    });
+    QObject::connect(m, &PlotModel::markerChanged, win, [self](ObjectId id) {
+        if (auto f = self()) {
+            f->m_dirtyMarkers.insert(id);
+            f->scheduleFlush();
+        }
+    });
+    QObject::connect(m, &PlotModel::matrixAppearanceChanged, win, [self](ObjectId id) {
+        if (auto f = self()) {
+            f->m_dirtyMatrices.insert(id);
+            f->scheduleFlush();
+        }
+    });
+    // A drag ends with a command push (or a plain release): flush then.
+    QObject::connect(win->editor()->undoStack(), &QUndoStack::indexChanged, win, [self] {
+        if (auto f = self()) f->scheduleFlush();
+    });
+    QObject::connect(win, &FigureWindow::closed, win, [self] {
+        if (auto f = self()) {
+            f->closed = true;
+            f->fire("closed", []() -> py::tuple { return py::make_tuple(); });
+        }
+    });
+}
+
+void Figure::scheduleFlush()
+{
+    if (m_flushScheduled) return;
+    m_flushScheduled = true;
+    QTimer::singleShot(0, m_w, [weak = weak_from_this()] {
+        if (auto f = weak.lock()) f->flush();
+    });
+}
+
+void Figure::flush()
+{
+    m_flushScheduled = false;
+    if (!m_w) return;
+    // Wait until the mouse is released: mid-drag states are previews.
+    if (QApplication::mouseButtons() != Qt::NoButton) {
+        QTimer::singleShot(50, m_w, [weak = weak_from_this()] {
+            if (auto f = weak.lock()) f->scheduleFlush();
+        });
+        return;
+    }
+    auto self = shared_from_this();
+    if (m_regionDirty) {
+        m_regionDirty = false;
+        ++regionVersion;
+        const Region r = model()->region();
+        fire("region_changed", [r]() -> py::tuple {
+            if (r.active) return py::make_tuple(r.xmin, r.xmax);
+            return py::make_tuple(py::none(), py::none());
+        });
+    }
+    const QSet<ObjectId> markers = std::exchange(m_dirtyMarkers, {});
+    for (ObjectId id : markers) {
+        if (!model()->marker(id)) continue;
+        ++markerVersion;
+        fire("marker_changed", [self, id]() -> py::tuple { return py::make_tuple(MarkerH{{self, id}}); });
+    }
+    const QSet<ObjectId> mats = std::exchange(m_dirtyMatrices, {});
+    for (ObjectId id : mats) {
+        if (!model()->matrix(id)) continue;
+        fire("levels_changed", [self, id]() -> py::tuple { return py::make_tuple(Contour{{self, id}}); });
+    }
+}
+
+void Figure::fire(const std::string& event, const std::function<py::tuple()>& makeArgs)
+{
+    bool any = false;
+    for (const auto& [ev, fn] : m_callbacks) any |= ev == event;
+    if (!any) return;
+    py::gil_scoped_acquire gil;  // the event loop runs with the GIL released
+    const auto callbacks = m_callbacks;  // callbacks may add/remove callbacks
+    for (const auto& [ev, fn] : callbacks) {
+        if (ev != event) continue;
+        try {
+            fn(*makeArgs());
+        } catch (py::error_already_set& e) {
+            // Never let a Python exception unwind through Qt's event loop.
+            e.discard_as_unraisable(py::str("plotter callback for '" + event + "'"));
+        }
+    }
+}
+
+// ---- Figure creation ---------------------------------------------------------------------
+
+FigurePtr makeFigure(const py::object& title, int width, int height)
+{
+    pyglue::ensureApp();
+    if (!pyglue::isGuiThread())
+        throw std::runtime_error("figures must be created on the GUI (main) thread");
+    auto* win = new FigureWindow;
+    win->setAttribute(Qt::WA_DeleteOnClose, false);  // keep data accessible after closing
+    win->resize(width, height);
+    if (!title.is_none()) {
+        const QString t = QString::fromStdString(title.cast<std::string>());
+        win->setWindowTitle(t);
+        AxesInfo info = win->model()->axesInfo();
+        info.title = t;
+        win->model()->setAxesInfo(info);
+    }
+    auto fig = std::make_shared<Figure>(QPointer<FigureWindow>(win));
+    fig->connectCallbacks();
+    return fig;
+}
+
+// Validates and returns (x0, x1) for a regular grid axis.
+std::pair<double, double> gridAxis(const py::object& obj, int n, const char* name)
+{
+    if (obj.is_none()) return {0.0, double(n - 1)};
+    const QVector<double> v = toVector(obj, name);
+    if (v.size() == 2 && n != 2) return {v[0], v[1]};  // (start, stop)
+    if (v.size() != n)
+        throw py::value_error(std::string(name) + " must have one value per grid column/row or be (start, stop)");
+    const double step = (v.last() - v.first()) / (n - 1);
+    for (int i = 1; i < n; ++i)
+        if (std::abs((v[i] - v[i - 1]) - step) > 1e-6 * std::max(std::abs(step), 1e-300))
+            throw py::value_error(std::string(name) + " must be uniformly spaced");
+    return {v.first(), v.last()};
+}
+
+Matrix matrixFromNumpy(const py::object& zobj, const py::object& x, const py::object& y)
+{
+    auto z = py::array_t<double, py::array::c_style | py::array::forcecast>::ensure(zobj);
+    if (!z || z.ndim() != 2) throw py::value_error("z must be a 2D array (rows = y, columns = x)");
+    Matrix m;
+    m.ny = int(z.shape(0));
+    m.nx = int(z.shape(1));
+    if (m.nx < 2 || m.ny < 2) throw py::value_error("z must be at least 2 x 2");
+    m.z.resize(z.size());
+    std::copy(z.data(), z.data() + z.size(), m.z.begin());
+    std::tie(m.x0, m.x1) = gridAxis(x, m.nx, "x");
+    std::tie(m.y0, m.y1) = gridAxis(y, m.ny, "y");
+    return m;
+}
+
+}  // namespace
+
+// ============================================================================================
+
+PYBIND11_MODULE(_plotter, mod)
+{
+    mod.doc() = "Native part of the 'plotter' package (Graphplot C++/Qt bindings).";
+
+    mod.def("process_events", &pyglue::processEvents, py::arg("ms") = 0,
+            "Run the Qt event loop for `ms` milliseconds (keeps windows responsive in scripts).");
+    mod.def(
+        "_run_until_closed",
+        [](const std::vector<FigurePtr>& figs, double timeout) {
+            return pyglue::runEventLoopUntil(
+                [figs] {
+                    for (const auto& f : figs)
+                        if (f->alive() && f->w()->isVisible()) return false;
+                    return true;
+                },
+                timeout < 0 ? -1 : int(timeout * 1000));
+        },
+        py::arg("figures"), py::arg("timeout") = -1.0);
+    mod.def("_has_app", [] { return QCoreApplication::instance() != nullptr; });
+
+    // ---- Figure ------------------------------------------------------------------------
+    py::class_<Figure, FigurePtr> fig(mod, "Figure", "A plot window.");
+    fig.def(py::init(&makeFigure), py::arg("title") = py::none(), py::arg("width") = 1000,
+            py::arg("height") = 650);
+
+    fig.def(
+        "plot",
+        [](FigurePtr self, const py::object& x, const py::object& y, const py::object& label,
+           const py::object& color, double width, const std::string& style,
+           const py::object& marker, double markersize, bool visible, bool replace) {
+            QVector<double> xv, yv;
+            if (y.is_none()) {  // plot(y)
+                yv = toVector(x, "y");
+                xv.resize(yv.size());
+                for (qsizetype i = 0; i < xv.size(); ++i) xv[i] = double(i);
+            } else {
+                xv = toVector(x, "x");
+                yv = toVector(y, "y");
+            }
+            if (xv.size() != yv.size())
+                throw py::value_error("x and y must have the same length");
+            Dataset d;
+            if (!label.is_none()) d.name = QString::fromStdString(label.cast<std::string>());
+            d.style.color = toColor(color);
+            d.style.lineWidth = width;
+            d.style.lineStyle = toLineStyle(style);
+            d.style.scatter = toScatter(marker);
+            d.style.scatterSize = markersize;
+            d.style.visible = visible;
+            d.x = std::move(xv);
+            d.y = std::move(yv);
+            const ObjectId id = inGui([&] {
+                PlotEditor* ed = self->editor();
+                if (replace && !d.name.isEmpty()) {
+                    if (const Dataset* old = self->model()->datasetByName(d.name)) {
+                        // Update in place: keep identity, update data and the given style.
+                        const ObjectId oid = old->id;
+                        ed->undoStack()->beginMacro("Update dataset");
+                        ed->setDatasetData(oid, d.x, d.y, true);
+                        if (!d.style.color.isValid()) d.style.color = old->style.color;
+                        ed->setDatasetAppearance(oid, d.name, d.style);
+                        ed->undoStack()->endMacro();
+                        return oid;
+                    }
+                }
+                const bool first = self->model()->datasets().empty() && self->model()->matrices().empty();
+                const ObjectId nid = ed->addDataset(d);
+                if (first) {
+                    self->w()->renderer()->autoscale();
+                    self->w()->renderer()->captureHomeView();
+                }
+                return nid;
+            });
+            return Line{{self, id}};
+        },
+        py::arg("x"), py::arg("y") = py::none(), py::kw_only(), py::arg("label") = py::none(),
+        py::arg("color") = py::none(), py::arg("width") = 1.5, py::arg("style") = "-",
+        py::arg("marker") = py::none(), py::arg("markersize") = 6.0, py::arg("visible") = true,
+        py::arg("replace") = false,
+        R"doc(Plot y against x (or y against its index if only one array is given).
+
+label     dataset name shown in the legend
+color     name ('blue', 'C3', '#ff8800') or (r, g, b[, a]) tuple; default: next palette colour
+width     line width in pixels
+style     '-', '--', ':', '-.' or 'none'
+marker    point symbol: 'o', 's', '^', 'd', 'x', '+' or None
+replace   if True and a dataset with the same label exists, update it in place
+Returns a Line handle.)doc");
+
+    fig.def(
+        "contour",
+        [](FigurePtr self, const py::object& z, const py::object& x, const py::object& y,
+           const py::object& label, int levels, double factor, const py::object& base,
+           const py::object& color, const py::object& negativeColor, bool negative, bool image,
+           double linewidth) {
+            Matrix m = matrixFromNumpy(z, x, y);
+            if (!label.is_none()) m.name = QString::fromStdString(label.cast<std::string>());
+            if (levels < 1) throw py::value_error("levels must be >= 1");
+            if (!(factor > 1.0)) throw py::value_error("factor must be > 1");
+            m.style.levelCount = levels;
+            m.style.factor = factor;
+            m.style.baseLevel = base.is_none() ? 0.0 : base.cast<double>();
+            m.style.positiveColor = toColor(color);
+            if (!negativeColor.is_none()) m.style.negativeColor = toColor(negativeColor, "negative_color");
+            m.style.showNegative = negative;
+            m.style.showImage = image;
+            m.style.lineWidth = linewidth;
+            const ObjectId id = inGui([&] {
+                const bool first = self->model()->datasets().empty() && self->model()->matrices().empty();
+                const ObjectId nid = self->editor()->addMatrix(m);
+                if (first) {
+                    self->w()->renderer()->autoscale();
+                    self->w()->renderer()->captureHomeView();
+                }
+                return nid;
+            });
+            return Contour{{self, id}};
+        },
+        py::arg("z"), py::arg("x") = py::none(), py::arg("y") = py::none(), py::kw_only(),
+        py::arg("label") = py::none(), py::arg("levels") = 12, py::arg("factor") = 1.4,
+        py::arg("base") = py::none(), py::arg("color") = py::none(),
+        py::arg("negative_color") = py::none(), py::arg("negative") = true,
+        py::arg("image") = false, py::arg("linewidth") = 1.0,
+        R"doc(Show 2D data z[row=y, column=x] as contour lines on a regular grid.
+
+x, y      grid coordinates: full uniformly spaced arrays or (start, stop); default: indices
+levels    number of positive levels: base * factor**k, k = 0..levels-1
+base      lowest level; default chooses the top level just below max |z|
+negative  also draw the mirrored negative levels (in negative_color)
+image     draw a colour-map image underneath the contours
+In the window, Alt+mouse wheel (or the wheel in 'Levels' mode) scrolls the
+levels; '*' and '/' halve / double them. Returns a Contour handle.)doc");
+
+    fig.def(
+        "marker",
+        [](FigurePtr self, double pos, const std::string& orientation, const py::object& color,
+           const std::string& label, const std::string& style, double width, bool showValue) {
+            Marker m;
+            m.orientation = toOrientation(orientation);
+            m.position = pos;
+            m.label = QString::fromStdString(label);
+            const QColor c = toColor(color);
+            m.lineStyle = toLineStyle(style);
+            m.lineWidth = width;
+            m.showValue = showValue;
+            const ObjectId id = inGui([&] {
+                m.color = c.isValid() ? c : paletteColor(7 + int(self->model()->markers().size()));
+                return self->editor()->addMarker(m);
+            });
+            return MarkerH{{self, id}};
+        },
+        py::arg("position"), py::arg("orientation") = "v", py::kw_only(),
+        py::arg("color") = py::none(), py::arg("label") = "", py::arg("style") = "--",
+        py::arg("width") = 1.5, py::arg("show_value") = true,
+        "Add a vertical ('v', at x = position) or horizontal ('h', at y = position) marker.");
+
+    fig.def(
+        "annotate",
+        [](FigurePtr self, const std::string& text, double x, double y, const py::object& color,
+           double fontsize) {
+            Annotation a;
+            a.text = QString::fromStdString(text);
+            a.x = x;
+            a.y = y;
+            const QColor c = toColor(color);
+            if (c.isValid()) a.color = c;
+            a.fontSize = fontsize;
+            return AnnotationH{{self, inGui([&] { return self->editor()->addAnnotation(a); })}};
+        },
+        py::arg("text"), py::arg("x"), py::arg("y"), py::kw_only(), py::arg("color") = py::none(),
+        py::arg("fontsize") = 10.0, "Add a text annotation anchored (bottom-left) at data (x, y).");
+
+    // -- region
+    fig.def(
+        "get_selected_region",
+        [](FigurePtr self) -> py::object {
+            const Region r = inGui([&] { return self->model()->region(); });
+            if (!r.active) return py::none();
+            return py::make_tuple(r.xmin, r.xmax);
+        },
+        "Return the selected X region as (xmin, xmax), or None if nothing is selected.");
+    fig.def(
+        "set_selected_region",
+        [](FigurePtr self, double xmin, double xmax) {
+            inGui([&] { self->editor()->setRegion(Region{true, xmin, xmax}); });
+        },
+        py::arg("xmin"), py::arg("xmax"));
+    fig.def("clear_selection", [](FigurePtr self) { inGui([&] { self->editor()->clearRegion(); }); });
+    fig.def(
+        "wait_for_region",
+        [](FigurePtr self, double timeout) -> py::object {
+            const quint64 start = self->regionVersion;
+            const bool ok = pyglue::runEventLoopUntil(
+                [self, start] { return self->regionVersion != start || self->closed; },
+                timeout < 0 ? -1 : int(timeout * 1000));
+            const Region r = self->alive() ? self->model()->region() : Region{};
+            if (!ok || !r.active) return py::none();
+            return py::make_tuple(r.xmin, r.xmax);
+        },
+        py::arg("timeout") = -1.0,
+        "Keep the window interactive until the user finishes selecting a region; return it.\n"
+        "Returns None on timeout, when the window is closed or the selection was cleared.");
+
+    // -- object lists
+    fig.def("lines", [](FigurePtr self) {
+        std::vector<Line> out;
+        inGui([&] {
+            for (const auto& d : self->model()->datasets()) out.push_back(Line{{self, d.id}});
+        });
+        return out;
+    });
+    fig.def("contours", [](FigurePtr self) {
+        std::vector<Contour> out;
+        inGui([&] {
+            for (const auto& m : self->model()->matrices()) out.push_back(Contour{{self, m.id}});
+        });
+        return out;
+    });
+    fig.def("markers", [](FigurePtr self) {
+        std::vector<MarkerH> out;
+        inGui([&] {
+            for (const auto& m : self->model()->markers()) out.push_back(MarkerH{{self, m.id}});
+        });
+        return out;
+    });
+    fig.def("annotations", [](FigurePtr self) {
+        std::vector<AnnotationH> out;
+        inGui([&] {
+            for (const auto& a : self->model()->annotations()) out.push_back(AnnotationH{{self, a.id}});
+        });
+        return out;
+    });
+    fig.def(
+        "get_marker_positions",
+        [](FigurePtr self) {
+            std::vector<std::tuple<std::string, std::string, double>> out;
+            inGui([&] {
+                for (const auto& m : self->model()->markers())
+                    out.emplace_back(m.label.toStdString(),
+                                     m.orientation == Orientation::Vertical ? "v" : "h", m.position);
+            });
+            return out;
+        },
+        "List of (label, orientation, position) for all markers.");
+    fig.def(
+        "line",
+        [](FigurePtr self, const std::string& label) {
+            const ObjectId id = inGui([&] {
+                const Dataset* d = self->model()->datasetByName(QString::fromStdString(label));
+                if (!d) throw py::key_error("no dataset named '" + label + "'");
+                return d->id;
+            });
+            return Line{{self, id}};
+        },
+        py::arg("label"), "Return the Line handle of the dataset with this label.");
+    fig.def("remove", [](FigurePtr self, const py::object& h) {
+        ObjectRef ref;
+        if (py::isinstance<Line>(h)) ref = {ObjectKind::Dataset, h.cast<Line&>().id};
+        else if (py::isinstance<Contour>(h)) ref = {ObjectKind::Matrix, h.cast<Contour&>().id};
+        else if (py::isinstance<MarkerH>(h)) ref = {ObjectKind::Marker, h.cast<MarkerH&>().id};
+        else if (py::isinstance<AnnotationH>(h)) ref = {ObjectKind::Annotation, h.cast<AnnotationH&>().id};
+        else throw py::type_error("expected a Line, Contour, Marker or Annotation");
+        inGui([&] { self->editor()->removeObject(ref); });
+    });
+    fig.def("clear", [](FigurePtr self) {
+        inGui([&] {
+            PlotEditor* ed = self->editor();
+            PlotModel* m = self->model();
+            ed->undoStack()->beginMacro("Clear figure");
+            while (!m->annotations().empty()) ed->removeAnnotation(m->annotations().back().id);
+            while (!m->markers().empty()) ed->removeMarker(m->markers().back().id);
+            while (!m->matrices().empty()) ed->removeMatrix(m->matrices().back().id);
+            while (!m->datasets().empty()) ed->removeDataset(m->datasets().back().id);
+            ed->clearRegion();
+            ed->undoStack()->endMacro();
+        });
+    }, "Remove all datasets, markers, annotations and the selection (undoable).");
+
+    // -- view
+    auto getLim = [](FigurePtr self, bool x) {
+        const ViewRange r = inGui([&] { return self->w()->renderer()->viewRange(); });
+        return x ? py::tuple(py::make_tuple(r.xmin, r.xmax)) : py::tuple(py::make_tuple(r.ymin, r.ymax));
+    };
+    fig.def("xlim", [getLim](FigurePtr s) { return getLim(s, true); }, "Current x axis limits.");
+    fig.def("ylim", [getLim](FigurePtr s) { return getLim(s, false); }, "Current y axis limits.");
+    fig.def(
+        "set_xlim",
+        [](FigurePtr self, double a, double b) {
+            inGui([&] {
+                ViewRange r = self->w()->renderer()->viewRange();
+                r.xmin = a;
+                r.xmax = b;
+                self->w()->renderer()->setViewRange(r);
+            });
+        },
+        py::arg("xmin"), py::arg("xmax"));
+    fig.def(
+        "set_ylim",
+        [](FigurePtr self, double a, double b) {
+            inGui([&] {
+                ViewRange r = self->w()->renderer()->viewRange();
+                r.ymin = a;
+                r.ymax = b;
+                self->w()->renderer()->setViewRange(r);
+            });
+        },
+        py::arg("ymin"), py::arg("ymax"));
+    fig.def(
+        "autoscale",
+        [](FigurePtr self, bool x, bool y) { inGui([&] { self->w()->renderer()->autoscale(x, y); }); },
+        py::arg("x") = true, py::arg("y") = true);
+    fig.def("reset_view", [](FigurePtr self) { inGui([&] { self->w()->renderer()->resetView(); }); });
+    fig.def("set_home_view", [](FigurePtr self) {
+        inGui([&] { self->w()->renderer()->captureHomeView(); });
+    }, "Make the current view the one restored by reset_view() / the Home key.");
+
+    // -- labels
+    auto axesProp = [](QString AxesInfo::*field) {
+        return std::make_pair(
+            [field](FigurePtr self) {
+                return inGui([&] { return (self->model()->axesInfo().*field).toStdString(); });
+            },
+            [field](FigurePtr self, const std::string& v) {
+                inGui([&] {
+                    AxesInfo a = self->model()->axesInfo();
+                    a.*field = QString::fromStdString(v);
+                    self->editor()->setAxesInfo(a);
+                });
+            });
+    };
+    auto [tg, ts] = axesProp(&AxesInfo::title);
+    auto [xg, xs] = axesProp(&AxesInfo::xLabel);
+    auto [yg, ys] = axesProp(&AxesInfo::yLabel);
+    fig.def_property("title", tg, ts);
+    fig.def_property("xlabel", xg, xs);
+    fig.def_property("ylabel", yg, ys);
+    fig.def(
+        "legend",
+        [](FigurePtr self, bool visible) {
+            inGui([&] {
+                AxesInfo a = self->model()->axesInfo();
+                a.legendVisible = visible;
+                self->editor()->setAxesInfo(a);
+            });
+        },
+        py::arg("visible") = true);
+    fig.def(
+        "grid",
+        [](FigurePtr self, bool visible) {
+            inGui([&] {
+                AxesInfo a = self->model()->axesInfo();
+                a.gridVisible = visible;
+                self->editor()->setAxesInfo(a);
+            });
+        },
+        py::arg("visible") = true);
+
+    // -- contour level scrolling (same as the mouse wheel / keys in the window)
+    fig.def(
+        "scale_contour_levels",
+        [](FigurePtr self, double factor) {
+            inGui([&] { self->w()->controller()->scaleContourLevels(factor); });
+        },
+        py::arg("factor"),
+        "Multiply the base level of the selected (or all visible) contour plots by factor.");
+
+    // -- window / history / export
+    fig.def(
+        "_show",
+        [](FigurePtr self) {
+            inGui([&] {
+                FigureWindow* w = self->w();
+                self->closed = false;
+                w->show();
+                w->raise();
+                w->activateWindow();
+            });
+        });
+    fig.def("close", [](FigurePtr self) {
+        if (self->alive()) inGui([&] { self->w()->close(); });
+    });
+    fig.def_property_readonly("is_open", [](FigurePtr self) {
+        return self->alive() && inGui([&] { return self->w()->isVisible(); });
+    });
+    fig.def("undo", [](FigurePtr self) { inGui([&] { self->editor()->undo(); }); });
+    fig.def("redo", [](FigurePtr self) { inGui([&] { self->editor()->redo(); }); });
+    fig.def(
+        "savefig",
+        [](FigurePtr self, const std::string& filename, int width, int height, double scale) {
+            QString err;
+            const bool ok = inGui([&] {
+                return self->w()->exportTo(QString::fromStdString(filename), width, height, scale, &err);
+            });
+            if (!ok) throw std::runtime_error(err.toStdString());
+        },
+        py::arg("filename"), py::kw_only(), py::arg("width") = 0, py::arg("height") = 0,
+        py::arg("scale") = 2.0,
+        "Export to .png, .svg or .pdf (format from the extension). width/height in pixels\n"
+        "(0 = window size); scale multiplies the PNG resolution.");
+    fig.def(
+        "screenshot",
+        [](FigurePtr self, const std::string& filename) {
+            const bool ok = inGui([&] {
+                return self->w()->grab().save(QString::fromStdString(filename));
+            });
+            if (!ok) throw std::runtime_error("could not save screenshot");
+        },
+        py::arg("filename"), "Save an image of the whole window (toolbar and panel included).");
+    fig.def("on", &Figure::addCallback, py::arg("event"), py::arg("callback"),
+            R"doc(Register a callback, run on the GUI thread after an edit completes.
+
+'region_changed'  callback(xmin, xmax)  - both None when the selection is cleared
+'marker_changed'  callback(marker)      - after a marker was moved/edited
+'levels_changed'  callback(contour)     - after contour settings/levels changed
+'closed'          callback()            - the window was closed)doc");
+    fig.def("disconnect_all", &Figure::clearCallbacks);
+
+    // ---- Line ------------------------------------------------------------------------------
+    py::class_<Line>(mod, "Line", "Handle to a 1D dataset.")
+        .def_property_readonly("x", [](Line& h) { return toNumpy(inGui([&] { return h.get().x; })); })
+        .def_property_readonly("y", [](Line& h) { return toNumpy(inGui([&] { return h.get().y; })); })
+        .def_property("label",
+                      [](Line& h) { return inGui([&] { return h.get().name.toStdString(); }); },
+                      [](Line& h, const std::string& v) {
+                          h.setStyle([&](QString& n, DatasetStyle&) { n = QString::fromStdString(v); });
+                      })
+        .def_property("color",
+                      [](Line& h) { return colorName(inGui([&] { return h.get().style.color; })); },
+                      [](Line& h, const py::object& v) {
+                          const QColor c = toColor(v);
+                          h.setStyle([&](QString&, DatasetStyle& s) { s.color = c; });
+                      })
+        .def_property("width",
+                      [](Line& h) { return inGui([&] { return h.get().style.lineWidth; }); },
+                      [](Line& h, double v) { h.setStyle([&](QString&, DatasetStyle& s) { s.lineWidth = v; }); })
+        .def_property("style",
+                      [](Line& h) { return lineStyleName(inGui([&] { return h.get().style.lineStyle; })).toStdString(); },
+                      [](Line& h, const std::string& v) {
+                          const LineStyle ls = toLineStyle(v);
+                          h.setStyle([&](QString&, DatasetStyle& s) { s.lineStyle = ls; });
+                      })
+        .def_property("marker",
+                      [](Line& h) { return scatterShapeName(inGui([&] { return h.get().style.scatter; })).toStdString(); },
+                      [](Line& h, const py::object& v) {
+                          const ScatterShape sh = toScatter(v);
+                          h.setStyle([&](QString&, DatasetStyle& s) { s.scatter = sh; });
+                      })
+        .def_property("visible",
+                      [](Line& h) { return inGui([&] { return h.get().style.visible; }); },
+                      [](Line& h, bool v) { h.setStyle([&](QString&, DatasetStyle& s) { s.visible = v; }); })
+        .def(
+            "set_data",
+            [](Line& h, const py::object& x, const py::object& y, bool undoable) {
+                QVector<double> xv = toVector(x, "x"), yv = toVector(y, "y");
+                if (xv.size() != yv.size()) throw py::value_error("x and y must have the same length");
+                inGui([&] {
+                    h.get();
+                    h.fig->editor()->setDatasetData(h.id, xv, yv, undoable);
+                });
+            },
+            py::arg("x"), py::arg("y"), py::kw_only(), py::arg("undoable") = false,
+            "Replace the data. Not recorded in the undo history unless undoable=True.")
+        .def("remove", [](Line& h) { inGui([&] { h.fig->editor()->removeDataset(h.id); }); })
+        .def_property_readonly("exists", [](Line& h) {
+            return h.fig->alive() && inGui([&] { return h.fig->model()->dataset(h.id) != nullptr; });
+        })
+        .def("__repr__", [](Line& h) {
+            return inGui([&]() -> std::string {
+                if (!h.fig->alive() || !h.fig->model()->dataset(h.id)) return "<Line (removed)>";
+                const Dataset& d = h.get();
+                return "<Line '" + d.name.toStdString() + "' n=" + std::to_string(d.x.size()) + ">";
+            });
+        });
+
+    // ---- Contour -----------------------------------------------------------------------------
+    py::class_<Contour>(mod, "Contour", "Handle to a 2D dataset shown as contours.")
+        .def_property_readonly("z", [](Contour& h) {
+            const Matrix m = inGui([&] { return h.get(); });
+            py::array_t<double> a({m.ny, m.nx});
+            std::copy(m.z.begin(), m.z.end(), a.mutable_data());
+            return a;
+        })
+        .def_property_readonly("extent", [](Contour& h) {
+            const Matrix m = inGui([&] { return h.get(); });
+            return py::make_tuple(m.x0, m.x1, m.y0, m.y1);
+        }, "(x0, x1, y0, y1) of the grid")
+        .def_property("label",
+                      [](Contour& h) { return inGui([&] { return h.get().name.toStdString(); }); },
+                      [](Contour& h, const std::string& v) {
+                          h.setStyle([&](QString& n, ContourStyle&) { n = QString::fromStdString(v); });
+                      })
+        .def_property("base_level",
+                      [](Contour& h) { return inGui([&] { return h.get().style.baseLevel; }); },
+                      [](Contour& h, double v) {
+                          if (!(v > 0)) throw py::value_error("base_level must be > 0");
+                          h.setStyle([&](QString&, ContourStyle& s) { s.baseLevel = v; });
+                      })
+        .def_property("factor",
+                      [](Contour& h) { return inGui([&] { return h.get().style.factor; }); },
+                      [](Contour& h, double v) {
+                          if (!(v > 1)) throw py::value_error("factor must be > 1");
+                          h.setStyle([&](QString&, ContourStyle& s) { s.factor = v; });
+                      })
+        .def_property("n_levels",
+                      [](Contour& h) { return inGui([&] { return h.get().style.levelCount; }); },
+                      [](Contour& h, int v) {
+                          if (v < 1) throw py::value_error("n_levels must be >= 1");
+                          h.setStyle([&](QString&, ContourStyle& s) { s.levelCount = v; });
+                      })
+        .def_property("negative",
+                      [](Contour& h) { return inGui([&] { return h.get().style.showNegative; }); },
+                      [](Contour& h, bool v) { h.setStyle([&](QString&, ContourStyle& s) { s.showNegative = v; }); })
+        .def_property("image",
+                      [](Contour& h) { return inGui([&] { return h.get().style.showImage; }); },
+                      [](Contour& h, bool v) { h.setStyle([&](QString&, ContourStyle& s) { s.showImage = v; }); })
+        .def_property("visible",
+                      [](Contour& h) { return inGui([&] { return h.get().style.visible; }); },
+                      [](Contour& h, bool v) { h.setStyle([&](QString&, ContourStyle& s) { s.visible = v; }); })
+        .def_property("color",
+                      [](Contour& h) { return colorName(inGui([&] { return h.get().style.positiveColor; })); },
+                      [](Contour& h, const py::object& v) {
+                          const QColor c = toColor(v);
+                          h.setStyle([&](QString&, ContourStyle& s) { s.positiveColor = c; });
+                      })
+        .def_property("negative_color",
+                      [](Contour& h) { return colorName(inGui([&] { return h.get().style.negativeColor; })); },
+                      [](Contour& h, const py::object& v) {
+                          const QColor c = toColor(v, "negative_color");
+                          h.setStyle([&](QString&, ContourStyle& s) { s.negativeColor = c; });
+                      })
+        .def("levels", [](Contour& h) {
+            const ContourStyle s = inGui([&] { return h.get().style; });
+            std::vector<double> l = contourLevels(s);
+            std::sort(l.begin(), l.end());
+            return l;
+        }, "All contour levels currently drawn, sorted ascending.")
+        .def("scale_levels", [](Contour& h, double factor) {
+            if (!(factor > 0)) throw py::value_error("factor must be > 0");
+            inGui([&] { h.get(); h.fig->editor()->scaleContourLevels({h.id}, factor); });
+        }, py::arg("factor"), "Multiply the base level (factor < 1 shows weaker features).")
+        .def(
+            "set_data",
+            [](Contour& h, const py::object& z, const py::object& x, const py::object& y) {
+                Matrix m = matrixFromNumpy(z, x, y);
+                inGui([&] {
+                    h.get();
+                    h.fig->editor()->setMatrixData(h.id, m.nx, m.ny, m.z, m.x0, m.x1, m.y0, m.y1);
+                });
+            },
+            py::arg("z"), py::arg("x") = py::none(), py::arg("y") = py::none(),
+            "Replace the grid (keeps the contour settings).")
+        .def("remove", [](Contour& h) { inGui([&] { h.fig->editor()->removeMatrix(h.id); }); })
+        .def("__repr__", [](Contour& h) {
+            return inGui([&]() -> std::string {
+                if (!h.fig->alive() || !h.fig->model()->matrix(h.id)) return "<Contour (removed)>";
+                const Matrix& m = h.get();
+                return "<Contour '" + m.name.toStdString() + "' " + std::to_string(m.nx) + "x" +
+                       std::to_string(m.ny) + " base=" + QString::number(m.style.baseLevel, 'g', 4).toStdString() + ">";
+            });
+        });
+
+    // ---- Marker ------------------------------------------------------------------------------
+    py::class_<MarkerH>(mod, "Marker", "Handle to a vertical or horizontal marker.")
+        .def_property("position",
+                      [](MarkerH& h) { return inGui([&] { return h.get().position; }); },
+                      [](MarkerH& h, double v) { h.edit([&](Marker& m) { m.position = v; }); })
+        .def_property_readonly("orientation", [](MarkerH& h) {
+            return inGui([&] { return h.get().orientation; }) == Orientation::Vertical ? "v" : "h";
+        })
+        .def_property("label",
+                      [](MarkerH& h) { return inGui([&] { return h.get().label.toStdString(); }); },
+                      [](MarkerH& h, const std::string& v) {
+                          h.edit([&](Marker& m) { m.label = QString::fromStdString(v); });
+                      })
+        .def_property("color",
+                      [](MarkerH& h) { return colorName(inGui([&] { return h.get().color; })); },
+                      [](MarkerH& h, const py::object& v) {
+                          const QColor c = toColor(v);
+                          h.edit([&](Marker& m) { m.color = c; });
+                      })
+        .def_property("style",
+                      [](MarkerH& h) { return lineStyleName(inGui([&] { return h.get().lineStyle; })).toStdString(); },
+                      [](MarkerH& h, const std::string& v) {
+                          const LineStyle ls = toLineStyle(v);
+                          h.edit([&](Marker& m) { m.lineStyle = ls; });
+                      })
+        .def_property("width",
+                      [](MarkerH& h) { return inGui([&] { return h.get().lineWidth; }); },
+                      [](MarkerH& h, double v) { h.edit([&](Marker& m) { m.lineWidth = v; }); })
+        .def("remove", [](MarkerH& h) { inGui([&] { h.fig->editor()->removeMarker(h.id); }); })
+        .def("__repr__", [](MarkerH& h) {
+            return inGui([&]() -> std::string {
+                if (!h.fig->alive() || !h.fig->model()->marker(h.id)) return "<Marker (removed)>";
+                const Marker m = h.get();
+                return "<Marker '" + m.label.toStdString() + "' " +
+                       (m.orientation == Orientation::Vertical ? "x=" : "y=") +
+                       QString::number(m.position, 'g', 6).toStdString() + ">";
+            });
+        });
+
+    // ---- Annotation ----------------------------------------------------------------------------
+    py::class_<AnnotationH>(mod, "Annotation", "Handle to a text annotation.")
+        .def_property("text",
+                      [](AnnotationH& h) { return inGui([&] { return h.get().text.toStdString(); }); },
+                      [](AnnotationH& h, const std::string& v) {
+                          h.edit([&](Annotation& a) { a.text = QString::fromStdString(v); });
+                      })
+        .def_property("position",
+                      [](AnnotationH& h) {
+                          const Annotation a = inGui([&] { return h.get(); });
+                          return py::make_tuple(a.x, a.y);
+                      },
+                      [](AnnotationH& h, std::pair<double, double> p) {
+                          h.edit([&](Annotation& a) { a.x = p.first; a.y = p.second; });
+                      })
+        .def_property("color",
+                      [](AnnotationH& h) { return colorName(inGui([&] { return h.get().color; })); },
+                      [](AnnotationH& h, const py::object& v) {
+                          const QColor c = toColor(v);
+                          h.edit([&](Annotation& a) { a.color = c; });
+                      })
+        .def_property("fontsize",
+                      [](AnnotationH& h) { return inGui([&] { return h.get().fontSize; }); },
+                      [](AnnotationH& h, double v) { h.edit([&](Annotation& a) { a.fontSize = v; }); })
+        .def("remove", [](AnnotationH& h) { inGui([&] { h.fig->editor()->removeAnnotation(h.id); }); })
+        .def("__repr__", [](AnnotationH& h) {
+            return inGui([&]() -> std::string {
+                if (!h.fig->alive() || !h.fig->model()->annotation(h.id)) return "<Annotation (removed)>";
+                return "<Annotation '" + h.get().text.toStdString() + "'>";
+            });
+        });
+}

@@ -1,0 +1,221 @@
+"""Tests for the Python API. Run headless:
+
+    QT_QPA_PLATFORM=offscreen PYTHONPATH=build/python python -m unittest -v tests/test_python.py
+"""
+import os
+import tempfile
+import threading
+import time
+import unittest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+import numpy as np  # noqa: E402
+
+import plotter  # noqa: E402
+
+
+class PlotterTests(unittest.TestCase):
+    def setUp(self):
+        self.fig = plotter.figure("test")
+        self.fig.show(block=False)
+        self.x = np.linspace(0, 100, 2000)
+
+    def tearDown(self):
+        self.fig.close()
+        plotter.pause(0.01)
+
+    def test_example_from_spec(self):
+        fig, x = self.fig, self.x
+        y1, y2 = np.sin(x), np.cos(x)
+        l1 = fig.plot(x, y1, label="Signal 1", color="blue")
+        fig.plot(x, y2, label="Signal 2", color="red")
+        fig.marker(25.0, color="green", label="Marker 1")
+        fig.marker(50.0, color="orange", label="Marker 2")
+        self.assertEqual(len(fig.lines()), 2)
+        np.testing.assert_allclose(l1.y, y1)
+        self.assertEqual(fig.get_marker_positions(),
+                         [("Marker 1", "v", 25.0), ("Marker 2", "v", 50.0)])
+        corrected = fig.plot(x, y1 - np.mean(y1), label="Corrected signal", color="black")
+        self.assertAlmostEqual(float(np.mean(corrected.y)), 0.0, places=12)
+        self.assertEqual(corrected.color, "#0b0b0b")
+
+    def test_plot_options_and_handles(self):
+        line = self.fig.plot(self.x, self.x ** 2, label="q", style="--", width=2.5, marker="o")
+        self.assertEqual(line.style, "dash")
+        self.assertEqual(line.marker, "circle")
+        self.assertEqual(line.width, 2.5)
+        line.color = (1.0, 0.0, 0.0)
+        self.assertEqual(line.color, "#ff0000")
+        line.visible = False
+        self.assertFalse(line.visible)
+        self.fig.undo()  # visibility change is undoable
+        self.assertTrue(line.visible)
+        with self.assertRaises(ValueError):
+            self.fig.plot([1, 2, 3], [1, 2])
+        with self.assertRaises(ValueError):
+            self.fig.plot(self.x, self.x, color="no-such-colour")
+
+    def test_y_only_and_int_input(self):
+        line = self.fig.plot([3, 1, 2])
+        np.testing.assert_array_equal(line.x, [0, 1, 2])
+        np.testing.assert_array_equal(line.y, [3, 1, 2])
+
+    def test_replace_updates_in_place(self):
+        a = self.fig.plot(self.x, np.sin(self.x), label="s")
+        b = self.fig.plot(self.x[:10], np.zeros(10), label="s", replace=True)
+        self.assertEqual(len(self.fig.lines()), 1)
+        self.assertEqual(len(a.x), 10)
+        self.assertEqual(repr(a), repr(b))
+
+    def test_set_data_not_undoable_by_default(self):
+        line = self.fig.plot(self.x, self.x)
+        line.set_data([0, 1], [2, 3])
+        np.testing.assert_array_equal(line.y, [2, 3])
+        line.set_data([0], [5], undoable=True)
+        self.fig.undo()
+        np.testing.assert_array_equal(line.y, [2, 3])
+
+    def test_remove_and_undo_keep_handle(self):
+        line = self.fig.plot(self.x, self.x, label="r")
+        line.remove()
+        self.assertFalse(line.exists)
+        with self.assertRaises(KeyError):
+            _ = line.y
+        self.fig.undo()
+        self.assertTrue(line.exists)
+        self.assertEqual(line.label, "r")
+
+    def test_markers_and_annotations(self):
+        m = self.fig.marker(10.0, "h", label="baseline", color="#336699", style=":")
+        self.assertEqual(m.orientation, "h")
+        m.position = 12.5
+        self.assertEqual(m.position, 12.5)
+        self.fig.undo()
+        self.assertEqual(m.position, 10.0)
+        a = self.fig.annotate("peak", 30, 0.9, color="red", fontsize=14)
+        a.text = "big peak"
+        a.position = (31, 0.8)
+        self.assertEqual(a.position, (31.0, 0.8))
+        self.assertEqual(self.fig.annotations()[0].text, "big peak")
+        self.fig.remove(a)
+        self.assertEqual(self.fig.annotations(), [])
+
+    def test_region(self):
+        self.assertIsNone(self.fig.get_selected_region())
+        self.fig.set_selected_region(40, 20)
+        self.assertEqual(self.fig.get_selected_region(), (20.0, 40.0))
+        mask = self.fig.region_mask(self.x)
+        self.assertTrue(np.all(self.x[mask] >= 20))
+        self.fig.clear_selection()
+        self.assertIsNone(self.fig.get_selected_region())
+        self.fig.undo()
+        self.assertEqual(self.fig.get_selected_region(), (20.0, 40.0))
+
+    def test_axes_and_view(self):
+        self.fig.plot(self.x, np.sin(self.x))
+        self.fig.title = "T"
+        self.fig.xlabel = "time (s)"
+        self.assertEqual(self.fig.xlabel, "time (s)")
+        self.fig.set_xlim(10, 20)
+        self.assertEqual(self.fig.xlim(), (10.0, 20.0))
+        self.fig.reset_view()
+        self.assertEqual(self.fig.xlim(), (0.0, 100.0))
+
+    def test_callbacks(self):
+        events = []
+        self.fig.on("region_changed", lambda a, b: events.append(("region", a, b)))
+        self.fig.on("marker_changed", lambda m: events.append(("marker", m.position)))
+        self.fig.set_selected_region(1, 2)
+        m = self.fig.marker(5.0)
+        m.position = 6.0
+        plotter.pause(0.05)
+        self.assertIn(("region", 1.0, 2.0), events)
+        self.assertIn(("marker", 6.0), events)
+
+    def test_callback_exception_does_not_crash(self):
+        def bad(*_):
+            raise RuntimeError("boom")
+        self.fig.on("region_changed", bad)
+        self.fig.set_selected_region(1, 2)
+        plotter.pause(0.05)  # exception is reported as "unraisable", loop survives
+        self.assertEqual(self.fig.get_selected_region(), (1.0, 2.0))
+
+    def test_calls_from_worker_thread_and_wait_for_region(self):
+        # A worker thread edits the figure while the main thread waits in the
+        # event loop - exercises the GUI-thread marshalling.
+        self.fig.plot(self.x, np.sin(self.x))
+        result = {}
+
+        def worker():
+            time.sleep(0.1)
+            result["line"] = self.fig.plot(self.x, np.cos(self.x), label="from thread")
+            self.fig.set_selected_region(10, 30)
+
+        t = threading.Thread(target=worker)
+        t.start()
+        region = self.fig.wait_for_region(timeout=5)
+        t.join()
+        self.assertEqual(region, (10.0, 30.0))
+        self.assertEqual(result["line"].label, "from thread")
+
+    def test_wait_for_region_timeout(self):
+        self.assertIsNone(self.fig.wait_for_region(timeout=0.1))
+
+    def test_contour(self):
+        yy, xx = np.mgrid[-1:1:200j, -1:1:300j]
+        z = np.exp(-(xx ** 2 + yy ** 2) / 0.1) - 0.5 * np.exp(-((xx - 0.6) ** 2 + yy ** 2) / 0.02)
+        c = self.fig.contour(z, x=(-1, 1), y=np.linspace(-1, 1, 200), label="2D", levels=8)
+        self.assertEqual(c.extent, (-1.0, 1.0, -1.0, 1.0))
+        self.assertEqual(c.z.shape, (200, 300))
+        base = c.base_level
+        self.assertGreater(base, 0)
+        self.assertEqual(len(c.levels()), 16)  # positive + negative
+        self.assertLess(max(c.levels()), np.abs(z).max())
+        c.scale_levels(0.5)
+        self.assertAlmostEqual(c.base_level, base / 2)
+        self.fig.undo()
+        self.assertAlmostEqual(c.base_level, base)
+        c.base_level = 0.01
+        c.negative = False
+        self.assertEqual(len(c.levels()), 8)
+        c.set_data(z * 2)
+        np.testing.assert_allclose(c.z, z * 2)
+        with self.assertRaises(ValueError):
+            self.fig.contour(z, x=np.r_[0, 1, 5, np.arange(3, 300)])  # not uniform
+        with self.assertRaises(ValueError):
+            self.fig.contour(np.zeros(5))
+
+    def test_levels_changed_callback(self):
+        got = []
+        z = np.random.default_rng(0).normal(size=(50, 50))
+        c = self.fig.contour(z)
+        self.fig.on("levels_changed", lambda h: got.append(h.base_level))
+        self.fig.scale_contour_levels(2.0)
+        plotter.pause(0.05)
+        self.assertEqual(len(got), 1)
+        self.assertAlmostEqual(got[0], c.base_level)
+
+    def test_savefig(self):
+        self.fig.plot(self.x, np.sin(self.x), label="s")
+        self.fig.marker(50, label="M")
+        with tempfile.TemporaryDirectory() as d:
+            for ext in ("png", "svg", "pdf"):
+                fn = os.path.join(d, "out." + ext)
+                self.fig.savefig(fn, width=640, height=400)
+                self.assertGreater(os.path.getsize(fn), 1000)
+            with self.assertRaises(RuntimeError):
+                self.fig.savefig(os.path.join(d, "out.xyz"))
+
+    def test_closed_figure_raises(self):
+        fig = plotter.figure()
+        fig.show(block=False)
+        fig.close()
+        self.assertFalse(fig.is_open)
+        # Data stays accessible after closing the window.
+        fig.plot([1, 2], [3, 4])
+        self.assertEqual(len(fig.lines()), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
