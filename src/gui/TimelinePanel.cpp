@@ -10,6 +10,7 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QPushButton>
+#include <QShortcut>
 #include <QSignalBlocker>
 #include <QTableWidget>
 #include <QVBoxLayout>
@@ -119,6 +120,7 @@ TimelinePanel::TimelinePanel(Timeline* tl, QWidget* parent) : QWidget(parent), m
     m_pins->setToolTip("Double-click a time to jump there; double-click a label to rename.\n"
                        "In the plot: Ctrl+click or M adds a marker, drag it to move, right-click for options.");
     pl->addWidget(m_pins, 1);
+    auto* delKey = new QShortcut(QKeySequence::Delete, m_pins, nullptr, nullptr, Qt::WidgetShortcut);
     auto* pb = new QHBoxLayout;
     auto* addPin = new QPushButton("Add at cursor (M)");
     auto* delPin = new QPushButton("Delete");
@@ -158,10 +160,12 @@ TimelinePanel::TimelinePanel(Timeline* tl, QWidget* parent) : QWidget(parent), m
         const auto [a, b] = m_tl->window();
         m_tl->addPin(m_tl->cursorTime().value_or(0.5 * (a + b)));
     });
-    connect(delPin, &QPushButton::clicked, this, [this] {
+    auto deleteSelectedPin = [this] {
         const int r = m_pins->currentRow();
         if (r >= 0) m_tl->removePin(m_pins->item(r, 0)->data(Qt::UserRole).toULongLong());
-    });
+    };
+    connect(delPin, &QPushButton::clicked, this, deleteSelectedPin);
+    connect(delKey, &QShortcut::activated, this, deleteSelectedPin);
     connect(m_pins, &QTableWidget::cellDoubleClicked, this, [this](int r, int c) {
         if (c == 0) m_tl->jumpToPin(m_pins->item(r, 0)->data(Qt::UserRole).toULongLong());
     });
@@ -181,7 +185,8 @@ TimelinePanel::TimelinePanel(Timeline* tl, QWidget* parent) : QWidget(parent), m
         rebuildRows();
         rebuildSignals();
     });
-    connect(m_tl, &Timeline::pinsChanged, this, &TimelinePanel::rebuildPins);
+    // Queued: a pin edit made from a table cell must not delete that cell's item.
+    connect(m_tl, &Timeline::pinsChanged, this, &TimelinePanel::rebuildPins, Qt::QueuedConnection);
     connect(m_tl, &Timeline::optionsChanged, this, [this] {
         const QSignalBlocker b1(m_clock), b2(m_autoFit);
         m_clock->setEnabled(m_tl->hasAbsoluteTime());
@@ -193,7 +198,17 @@ TimelinePanel::TimelinePanel(Timeline* tl, QWidget* parent) : QWidget(parent), m
         const auto [a, b] = m_tl->window();
         m_cursorLabel->setText(t ? m_tl->formatTime(*t, (b - a) / 1000.0) : QStringLiteral("–"));
     });
-    connect(m_tl, &Timeline::windowChanged, this, [this] { rebuildPins(); });
+    // Pan/zoom only changes the time format: update texts, keep any edit open.
+    connect(m_tl, &Timeline::windowChanged, this, [this] {
+        const auto [a, b] = m_tl->window();
+        m_updating = true;
+        for (int r = 0; r < m_pins->rowCount(); ++r) {
+            const ObjectId id = m_pins->item(r, 0)->data(Qt::UserRole).toULongLong();
+            for (const TimePin& p : m_tl->pins())
+                if (p.id == id) m_pins->item(r, 0)->setText(m_tl->formatTime(p.t, (b - a) / 1000.0));
+        }
+        m_updating = false;
+    });
     rebuildRows();
     rebuildSignals();
     rebuildPins();
@@ -265,16 +280,26 @@ void TimelinePanel::rebuildPins()
 void TimelinePanel::onRowItemChanged(QTreeWidgetItem* item, int column)
 {
     if (m_updating || item->parent()) return;
+    // Copy everything first: the changes below rebuild the tree, which
+    // deletes `item`. Apply them after Qt has finished with the item.
     const int row = item->data(0, kRowRole).toInt();
-    if (column == 0) {
-        m_tl->setRowVisible(row, item->checkState(0) == Qt::Checked);
-        m_tl->setRowName(row, item->text(0));
-    } else if (column == 1) {
-        bool ok = false;
-        const double h = item->text(1).toDouble(&ok);
-        if (ok && h > 0) m_tl->setRowHeight(row, h);
-        else rebuildRows();
-    }
+    const bool visible = item->checkState(0) == Qt::Checked;
+    const QString name = item->text(0);
+    const QString height = item->text(1);
+    QMetaObject::invokeMethod(this, [this, row, column, visible, name, height] {
+        if (column == 0) {
+            // Only a real rename changes the name (not the "Row N" placeholder).
+            const QString shown = m_tl->rowName(row).isEmpty() ? QString("Row %1").arg(row + 1)
+                                                               : m_tl->rowName(row);
+            if (name != shown) m_tl->setRowName(row, name);
+            m_tl->setRowVisible(row, visible);
+        } else if (column == 1) {
+            bool ok = false;
+            const double h = height.toDouble(&ok);
+            if (ok && h > 0) m_tl->setRowHeight(row, h);
+            else rebuildRows();
+        }
+    }, Qt::QueuedConnection);
 }
 
 }  // namespace gp

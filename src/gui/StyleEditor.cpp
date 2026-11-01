@@ -1,7 +1,5 @@
 #include "StyleEditor.h"
 
-#include "commands/PlotEditor.h"
-#include "model/PlotModel.h"
 
 #include <QComboBox>
 #include <QDialogButtonBox>
@@ -15,7 +13,8 @@
 
 namespace gp {
 
-StyleEditor::StyleEditor(PlotEditor* editor, QWidget* parent) : QDialog(parent), m_editor(editor)
+StyleEditor::StyleEditor(const Style& initial, std::function<void(const Style&)> apply, QWidget* parent)
+    : QDialog(parent), m_base(initial), m_apply(std::move(apply))
 {
     setWindowTitle("Edit style");
     resize(760, 640);
@@ -54,7 +53,7 @@ StyleEditor::StyleEditor(PlotEditor* editor, QWidget* parent) : QDialog(parent),
     connect(buttons, &QDialogButtonBox::accepted, this, [this] {
         Style s;
         if (collect(&s)) {
-            m_editor->setStyle(s, "Edit style");
+            m_apply(s);
             accept();
         }
     });
@@ -72,7 +71,7 @@ StyleEditor::StyleEditor(PlotEditor* editor, QWidget* parent) : QDialog(parent),
         if (i > 0 && builtinStyle(base->itemText(i), &s)) load(s);
         base->setCurrentIndex(0);
     });
-    load(editor->model()->style());
+    load(initial);
 }
 
 void StyleEditor::load(const Style& s)
@@ -94,7 +93,7 @@ void StyleEditor::load(const Style& s)
 
 bool StyleEditor::collect(Style* out)
 {
-    Style s = m_editor->model()->style();
+    Style s = m_base;
     QStringList errors;
     for (int r = 0; r < m_table->rowCount(); ++r) {
         QString err;
@@ -118,7 +117,7 @@ bool StyleEditor::collect(Style* out)
 void StyleEditor::apply()
 {
     Style s;
-    if (collect(&s)) m_editor->setStyle(s, "Edit style");
+    if (collect(&s)) m_apply(s);
 }
 
 }  // namespace gp

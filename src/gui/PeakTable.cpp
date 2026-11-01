@@ -20,7 +20,12 @@
 #include <QSpinBox>
 #include <QTableWidget>
 #include <QUndoStack>
+#include <QClipboard>
+#include <QGuiApplication>
+#include <QShortcut>
+#include <QTimer>
 #include <QVBoxLayout>
+#include <algorithm>
 
 namespace gp {
 
@@ -162,8 +167,44 @@ PeakTable::PeakTable(PlotEditor* editor, PlotRenderer* renderer, InteractionCont
         if (col <= ColIntensity) centreOn(m_table->item(row, ColX)->data(kIdRole).toULongLong());
     });
 
-    connect(m_model, &PlotModel::peakAdded, this, &PeakTable::rebuild);
-    connect(m_model, &PlotModel::peakRemoved, this, &PeakTable::rebuild);
+    // Picking adds hundreds of peaks at once: rebuild once per event-loop pass.
+    auto scheduleRebuild = [this] {
+        if (m_rebuildPending) return;
+        m_rebuildPending = true;
+        QTimer::singleShot(0, this, [this] {
+            m_rebuildPending = false;
+            rebuild();
+        });
+    };
+    connect(m_model, &PlotModel::peakAdded, this, scheduleRebuild);
+    connect(m_model, &PlotModel::peakRemoved, this, scheduleRebuild);
+
+    // Keyboard: Delete removes the selected peaks, Ctrl+C copies them as TSV.
+    auto* delKey = new QShortcut(QKeySequence::Delete, m_table, nullptr, nullptr, Qt::WidgetShortcut);
+    connect(delKey, &QShortcut::activated, this, [this] {
+        QList<ObjectId> ids;
+        for (const auto& r : m_table->selectionModel()->selectedRows())
+            ids << m_table->item(r.row(), ColX)->data(kIdRole).toULongLong();
+        m_editor->removePeaks(ids);
+    });
+    auto* copy = new QShortcut(QKeySequence::Copy, m_table, nullptr, nullptr, Qt::WidgetShortcut);
+    connect(copy, &QShortcut::activated, this, [this] {
+        QStringList lines{"x\ty\tintensity\tlabel\tcomment"};
+        QList<int> rows;
+        for (const auto& r : m_table->selectionModel()->selectedRows()) rows << r.row();
+        if (rows.isEmpty())
+            for (int r = 0; r < m_table->rowCount(); ++r) rows << r;  // nothing selected: all
+        std::sort(rows.begin(), rows.end());
+        for (int r : rows) {
+            const Peak* p = m_model->peak(m_table->item(r, ColX)->data(kIdRole).toULongLong());
+            if (!p) continue;
+            QString comment = p->comment;
+            comment.replace('\n', ' ');
+            lines << QString("%1\t%2\t%3\t%4\t%5").arg(p->x, 0, 'g', 10).arg(p->y, 0, 'g', 10)
+                         .arg(p->intensity, 0, 'g', 8).arg(p->label, comment);
+        }
+        QGuiApplication::clipboard()->setText(lines.join('\n') + '\n');
+    });
     connect(m_model, &PlotModel::peakChanged, this, &PeakTable::refreshRow);
     connect(m_controller, &InteractionController::selectionChanged, this,
             &PeakTable::syncSelectionFromController);

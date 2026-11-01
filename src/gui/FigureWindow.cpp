@@ -67,6 +67,8 @@ FigureWindow::FigureWindow(QWidget* parent) : QMainWindow(parent)
     tabifyDockWidget(m_dock, m_peakDock);
     m_dock->raise();
     buildActions();
+    limitPlainKeyShortcuts();
+    m_plot->setFocus();
 
     m_cursorLabel = new QLabel;
     m_cursorLabel->setMinimumWidth(240);
@@ -107,11 +109,30 @@ void FigureWindow::wireAxes(const Axes& ax)
                      &PlotModel::matrixAppearanceChanged})
         connect(model, sig, this, &FigureWindow::updateLevelStatus);
     connect(model, &PlotModel::regionChanged, this, [this, model] {
-        if (model != m_model) return;
-        const Region& r = model->region();
-        m_regionLabel->setText(r.active ? QString("Region: %1 … %2").arg(fmt(r.xmin), fmt(r.xmax))
-                                        : QString());
+        if (model == m_model) updateRegionLabel();
     });
+}
+
+void FigureWindow::updateRegionLabel()
+{
+    const Region& r = m_model->region();
+    m_regionLabel->setText(r.active ? QString("Region: %1 … %2").arg(fmt(r.xmin), fmt(r.xmax))
+                                    : QString());
+}
+
+void FigureWindow::limitPlainKeyShortcuts()
+{
+    // Single-key shortcuts (Z, P, A, M, *, Home, ...) must not fire while the
+    // user types in a table cell or tree item of a side panel: make them
+    // active only while the plot (or the menu) has focus.
+    for (QAction* a : findChildren<QAction*>()) {
+        const QKeySequence ks = a->shortcut();
+        if (ks.isEmpty()) continue;
+        const Qt::KeyboardModifiers mods = ks[0].keyboardModifiers() & ~Qt::KeypadModifier;
+        if (mods != Qt::NoModifier && mods != Qt::ShiftModifier) continue;
+        a->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        m_plot->addAction(a);
+    }
 }
 
 void FigureWindow::setCurrentAxes(int index)
@@ -133,6 +154,7 @@ void FigureWindow::setCurrentAxes(int index)
     m_peakTable->deleteLater();
     m_peakTable = table;
     updateLevelStatus();
+    updateRegionLabel();
     emit currentAxesChanged(index);
 }
 
@@ -231,7 +253,6 @@ Timeline* FigureWindow::timeline()
         m_timeline->addPin(m_timeline->cursorTime().value_or(0.5 * (a + b)));
     });
     pin->setShortcut(QKeySequence("M"));
-    addAction(pin);
     QAction* all = menu->addAction("Show whole recording", m_timeline, &Timeline::showAll);
     all->setShortcut(QKeySequence("Shift+Home"));
     QAction* fit = menu->addAction("Auto-fit Y to window");
@@ -248,6 +269,7 @@ Timeline* FigureWindow::timeline()
         clock->setChecked(m_timeline->clockTime());
         fit->setChecked(m_timeline->autoFitY());
     });
+    limitPlainKeyShortcuts();
     connect(m_timeline, &Timeline::cursorChanged, this, [this](std::optional<double> t) {
         if (!t) return;
         const auto [a, b] = m_timeline->window();
@@ -464,6 +486,11 @@ void FigureWindow::buildActions()
         a.showPeakLabels = on;
         m_editor->setAxesInfo(a);
     });
+    auto syncLabels = [this, labelsAct] {
+        const QSignalBlocker b(labelsAct);
+        labelsAct->setChecked(m_model->axesInfo().showPeakLabels);
+    };
+    connect(this, &FigureWindow::currentAxesChanged, labelsAct, syncLabels);
     connect(m_model, &PlotModel::axesInfoChanged, labelsAct, [this, labelsAct] {
         const QSignalBlocker b(labelsAct);
         labelsAct->setChecked(m_model->axesInfo().showPeakLabels);
@@ -526,11 +553,15 @@ bool FigureWindow::applyStyle(const QString& nameOrPath, QStringList* errors)
 {
     Style s;
     if (!loadStyle(nameOrPath, &s, errors)) return false;
-    const QString text = QString("Style: %1").arg(QFileInfo(nameOrPath).completeBaseName());
-    m_stack->beginMacro(text);
-    for (const Axes& ax : m_axes) ax.editor->setStyle(s, text);  // the style is figure-wide
-    m_stack->endMacro();
+    setFigureStyle(s, QString("Style: %1").arg(QFileInfo(nameOrPath).completeBaseName()));
     return true;
+}
+
+void FigureWindow::setFigureStyle(const Style& style, const QString& undoText)
+{
+    m_stack->beginMacro(undoText);
+    for (const Axes& ax : m_axes) ax.editor->setStyle(style, undoText);  // the style is figure-wide
+    m_stack->endMacro();
 }
 
 void FigureWindow::buildStyleMenu()
@@ -543,7 +574,7 @@ void FigureWindow::buildStyleMenu()
     }
     menu->addSeparator();
     menu->addAction("&Edit style…", this, [this] {
-        StyleEditor dlg(m_editor, this);
+        StyleEditor dlg(m_model->style(), [this](const Style& s) { setFigureStyle(s, "Edit style"); }, this);
         dlg.exec();
     });
     menu->addAction("&Load style file…", this, [this] {

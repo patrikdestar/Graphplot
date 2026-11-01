@@ -206,6 +206,7 @@ private:
     enum class Drag { None, NavMove, NavMin, NavMax, NavCreate, Pin };
     Drag m_drag = Drag::None;
     double m_pressT = 0;
+    QPoint m_pressPx;
     QPair<double, double> m_pressWindow;
     TimePin m_dragPin;
     bool m_dragMoved = false;

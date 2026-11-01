@@ -13,6 +13,7 @@
 #include <QFileInfo>
 #include <QInputDialog>
 #include <QMenu>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QTimer>
 #include <QUndoCommand>
@@ -26,6 +27,7 @@ namespace gp {
 namespace {
 
 constexpr int kPinTolerancePx = 5;
+constexpr int kDragThresholdPx = 4;  // same as the interaction controller
 constexpr double kNavHeight = 70;
 
 // Undo command for adding / removing / editing a pin.
@@ -206,6 +208,15 @@ void Timeline::attachRow(int row)
         b->setRange(a->range());
     }
     // Keep navigator, full range and readouts in sync with the data.
+    // A removed (empty) row that receives data again - typically through
+    // undo - comes back at the bottom instead of holding invisible data.
+    connect(m, &PlotModel::datasetAdded, this, [this, row] {
+        if (m_order.contains(row)) return;
+        m_order << row;
+        m_rows[row].visible = true;
+        relayout();
+        emit rowsChanged();
+    });
     for (auto sig : {&PlotModel::datasetAdded, &PlotModel::datasetRemoved, &PlotModel::datasetDataChanged,
                      &PlotModel::datasetAppearanceChanged})
         connect(m, sig, this, [this] {
@@ -223,8 +234,18 @@ int Timeline::addRow(const QString& name)
         row = 0;
         m_firstRowUsed = true;
     } else {
-        row = m_win->createPanel();
-        attachRow(row);
+        // Reuse a removed, still empty panel before allocating a new one.
+        row = -1;
+        for (auto it = m_rows.cbegin(); it != m_rows.cend(); ++it)
+            if (!m_order.contains(it.key()) && m_win->axes(it.key()).model->datasets().empty()) {
+                row = it.key();
+                break;
+            }
+        if (row < 0) {
+            row = m_win->createPanel();
+            attachRow(row);
+        }
+        m_rows[row].visible = true;
         m_order << row;
     }
     setRowName(row, name);
@@ -270,6 +291,8 @@ void Timeline::setRowVisible(int row, bool visible)
     if (!m_rows.contains(row) || m_rows[row].visible == visible) return;
     m_rows[row].visible = visible;
     relayout();
+    scheduleAutoFit();  // the row may have missed window changes while hidden
+    if (m_cursor) updateCursorVisuals();
     emit rowsChanged();
 }
 
@@ -850,10 +873,12 @@ bool Timeline::eventFilter(QObject* watched, QEvent* event)
         const QPointF px = e->position();
         // Drags owned by the timeline.
         if (m_drag != Drag::None) {
-            const double t = m_drag == Drag::Pin && rowAt(px) >= 0
-                                 ? rowRenderer(rowAt(px))->xAxis()->pixelToCoord(px.x())
-                                 : (m_drag == Drag::Pin ? rowRenderer(m_order.front())->xAxis()->pixelToCoord(px.x())
-                                                        : m_navRenderer->xAxis()->pixelToCoord(px.x()));
+            // Pins move in row time (all rows share it), the window in navigator time.
+            QCPAxis* axis = m_drag == Drag::Pin ? rowRenderer(m_order.front())->xAxis()
+                                                : m_navRenderer->xAxis();
+            const double t = axis->pixelToCoord(px.x());
+            // Ignore jitter: a click with a 1-2 px wobble is still a click.
+            if (!m_dragMoved && (px.toPoint() - m_pressPx).manhattanLength() < kDragThresholdPx) return true;
             m_dragMoved = true;
             const auto [a, b] = m_pressWindow;
             switch (m_drag) {
@@ -873,10 +898,14 @@ bool Timeline::eventFilter(QObject* watched, QEvent* event)
             return true;
         }
         const int row = rowAt(px);
+        // While the interaction controller drags (rubber band, marker, pan...)
+        // only follow the cursor and let it have every move event.
+        const bool controllerDrag = e->buttons() != Qt::NoButton;
         if (row >= 0) setCursorTime(rowRenderer(row)->xAxis()->pixelToCoord(px.x()));
         else if (m_navRenderer->axisRect()->rect().contains(px.toPoint()))
             setCursorTime(m_navRenderer->xAxis()->pixelToCoord(px.x()));
         else setCursorTime(std::nullopt);
+        if (controllerDrag) return false;
         if (inNavigator(px)) {
             const RegionHit h = m_navRenderer->hitTestRegion(px);
             m_plot->setCursor(h == RegionHit::MinEdge || h == RegionHit::MaxEdge ? Qt::SplitHCursor
@@ -893,11 +922,20 @@ bool Timeline::eventFilter(QObject* watched, QEvent* event)
     case QEvent::Leave:
         setCursorTime(std::nullopt);
         return false;
+    case QEvent::KeyPress:
+        if (m_drag != Drag::None && static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {
+            if (m_drag == Drag::Pin) applyPin(m_dragPin.id, m_dragPin);
+            else setWindowFromNavigator(m_pressWindow.first, m_pressWindow.second);
+            m_drag = Drag::None;
+            return true;
+        }
+        return false;
     case QEvent::MouseButtonPress: {
         auto* e = static_cast<QMouseEvent*>(event);
         const QPointF px = e->position();
         if (inNavigator(px)) {
             if (e->button() != Qt::LeftButton) return true;
+            m_pressPx = px.toPoint();
             m_pressT = m_navRenderer->xAxis()->pixelToCoord(px.x());
             m_pressWindow = window();
             m_dragMoved = false;
@@ -941,6 +979,7 @@ bool Timeline::eventFilter(QObject* watched, QEvent* event)
         if (pin != kInvalidId && m_win->controller()->mode() != InteractionMode::AddVMarker) {
             for (const TimePin& p : m_pins)
                 if (p.id == pin) m_dragPin = p;
+            m_pressPx = px.toPoint();
             m_drag = Drag::Pin;
             m_dragMoved = false;
             return true;
@@ -989,7 +1028,9 @@ bool Timeline::eventFilter(QObject* watched, QEvent* event)
             return true;
         }
         if (row >= 0) {
-            // Double-click in a row: fit the whole recording (time) instead of X+Y.
+            // Double-click on a marker / annotation edits it (controller);
+            // on empty space: fit the whole recording (time) instead of X+Y.
+            if (rowRenderer(row)->hitTestObject(e->position()).isValid()) return false;
             showAll();
             return true;
         }

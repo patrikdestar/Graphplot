@@ -17,6 +17,7 @@
 #include <QLineEdit>
 #include <QPainter>
 #include <QPlainTextEdit>
+#include <QRegularExpression>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
@@ -46,11 +47,32 @@ QIcon swatchIcon(const QColor& c, int w = 16, int h = 10)
     return QIcon(pm);
 }
 
+// Spin box for data coordinates: keeps full double precision (a plain
+// QDoubleSpinBox rounds to its decimals, so editing only a label would
+// silently move an object at 5e-7 to 0) and shows values compactly.
+class CoordSpinBox : public QDoubleSpinBox {
+public:
+    CoordSpinBox()
+    {
+        setDecimals(17);
+        setRange(-std::numeric_limits<double>::max(), std::numeric_limits<double>::max());
+    }
+    QString textFromValue(double v) const override { return QString::number(v, 'g', 12); }
+    double valueFromText(const QString& text) const override { return text.toDouble(); }
+    QValidator::State validate(QString& text, int&) const override
+    {
+        bool ok = false;
+        text.toDouble(&ok);
+        if (ok) return QValidator::Acceptable;
+        // Allow partial input such as "-", "1e", "2.5e-".
+        static const QRegularExpression partial(R"(^[+-]?(\d*\.?\d*)([eE][+-]?\d*)?$)");
+        return partial.match(text).hasMatch() ? QValidator::Intermediate : QValidator::Invalid;
+    }
+};
+
 QDoubleSpinBox* makeCoordSpin()
 {
-    auto* s = new QDoubleSpinBox;
-    s->setRange(-std::numeric_limits<double>::max(), std::numeric_limits<double>::max());
-    s->setDecimals(6);
+    auto* s = new CoordSpinBox;
     s->setKeyboardTracking(false);  // commit on Enter / focus-out / arrow steps
     s->setSingleStep(0.1);
     s->setMinimumWidth(110);
@@ -344,6 +366,7 @@ QWidget* PropertiesPanel::buildMarkerPage()
     auto* form = new QFormLayout(box);
     m_mkOrientation = new QLabel;
     m_mkLabel = new QLineEdit;
+    m_mkLabel->setObjectName("markerLabel");
     m_mkPosition = makeCoordSpin();
     m_mkColor = new ColorButton;
     m_mkLineStyle = makeLineStyleCombo(false);
@@ -855,8 +878,10 @@ void PropertiesPanel::commitAnnotation(bool mergeable)
     a.text = m_anText->text().replace("\\n", "\n");
     a.x = m_anX->value();
     a.y = m_anY->value();
-    a.color = m_anColor->color();
-    a.fontSize = m_anFontSize->value();
+    // Colour / size stay "follow the style" unless the user changed them.
+    const Style& st = m_model->style();
+    if (cur->color.isValid() || m_anColor->color() != st.annotationColor) a.color = m_anColor->color();
+    if (cur->fontSize > 0 || m_anFontSize->value() != st.annotationSize) a.fontSize = m_anFontSize->value();
     m_editor->updateAnnotation(a, std::nullopt, mergeable);
 }
 

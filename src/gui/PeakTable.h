@@ -54,6 +54,7 @@ private:
     QCheckBox* m_viewOnly = nullptr;
     QLabel* m_count = nullptr;
     bool m_updating = false;
+    bool m_rebuildPending = false;
 };
 
 }  // namespace gp

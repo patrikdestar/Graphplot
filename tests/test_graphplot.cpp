@@ -17,6 +17,7 @@
 #include "render/PlotRenderer.h"
 
 #include <QElapsedTimer>
+#include <QLineEdit>
 
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -1091,6 +1092,62 @@ private slots:
         f.tl->setRowVisible(r3, true);
         f.tl->setRowHeight(r3, 2.0);
         QCOMPARE(f.tl->rowHeight(r3), 2.0);
+    }
+
+    void auditRegressionsGui()
+    {
+        auto f = makeTimeline();
+        // Hidden rows must not capture clicks meant for the row below.
+        f.tl->setRowVisible(f.imu, false);
+        f.w->plot()->replot();
+        PlotRenderer* gpsR = f.w->axes(f.gps).renderer;
+        QCOMPARE(f.w->controller()->targetAt(gpsR->axisRect()->rect().topLeft() + QPoint(5, 5)), f.gps);
+        f.tl->setRowVisible(f.imu, true);
+        // Undo of a move after "Remove empty row" brings the row back.
+        f.tl->moveSignal({f.gps, f.speed}, f.imu);
+        QVERIFY(f.tl->removeRowIfEmpty(f.gps));
+        f.w->undoStack()->undo();
+        QVERIFY(f.tl->rows().contains(f.gps));
+        // A 1-2 px wobble in the navigator is a click (centres), not a tiny window.
+        f.w->plot()->replot();
+        QCPAxis* nx = f.tl->navigatorRenderer()->xAxis();
+        const int y = f.tl->navigatorRenderer()->axisRect()->rect().center().y();
+        f.tl->setWindow(0, 20);
+        const QPoint at(int(nx->coordToPixel(70)), y);
+        drag(f.w->plot(), at, at + QPoint(2, 0));
+        const auto [a, b] = f.tl->window();
+        QVERIFY(std::abs((b - a) - 20) < 1e-6);
+        QVERIFY(std::abs((a + b) / 2 - 70) < 0.6);
+    }
+
+    void auditRegressionsDragCancel()
+    {
+        auto w = makeWindow();
+        Marker m;
+        m.position = 50;
+        const ObjectId id = w->editor()->addMarker(m);
+        w->plot()->replot();
+        const int undoCount = w->undoStack()->count();
+        // Start dragging the marker, then press the right button: drag cancelled.
+        const QPoint p0 = px(w.get(), 50, 50), p1 = px(w.get(), 70, 50);
+        QTest::mousePress(w->plot(), Qt::LeftButton, {}, p0);
+        for (int i = 1; i <= 5; ++i) QTest::mouseMove(w->plot(), p0 + (p1 - p0) * i / 5);
+        QTest::mousePress(w->plot(), Qt::RightButton, {}, p1);
+        QCOMPARE(w->model()->marker(id)->position, 50.0);  // back at the start
+        QCOMPARE(w->undoStack()->count(), undoCount);      // nothing recorded
+        // Label edits keep full-precision coordinates (no rounding to 6 decimals).
+        Marker tiny = *w->model()->marker(id);
+        tiny.position = 5e-7;
+        w->editor()->updateMarker(tiny);
+        w->controller()->setSelection({ObjectKind::Marker, id});
+        QCoreApplication::processEvents();
+        // Rename through the properties panel, exactly as a user would.
+        auto* label = w->findChild<QLineEdit*>("markerLabel");
+        QVERIFY(label);
+        label->setText("renamed");
+        emit label->editingFinished();
+        QCOMPARE(w->model()->marker(id)->label, QString("renamed"));
+        QCOMPARE(w->model()->marker(id)->position, 5e-7);
     }
 
     void timelineClockAxisAndCsv()

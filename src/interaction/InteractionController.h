@@ -94,6 +94,7 @@ private:
     bool key(QKeyEvent* e);
     void updateHoverCursor(const QPointF& px);
     void finishOneShotMode();
+    void cancelDrag();  // restores the press-time state of the current drag
 
     PlotRenderer* m_renderer;
     PlotEditor* m_editor;

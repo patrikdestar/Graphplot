@@ -83,8 +83,11 @@ int InteractionController::activeTarget() const
 
 int InteractionController::targetAt(const QPointF& px) const
 {
-    for (size_t i = 0; i < m_targets.size(); ++i)
-        if (m_targets[i].first->axisRect()->outerRect().contains(px.toPoint())) return int(i);
+    for (size_t i = 0; i < m_targets.size(); ++i) {
+        PlotRenderer* r = m_targets[i].first;
+        // Hidden panels (e.g. hidden timeline rows) keep stale geometry: skip them.
+        if (r->panelVisible() && r->axisRect()->outerRect().contains(px.toPoint())) return int(i);
+    }
     return -1;
 }
 
@@ -153,6 +156,9 @@ bool InteractionController::eventFilter(QObject* watched, QEvent* event)
     case QEvent::Wheel: wheel(static_cast<QWheelEvent*>(event)); return true;
     case QEvent::KeyPress: return key(static_cast<QKeyEvent*>(event));
     case QEvent::Leave: emit cursorMoved({}, false); return false;
+    case QEvent::FocusOut:  // e.g. a dialog popped up mid-drag
+        if (m_drag != Drag::None) cancelDrag();
+        return false;
     default: return QObject::eventFilter(watched, event);
     }
 }
@@ -162,6 +168,12 @@ bool InteractionController::eventFilter(QObject* watched, QEvent* event)
 void InteractionController::mousePress(QMouseEvent* e)
 {
     m_plot->setFocus(Qt::MouseFocusReason);
+    // A second button while dragging (or a lost release) cancels the drag
+    // instead of leaving an uncommitted preview behind.
+    if (m_drag != Drag::None) {
+        cancelDrag();
+        return;
+    }
     const QPointF px = e->position();
     // Multi-panel figures: the panel under the cursor becomes active.
     if (const int t = targetAt(px); t >= 0) setActiveTarget(t);
@@ -330,14 +342,16 @@ void InteractionController::mouseMove(QMouseEvent* e)
         QCPAxis* ya = m_renderer->yAxis();
         const ViewRange v = m_pressView;
         const QRect ar = m_renderer->axisRect()->rect();
-        const double dxPx = px.x() - m_pressPx.x();
-        const double dyPx = px.y() - m_pressPx.y();
+        double dxPx = px.x() - m_pressPx.x();
+        double dyPx = px.y() - m_pressPx.y();
         ViewRange nv = v;
         auto logShift = [](double& lo, double& hi, double fraction) {
             const double f = std::pow(hi / lo, fraction);
             lo *= f;
             hi *= f;
         };
+        if (m_zoomAxes == ZoomAxes::XOnly) dyPx = 0;  // e.g. timeline: time only
+        if (m_zoomAxes == ZoomAxes::YOnly) dxPx = 0;
         if (xa->scaleType() == QCPAxis::stLogarithmic)
             logShift(nv.xmin, nv.xmax, -dxPx / ar.width() * (xa->rangeReversed() ? -1 : 1));
         if (ya->scaleType() == QCPAxis::stLogarithmic)
@@ -418,6 +432,7 @@ void InteractionController::mouseMove(QMouseEvent* e)
 
 void InteractionController::mouseRelease(QMouseEvent* e)
 {
+    if (m_drag != Drag::None && e->buttons() != Qt::NoButton) return;  // another button still held
     Q_UNUSED(e);
     const Drag drag = m_drag;
     m_drag = Drag::None;
@@ -495,32 +510,60 @@ void InteractionController::mouseDoubleClick(QMouseEvent* e)
 void InteractionController::wheel(QWheelEvent* e)
 {
     const QPointF px = e->position();
-    if (const int t = targetAt(px); t >= 0) setActiveTarget(t);
-    if (!m_renderer->isInsidePlotArea(px) && !m_renderer->axisRect()->outerRect().contains(px.toPoint()))
-        return;
+    // Zoom the panel under the mouse without making it current (switching the
+    // current panel rebuilds the side panels and clears the selection).
+    const int t = targetAt(px);
+    PlotRenderer* r = t >= 0 ? m_targets[size_t(t)].first : m_renderer;
+    if (!r->axisRect()->outerRect().contains(px.toPoint())) return;
     // Some platforms turn Alt+wheel into a horizontal wheel; accept both.
     const int delta = e->angleDelta().y() != 0 ? e->angleDelta().y() : e->angleDelta().x();
     const double steps = delta / 120.0;
     if (steps == 0) return;
 
     const bool levels = m_wheelLevels || (e->modifiers() & Qt::AltModifier);
-    if (levels && !m_renderer->levelTargets().isEmpty()) {
-        scaleContourLevels(std::pow(kLevelStepPerNotch, -steps));
+    if (levels && !r->levelTargets().isEmpty()) {
+        m_targets[size_t(std::max(t, 0))].second->scaleContourLevels(r->levelTargets(),
+                                                                    std::pow(kLevelStepPerNotch, -steps));
         return;
     }
     const double factor = std::pow(kWheelZoomPerStep, steps);
-
     ZoomAxes axes = m_zoomAxes;
     if (e->modifiers() & Qt::ControlModifier) axes = ZoomAxes::XOnly;
     if (e->modifiers() & Qt::ShiftModifier) axes = ZoomAxes::YOnly;
     // Wheel over an axis zooms only that axis.
-    const QRect ar = m_renderer->axisRect()->rect();
+    const QRect ar = r->axisRect()->rect();
     if (px.y() > ar.bottom()) axes = ZoomAxes::XOnly;
     else if (px.x() < ar.left()) axes = ZoomAxes::YOnly;
+    if (axes != ZoomAxes::YOnly) r->xAxis()->scaleRange(factor, r->xAxis()->pixelToCoord(px.x()));
+    if (axes != ZoomAxes::XOnly) r->yAxis()->scaleRange(factor, r->yAxis()->pixelToCoord(px.y()));
+    r->replot();
+}
 
-    if (axes != ZoomAxes::YOnly) m_renderer->xAxis()->scaleRange(factor, m_renderer->xAxis()->pixelToCoord(px.x()));
-    if (axes != ZoomAxes::XOnly) m_renderer->yAxis()->scaleRange(factor, m_renderer->yAxis()->pixelToCoord(px.y()));
-    m_renderer->replot();
+void InteractionController::cancelDrag()
+{
+    // Restore the state captured at press time; nothing enters the history.
+    PlotModel* model = m_editor->model();
+    switch (m_drag) {
+    case Drag::Marker:
+        if (model->marker(m_dragStartMarker.id)) m_editor->previewMarker(m_dragStartMarker);
+        break;
+    case Drag::Peak:
+    case Drag::PeakLabel:
+        if (model->peak(m_dragStartPeak.id)) m_editor->previewPeak(m_dragStartPeak);
+        break;
+    case Drag::Annotation:
+        if (model->annotation(m_dragStartAnnotation.id)) m_editor->previewAnnotation(m_dragStartAnnotation);
+        break;
+    case Drag::RegionCreate:
+    case Drag::RegionMin:
+    case Drag::RegionMax:
+    case Drag::RegionMove: m_editor->previewRegion(m_dragStartRegion); break;
+    case Drag::Pan: m_renderer->setViewRange(m_pressView); break;
+    case Drag::RubberBand:
+    case Drag::None: break;
+    }
+    m_rubberBand->hide();
+    m_drag = Drag::None;
 }
 
 bool InteractionController::key(QKeyEvent* e)
@@ -540,21 +583,7 @@ bool InteractionController::key(QKeyEvent* e)
         return true;
     case Qt::Key_Escape:
         if (m_drag != Drag::None) {
-            // Cancel the drag: restore the state captured at press time.
-            PlotModel* model = m_editor->model();
-            if (m_drag == Drag::Marker && model->marker(m_dragStartMarker.id))
-                m_editor->previewMarker(m_dragStartMarker);
-            else if ((m_drag == Drag::Peak || m_drag == Drag::PeakLabel) && model->peak(m_dragStartPeak.id))
-                m_editor->previewPeak(m_dragStartPeak);
-            else if (m_drag == Drag::Annotation && model->annotation(m_dragStartAnnotation.id))
-                m_editor->previewAnnotation(m_dragStartAnnotation);
-            else if (m_drag == Drag::RegionCreate || m_drag == Drag::RegionMin ||
-                     m_drag == Drag::RegionMax || m_drag == Drag::RegionMove)
-                m_editor->previewRegion(m_dragStartRegion);
-            else if (m_drag == Drag::Pan)
-                m_renderer->setViewRange(m_pressView);
-            m_rubberBand->hide();
-            m_drag = Drag::None;
+            cancelDrag();
         } else if (m_mode != m_navMode) {
             setMode(m_navMode);
         } else if (m_mode == InteractionMode::AddPeak) {

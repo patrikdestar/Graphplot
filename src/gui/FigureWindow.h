@@ -116,6 +116,8 @@ private:
     void onOpenBruker();
     void onOpenTimeSeries();
     void updateLevelStatus();
+    void updateRegionLabel();
+    void limitPlainKeyShortcuts();
     void onExport();
     void buildStyleMenu();
 public:
@@ -126,6 +128,8 @@ public:
 
     // Applies a built-in style name or a style file to this figure (undoable).
     bool applyStyle(const QString& nameOrPath, QStringList* errors = nullptr);
+    // Applies a style object to every panel as one undo step.
+    void setFigureStyle(const Style& style, const QString& undoText = "Change style");
 
 private:
 
