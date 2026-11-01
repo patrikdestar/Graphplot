@@ -45,7 +45,11 @@ bool runEventLoopUntil(const std::function<bool()>& done, int timeoutMs);
 // plotter.Axes for the duration of one call). Being per calling thread, it
 // needs no lock and a user click cannot redirect a call.
 struct CallContext {
-    QHash<const void*, int> panelTargets;  // figure -> panel index
+    QHash<const void*, int> panelTargets;  // figure -> panel index (set by plotter.Axes)
+    // figure -> panel the last call actually used (written on the GUI thread,
+    // copied back to the caller), so a new object's handle gets the panel it
+    // was created in without a second, racy round-trip.
+    QHash<const void*, int> lastPanel;
 };
 CallContext& callContext();  // of the current thread
 
@@ -64,13 +68,16 @@ auto inGui(F&& f) -> std::invoke_result_t<F>
     std::exception_ptr err;
     std::optional<std::conditional_t<std::is_void_v<R>, int, R>> result;
     const CallContext caller = callContext();
+    CallContext after = caller;
     runOnGuiThreadBlocking([&] {
-        // The caller's context applies while its task runs on the GUI thread.
+        // The caller's context applies while its task runs on the GUI thread,
+        // and what the task recorded in it goes back to the caller.
         const CallContext saved = std::exchange(callContext(), caller);
         struct Restore {
             const CallContext& saved;
-            ~Restore() { callContext() = saved; }
-        } restore{saved};
+            CallContext& after;
+            ~Restore() { after = std::exchange(callContext(), saved); }
+        } restore{saved, after};
         try {
             if constexpr (std::is_void_v<R>) {
                 f();
@@ -82,6 +89,7 @@ auto inGui(F&& f) -> std::invoke_result_t<F>
             err = std::current_exception();
         }
     });
+    callContext() = std::move(after);
     if (err) std::rethrow_exception(err);
     if constexpr (!std::is_void_v<R>) return std::move(*result);
 }

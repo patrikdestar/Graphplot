@@ -156,7 +156,7 @@ bool InteractionController::eventFilter(QObject* watched, QEvent* event)
         return true;
     case QEvent::Wheel: wheel(static_cast<QWheelEvent*>(event)); return true;
     case QEvent::KeyPress: return key(static_cast<QKeyEvent*>(event));
-    case QEvent::Leave: emit cursorMoved({}, false); return false;
+    case QEvent::Leave: emit cursorMoved({}, false, -1); return false;
     case QEvent::FocusOut:  // e.g. a dialog popped up mid-drag
         if (m_drag != Drag::None) cancelDrag();
         return false;
@@ -184,7 +184,7 @@ void InteractionController::mousePress(QMouseEvent* e)
     m_dragMoved = false;
     m_drag = Drag::None;
     const bool inside = m_renderer->isInsidePlotArea(px);
-    if (inside && e->button() == Qt::LeftButton) emit clicked(m_pressData);  // measuring reference
+    if (inside && e->button() == Qt::LeftButton) emit clicked(m_pressData, activeTarget());  // measuring reference
 
     if (e->button() == Qt::MiddleButton) {
         m_drag = Drag::Pan;
@@ -324,7 +324,7 @@ void InteractionController::mouseMove(QMouseEvent* e)
     {
         const int t = targetAt(px);
         PlotRenderer* r = (m_drag == Drag::None && t >= 0) ? m_targets[t].first : m_renderer;
-        emit cursorMoved(r->pixelToData(px), r->isInsidePlotArea(px));
+        emit cursorMoved(r->pixelToData(px), r->isInsidePlotArea(px), r == m_renderer ? activeTarget() : t);
     }
     const QPointF data = m_renderer->pixelToData(px);
 

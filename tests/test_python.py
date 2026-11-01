@@ -857,6 +857,67 @@ class PlotterTests(unittest.TestCase):
         self.assertEqual(plt.xticks()[1], ["lo", "mid", "hi"])
         plt.close("all")
 
+    def test_audit_round5(self):
+        import json
+        f = self.fig
+        line = f.plot([0, 1, 2], [10, 11, 12], label="a", yerr=[1, 2, 3])
+        f.set_selected_region(-np.inf, 5)
+        m = f.marker(float("nan"))
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "a.gpfig")
+            f.save(p)
+            g = plotter.load(p)
+            self.assertEqual(g.get_selected_region(), (-np.inf, 5.0))  # non-finite survives
+            self.assertTrue(np.isnan(g.markers()[0].position))
+            g.close()
+            # A damaged file: half an error-bar pair -> refused, window untouched.
+            doc = json.load(open(p))
+            del doc["panels"][0]["model"]["datasets"][0]["yErrHigh"]
+            json.dump(doc, open(os.path.join(d, "bad.gpfig"), "w"))
+            with self.assertRaises(RuntimeError):
+                plotter.load(os.path.join(d, "bad.gpfig"))
+            empty = plotter.figure()
+            with self.assertRaises(RuntimeError):
+                empty._load(os.path.join(d, "bad.gpfig"))
+            self.assertEqual(empty.lines(), [])  # nothing half-loaded
+            empty._load(p)  # still usable
+            # Duplicate ids and absurd level counts are refused.
+            doc = json.load(open(p))
+            ds = doc["panels"][0]["model"]["datasets"]
+            ds.append(dict(ds[0]))
+            json.dump(doc, open(os.path.join(d, "dup.gpfig"), "w"))
+            with self.assertRaises(RuntimeError):
+                plotter.load(os.path.join(d, "dup.gpfig"))
+            empty.close()
+            # Wide CSV is not used when there are x errors.
+            line.set_errors(xerr=[0.1, 0.2, 0.3])
+            f.export_data(os.path.join(d, "x.csv"))
+            self.assertTrue(open(os.path.join(d, "x.csv")).readline().startswith("dataset,"))
+        # append() drops error bars even when the length stays the same.
+        line.append([3], [13], max_points=3)
+        self.assertIsNone(line.yerr)
+        # Text arguments: bytes decode, lists are rejected.
+        line.label = b"volts"
+        self.assertEqual(line.label, "volts")
+        with self.assertRaises(TypeError):
+            f.marker(1.0, label=["a"])
+        with self.assertRaises(ValueError):
+            f.contour(np.ones((3, 3)), levels=10**6)
+
+    def test_timeline_y_ranges_round_trip(self):
+        tl = plotter.timeline()
+        t = np.linspace(0, 10, 50)
+        tl.add_row("A").plot(t, 300 * np.sin(t), label="a")
+        tl.auto_fit_y = False
+        tl.rows[0].axes.set_ylim(-5, 5)
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "t.gpfig")
+            tl.save(p)
+            t2 = plotter.load(p)
+            self.assertEqual(t2.rows[0].axes.ylim(), (-5.0, 5.0))
+            t2.close()
+        tl.figure.close()
+
     def test_pyplot_compat_round2(self):
         import io
         import plotter.pyplot as plt

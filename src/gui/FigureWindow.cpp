@@ -97,14 +97,19 @@ FigureWindow::FigureWindow(QWidget* parent) : QMainWindow(parent)
 
     // Status bar: cursor coordinates, and the distance from the last click
     // (measure a peak width or a delay: click one point, hover the other).
-    connect(m_controller, &InteractionController::clicked, this, [this](QPointF p) { m_clickData = p; });
+    connect(m_controller, &InteractionController::clicked, this, [this](QPointF p, int panel) {
+        m_clickData = p;
+        m_clickPanel = panel;
+    });
     connect(m_controller, &InteractionController::activeTargetChanged, this, [this] { m_clickData.reset(); });
     connect(m_controller, &InteractionController::cursorMoved, this,
-            [this](QPointF p, bool inside) {
+            [this](QPointF p, bool inside, int panel) {
                 QString text;
                 if (inside) {
                     text = QString("x = %1    y = %2").arg(fmt(p.x()), fmt(p.y()));
-                    if (m_clickData && *m_clickData != p)
+                    // Distances only within the panel of the click (other
+                    // panels have other coordinates).
+                    if (m_clickData && panel == m_clickPanel && *m_clickData != p)
                         text += QString("    %1x = %2    %1y = %3")
                                     .arg(QChar(0x0394), fmt(p.x() - m_clickData->x()), fmt(p.y() - m_clickData->y()));
                 }

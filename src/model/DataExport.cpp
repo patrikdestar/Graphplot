@@ -52,8 +52,10 @@ bool writeDataCsv(const PlotModel& model, const QString& fileName, std::optional
     const AxesInfo& ax = model.axesInfo();
     const QString xName = ax.xLabel.isEmpty() ? QStringLiteral("x") : ax.xLabel;
 
+    // Wide table only when all datasets share x and none has x error bars
+    // (those need their own columns per point: the long table has them).
     bool sameX = true;
-    for (const Dataset* d : sets) sameX = sameX && d->x == sets.front()->x;
+    for (const Dataset* d : sets) sameX = sameX && d->x == sets.front()->x && d->xErrLow.isEmpty();
     if (sameX) {
         // Wide: x, y1 [, y1_err_low, y1_err_high], y2, ...
         out << field(xName);

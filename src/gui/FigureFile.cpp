@@ -151,6 +151,15 @@ bool FigureWindow::loadFigure(const QString& fileName, QString* error)
 
     const QJsonArray panels = root["panels"].toArray();
     if (panels.isEmpty()) return fail("The figure file contains no panels");
+    if (panels.size() > 64) return fail("The figure file has too many panels");
+    // Validate every panel before changing anything, so a damaged file
+    // leaves the window untouched (and reusable).
+    for (qsizetype i = 0; i < panels.size(); ++i) {
+        PlotModel scratch;
+        QString err;
+        if (!modelFromJson(panels[i].toObject()["model"].toObject(), scratch, &err))
+            return fail(QString("Panel %1: %2").arg(i + 1).arg(err));
+    }
     const QJsonArray size = root["size"].toArray();
     if (size.size() == 2) setFigureSize(QSize(size[0].toInt(), size[1].toInt()));
     if (!root["title"].toString().isEmpty()) setWindowTitle(root["title"].toString());
@@ -175,6 +184,20 @@ bool FigureWindow::loadFigure(const QString& fileName, QString* error)
             tl->setRowVisible(target[i], r["visible"].toBool(true));
         }
         tl->setAutoFitY(t["autoFitY"].toBool(true));
+        // Y ranges as saved (with auto-fit on they are recomputed anyway);
+        // the shared X range comes from "window" below.
+        for (qsizetype i = 0; i < panels.size(); ++i) {
+            PlotRenderer* r = m_axes[size_t(target[i])].renderer;
+            ViewRange v;
+            if (viewFromJson(panels[i].toObject()["view"], &v)) {
+                ViewRange cur = r->viewRange();
+                cur.ymin = v.ymin;
+                cur.ymax = v.ymax;
+                r->setViewRange(cur);
+            } else {
+                r->autoscale(false, true);
+            }
+        }
         if (tl->hasAbsoluteTime()) tl->setClockTime(t["clockTime"].toBool());
         const QJsonArray nav = t["navigator"].toArray();
         const int navRow = nav.size() == 2 ? nav[0].toInt(-1) : -1;

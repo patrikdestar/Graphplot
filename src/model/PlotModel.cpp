@@ -67,8 +67,9 @@ ObjectId PlotModel::insertDataset(Dataset d, int index)
         d.x.resize(n);
         d.y.resize(n);
     }
-    for (auto* v : {&d.xErrLow, &d.xErrHigh, &d.yErrLow, &d.yErrHigh})
-        if (!v->isEmpty() && v->size() != d.x.size()) v->clear();
+    // Error bars are kept only as complete (low, high) pairs of the data's length.
+    for (auto [lo, hi] : {std::pair{&d.xErrLow, &d.xErrHigh}, std::pair{&d.yErrLow, &d.yErrHigh}})
+        if (lo->size() != d.x.size() || hi->size() != d.x.size()) lo->clear(), hi->clear();
     const ObjectId id = d.id;
     insertAt(m_datasets, std::move(d), index);
     emit datasetAdded(id);

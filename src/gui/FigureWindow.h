@@ -195,6 +195,7 @@ private:
     QSize m_figureSize;
     QString m_figureFile;  // last saved / opened .gpfig
     std::optional<QPointF> m_clickData;  // last click in the plot (status bar distance)
+    int m_clickPanel = -1;
     Timeline* m_timeline = nullptr;
     struct ViewHistory {
         QList<ViewRange> back, forward;

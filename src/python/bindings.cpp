@@ -65,7 +65,15 @@ struct type_caster<Text> {
     bool load(handle src, bool)
     {
         if (!src) return false;
-        value.value = src.is_none() ? std::string() : str(src).cast<std::string>();
+        if (src.is_none()) {
+            value.value.clear();
+        } else if (PyBytes_Check(src.ptr())) {
+            value.value = src.cast<std::string>();  // UTF-8 bytes, not "b'...'"
+        } else if (PyUnicode_Check(src.ptr()) || PyNumber_Check(src.ptr())) {
+            value.value = str(src).cast<std::string>();  // str, or a number such as label=3
+        } else {
+            return false;  // lists etc.: a TypeError, not "['a']"
+        }
         return true;
     }
     static handle cast(const Text& t, return_value_policy, handle) { return str(t.value).release(); }
@@ -300,8 +308,11 @@ public:
     int panel() const
     {
         FigureWindow* win = w();
-        const int t = pyglue::callContext().panelTargets.value(this, -1);
-        return t >= 0 && t < win->axesCount() ? t : win->currentAxes();
+        auto& ctx = pyglue::callContext();
+        const int t = ctx.panelTargets.value(this, -1);
+        const int p = t >= 0 && t < win->axesCount() ? t : win->currentAxes();
+        ctx.lastPanel.insert(this, p);  // see CallContext::lastPanel
+        return p;
     }
     PlotModel* model() const { return w()->axes(panel()).model; }
     PlotEditor* editor() const { return w()->axes(panel()).editor; }
@@ -363,9 +374,12 @@ using FigurePtr = std::shared_ptr<Figure>;
 struct Handle {
     // Remembers the panel (axes) that was current when the object was created
     // (read on the GUI thread, which owns that state).
-    Handle(FigurePtr f, ObjectId i)
-        : fig(std::move(f)), id(i), ax(inGui([this] { return fig->panel(); }))
+    // The panel is the one the creating call used (recorded in the calling
+    // thread's context), not whichever panel is current now.
+    Handle(FigurePtr f, ObjectId i) : fig(std::move(f)), id(i)
     {
+        ax = pyglue::callContext().lastPanel.value(fig.get(), -1);
+        if (ax < 0) ax = inGui([this] { return fig->panel(); });
     }
     Handle(FigurePtr f, ObjectId i, int a) : fig(std::move(f)), id(i), ax(a) {}
     FigurePtr fig;
@@ -910,7 +924,8 @@ Returns a Line handle.)doc");
             const double linewidth = linewidthObj.is_none() ? 0.0 : linewidthObj.cast<double>();
             Matrix m = matrixFromNumpy(z, x, y);
             if (!label.is_none()) m.name = QString::fromStdString(py::str(label).cast<std::string>());
-            if (!levelsObj.is_none() && levels < 1) throw py::value_error("levels must be >= 1");
+            if (!levelsObj.is_none() && (levels < 1 || levels > 1000))
+                throw py::value_error("levels must be between 1 and 1000");
             if (!factorObj.is_none() && !(factor > 1.0)) throw py::value_error("factor must be > 1");
             m.style.levelCount = levels;
             m.style.factor = factor;
@@ -1893,6 +1908,7 @@ Remove a callback with off(event, callback).)doc");
                         ny.remove(0, ny.size() - keep);
                     }
                     h.editor()->setDatasetData(h.id, std::move(nx), std::move(ny), false);
+                    h.model()->setDatasetErrors(h.id, {}, {}, {}, {});  // as documented: no stale error bars
                 });
             },
             py::arg("x"), py::arg("y"), py::kw_only(), py::arg("max_points") = py::none(),
@@ -1980,7 +1996,7 @@ Remove a callback with off(event, callback).)doc");
         .def_property("n_levels",
                       [](Contour& h) { return inGui([&] { return h.get().style.levelCount; }); },
                       [](Contour& h, int v) {
-                          if (v < 1) throw py::value_error("n_levels must be >= 1");
+                          if (v < 1 || v > 1000) throw py::value_error("n_levels must be between 1 and 1000");
                           h.setStyle([&](QString&, ContourStyle& s) { s.levelCount = v; });
                       })
         .def_property("negative",
