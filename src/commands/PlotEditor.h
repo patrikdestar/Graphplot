@@ -40,6 +40,8 @@ public:
     // Replaces data. Undoable by default; pass undoable=false for streaming
     // updates (e.g. from a Python loop) so the history does not grow.
     void setDatasetData(ObjectId id, QVector<double> x, QVector<double> y, bool undoable = true);
+    // Replaces x, y and the error bars from `src` in one undo step.
+    void setDatasetDataAndErrors(ObjectId id, const Dataset& src);
 
     // ---- 2D data (contours) ---------------------------------------------
     // Fills in an automatic base level and palette colour when unset.

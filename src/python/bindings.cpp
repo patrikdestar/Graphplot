@@ -38,6 +38,7 @@
 #include <QUndoStack>
 #include <cmath>
 #include <memory>
+#include <atomic>
 #include <set>
 
 namespace py = pybind11;
@@ -50,13 +51,35 @@ namespace {
 
 QVector<double> toVector(const py::handle& obj, const char* what)
 {
+    // Masked arrays: masked points become NaN (gaps), like matplotlib.
+    if (py::hasattr(obj, "mask") && py::hasattr(obj, "filled"))
+        return toVector(obj.attr("astype")("float64").attr("filled")(std::nan("")), what);
+    // Time-zone aware pandas data: convert to UTC datetime64 first.
+    if (py::hasattr(obj, "dt") && py::hasattr(obj.attr("dt"), "tz") && !obj.attr("dt").attr("tz").is_none())
+        return toVector(obj.attr("dt").attr("tz_convert")(py::none()).attr("to_numpy")(), what);
+    if (py::hasattr(obj, "tz") && py::hasattr(obj, "tz_convert") && !obj.attr("tz").is_none())
+        return toVector(obj.attr("tz_convert")(py::none()).attr("to_numpy")(), what);
     // datetime64 / timedelta64 become (epoch) seconds; a plain float cast
-    // would yield nanoseconds.
+    // would yield nanoseconds. NaT becomes NaN.
     if (auto raw = py::array::ensure(obj); raw && (raw.dtype().kind() == 'M' || raw.dtype().kind() == 'm')) {
         const char* unit = raw.dtype().kind() == 'M' ? "datetime64[ns]" : "timedelta64[ns]";
-        py::array ns = raw.attr("astype")(unit).attr("astype")("int64");
-        py::object secs = ns.attr("__truediv__")(1e9);
+        py::array ns = raw.attr("astype")(unit);
+        py::object secs = ns.attr("astype")("int64").attr("__truediv__")(1e9);
+        py::module_::import("numpy").attr("putmask")(secs, ns.attr("__ne__")(ns), std::nan(""));
         return toVector(secs, what);
+    }
+    // Object arrays of datetime objects (e.g. tz-aware timestamps): use timestamp().
+    if (auto raw = py::array::ensure(obj); raw && raw.dtype().kind() == 'O' && raw.size() > 0) {
+        py::object first = raw.attr("ravel")()[py::int_(0)];
+        if (py::hasattr(first, "timestamp")) {
+            QVector<double> v;
+            for (py::handle item : raw.attr("ravel")()) {
+                const bool nat = item.is_none() || item.attr("__ne__")(item).cast<bool>();
+                v << (nat ? std::nan("") : item.attr("timestamp")().cast<double>());
+            }
+            if (raw.ndim() != 1) throw py::value_error(std::string(what) + " must be one-dimensional");
+            return v;
+        }
     }
     auto arr = py::array_t<double, py::array::c_style | py::array::forcecast>::ensure(obj);
     if (!arr) throw py::type_error(std::string(what) + " must be convertible to a float array");
@@ -172,6 +195,9 @@ public:
             py::gil_scoped_acquire gil;
             m_callbacks.clear();
         }
+        // Nothing in Python refers to this figure any more: free the window
+        // and its data (deferred: this may run inside one of its own slots).
+        if (m_w) m_w->deleteLater();
     }
 
     // Returns the window or raises if it has been closed/destroyed.
@@ -181,8 +207,20 @@ public:
         return m_w;
     }
     bool alive() const { return !m_w.isNull(); }
-    PlotModel* model() const { return w()->model(); }
-    PlotEditor* editor() const { return w()->editor(); }
+    // The panel figure-level calls act on: the one an Axes proxy names
+    // (target), else the window's current panel. Naming it explicitly keeps
+    // a call from a worker thread in its panel even if the user clicks
+    // another panel meanwhile. Only read on the GUI thread.
+    std::atomic<int> target{-1};
+    int panel() const
+    {
+        FigureWindow* win = w();
+        const int t = target.load();
+        return t >= 0 && t < win->axesCount() ? t : win->currentAxes();
+    }
+    PlotModel* model() const { return w()->axes(panel()).model; }
+    PlotEditor* editor() const { return w()->axes(panel()).editor; }
+    PlotRenderer* renderer() const { return w()->axes(panel()).renderer; }
 
     // Callbacks ------------------------------------------------------------------------
     // Events are delivered once an edit is complete (not on every intermediate
@@ -240,7 +278,7 @@ struct Handle {
     // Remembers the panel (axes) that was current when the object was created
     // (read on the GUI thread, which owns that state).
     Handle(FigurePtr f, ObjectId i)
-        : fig(std::move(f)), id(i), ax(inGui([this] { return fig->w()->currentAxes(); }))
+        : fig(std::move(f)), id(i), ax(inGui([this] { return fig->panel(); }))
     {
     }
     Handle(FigurePtr f, ObjectId i, int a) : fig(std::move(f)), id(i), ax(a) {}
@@ -271,7 +309,7 @@ const H& ownHandle(const FigurePtr& self, const py::handle& obj, bool currentPan
 {
     const H& h = obj.cast<const H&>();
     h.checkFigure(self);
-    if (currentPanel && inGui([&] { return self->w()->currentAxes(); }) != h.ax)
+    if (currentPanel && inGui([&] { return self->panel(); }) != h.ax)
         throw py::value_error(std::string(what) + " must be in the same panel");
     return h;
 }
@@ -525,7 +563,9 @@ std::pair<double, double> gridAxis(const py::object& obj, int n, const char* nam
         throw py::value_error(std::string(name) + " must have one value per grid column/row or be (start, stop)");
     const double step = (v.last() - v.first()) / (n - 1);
     for (int i = 1; i < n; ++i)
-        if (std::abs((v[i] - v[i - 1]) - step) > 1e-6 * std::max(std::abs(step), 1e-300))
+        // Tolerance allows float32 coordinates (rounding ~1e-7 of the values).
+        if (std::abs((v[i] - v[i - 1]) - step) >
+            1e-4 * std::max(std::abs(step), 1e-300) + 1e-6 * std::max(std::abs(v[i]), std::abs(v[i - 1])))
             throw py::value_error(std::string(name) + " must be uniformly spaced");
     return {v.first(), v.last()};
 }
@@ -647,7 +687,7 @@ PYBIND11_MODULE(_plotter, mod)
             if (xv.size() != yv.size())
                 throw py::value_error("x and y must have the same length");
             Dataset d;
-            if (!label.is_none()) d.name = QString::fromStdString(label.cast<std::string>());
+            if (!label.is_none()) d.name = QString::fromStdString(py::str(label).cast<std::string>());
             d.style.inLegend = !label.is_none();  // like matplotlib: only labelled lines
             d.style.color = toColor(color);
             d.style.lineWidth = width;
@@ -660,19 +700,17 @@ PYBIND11_MODULE(_plotter, mod)
                 d.style.step = parseStepMode(QString::fromStdString(py::str(step).cast<std::string>()), &ok);
                 if (!ok) throw py::value_error("step must be None, 'pre', 'post' or 'mid'");
             }
-            if (!fill.is_none() && !(py::isinstance<py::bool_>(fill) && !fill.cast<bool>())) {
-                // True: the line colour, translucent; otherwise any colour spec.
-                d.style.fillColor = py::isinstance<py::bool_>(fill) ? QColor() : toColor(fill, "fill");
-                if (!d.style.fillColor.isValid()) d.style.fillColor = QColor(0, 0, 0, 0);  // resolved below
-            }
+            // fill=True: the line colour, translucent; otherwise any colour spec.
+            const bool fillWithLineColor = py::isinstance<py::bool_>(fill) && fill.cast<bool>();
+            if (!fill.is_none() && !py::isinstance<py::bool_>(fill)) d.style.fillColor = toColor(fill, "fill");
             if (!fillTo.is_none()) d.style.fillTo = ownHandle<Line>(self, fillTo, true, "fill_to").id;
             std::tie(d.xErrLow, d.xErrHigh) = toErrors(xerr, xv.size(), "xerr");
             std::tie(d.yErrLow, d.yErrHigh) = toErrors(yerr, xv.size(), "yerr");
             d.x = std::move(xv);
             d.y = std::move(yv);
             const ObjectId id = inGui([&] {
-                if (d.style.fillColor == QColor(0, 0, 0, 0)) {
-                    // fill=True: translucent line colour (assign the colour now).
+                if (fillWithLineColor) {
+                    // Translucent line colour (assign the line colour now).
                     if (!d.style.color.isValid()) d.style.color = self->model()->takeNextDatasetColor();
                     QColor c = d.style.color;
                     c.setAlphaF(0.3);
@@ -684,7 +722,7 @@ PYBIND11_MODULE(_plotter, mod)
                         // Update in place: keep identity, update data and the given style.
                         const ObjectId oid = old->id;
                         ed->undoStack()->beginMacro("Update dataset");
-                        ed->setDatasetData(oid, d.x, d.y, true);
+                        ed->setDatasetDataAndErrors(oid, d);
                         if (!d.style.color.isValid()) d.style.color = old->style.color;
                         if (!(d.style.lineWidth > 0)) d.style.lineWidth = old->style.lineWidth;
                         if (!(d.style.scatterSize > 0)) d.style.scatterSize = old->style.scatterSize;
@@ -696,8 +734,8 @@ PYBIND11_MODULE(_plotter, mod)
                 const bool first = self->model()->datasets().empty() && self->model()->matrices().empty();
                 const ObjectId nid = ed->addDataset(d);
                 if (first) {
-                    self->w()->renderer()->autoscale();
-                    self->w()->renderer()->captureHomeView();
+                    self->renderer()->autoscale();
+                    self->renderer()->captureHomeView();
                 }
                 return nid;
             });
@@ -748,8 +786,8 @@ Returns a Line handle.)doc");
                 const bool first = self->model()->datasets().empty() && self->model()->matrices().empty();
                 const ObjectId nid = self->editor()->addMatrix(m);
                 if (first) {
-                    self->w()->renderer()->autoscale();
-                    self->w()->renderer()->captureHomeView();
+                    self->renderer()->autoscale();
+                    self->renderer()->captureHomeView();
                 }
                 return nid;
             });
@@ -799,7 +837,7 @@ with the nuclei; the diagonal is shown for homonuclear spectra. Returns a Contou
             ObjectId only = kInvalidId;
             if (!contour.is_none()) only = ownHandle<Contour>(self, contour, true, "contour").id;
             const QList<ObjectId> ids = inGui([&] {
-                PlotRenderer* r = self->w()->renderer();
+                PlotRenderer* r = self->renderer();
                 if (region == "view") {
                     const ViewRange v = r->viewRange();
                     o.restrictToRect = true;
@@ -849,7 +887,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
                 Peak p;
                 p.x = x;
                 p.y = y;
-                if (const Matrix* m = self->w()->renderer()->matrixAt({x, y})) {
+                if (const Matrix* m = self->renderer()->matrixAt({x, y})) {
                     p.matrixId = m->id;
                     p.intensity = sampleMatrix(*m, x, y);
                     if (snap)
@@ -1105,7 +1143,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
 
     // -- view
     auto getLim = [](FigurePtr self, bool x) {
-        const ViewRange r = inGui([&] { return self->w()->renderer()->viewRange(); });
+        const ViewRange r = inGui([&] { return self->renderer()->viewRange(); });
         return x ? py::tuple(py::make_tuple(r.xmin, r.xmax)) : py::tuple(py::make_tuple(r.ymin, r.ymax));
     };
     fig.def("xlim", [getLim](FigurePtr s) { return getLim(s, true); }, "Current x axis limits.");
@@ -1114,10 +1152,10 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         "set_xlim",
         [](FigurePtr self, double a, double b) {
             inGui([&] {
-                ViewRange r = self->w()->renderer()->viewRange();
+                ViewRange r = self->renderer()->viewRange();
                 r.xmin = a;
                 r.xmax = b;
-                self->w()->renderer()->setViewRange(r);
+                self->renderer()->setViewRange(r);
             });
         },
         py::arg("xmin"), py::arg("xmax"));
@@ -1125,20 +1163,20 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         "set_ylim",
         [](FigurePtr self, double a, double b) {
             inGui([&] {
-                ViewRange r = self->w()->renderer()->viewRange();
+                ViewRange r = self->renderer()->viewRange();
                 r.ymin = a;
                 r.ymax = b;
-                self->w()->renderer()->setViewRange(r);
+                self->renderer()->setViewRange(r);
             });
         },
         py::arg("ymin"), py::arg("ymax"));
     fig.def(
         "autoscale",
-        [](FigurePtr self, bool x, bool y) { inGui([&] { self->w()->renderer()->autoscale(x, y); }); },
+        [](FigurePtr self, bool x, bool y) { inGui([&] { self->renderer()->autoscale(x, y); }); },
         py::arg("x") = true, py::arg("y") = true);
-    fig.def("reset_view", [](FigurePtr self) { inGui([&] { self->w()->renderer()->resetView(); }); });
+    fig.def("reset_view", [](FigurePtr self) { inGui([&] { self->renderer()->resetView(); }); });
     fig.def("set_home_view", [](FigurePtr self) {
-        inGui([&] { self->w()->renderer()->captureHomeView(); });
+        inGui([&] { self->renderer()->captureHomeView(); });
     }, "Make the current view the one restored by reset_view() / the Home key.");
 
     // -- labels
@@ -1290,6 +1328,9 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
     });
     fig.def("_axes_count", [](FigurePtr self) { return inGui([&] { return self->w()->axesCount(); }); });
     fig.def("_current", [](FigurePtr self) { return inGui([&] { return self->w()->currentAxes(); }); });
+    fig.def_property("_target", [](FigurePtr self) { return self->target.load(); },
+                     [](FigurePtr self, int i) { self->target = i; });
+    fig.def_property_readonly("_closed", [](FigurePtr self) { return self->closed || !self->alive(); });
     fig.def("_set_current", [](FigurePtr self, int i) {
         inGui([&] {
             if (i < 0 || i >= self->w()->axesCount()) throw py::index_error("no such panel");
@@ -1565,10 +1606,15 @@ Remove a callback with off(event, callback).)doc");
                 const qsizetype n = inGui([&] { return h.get().x.size(); });
                 auto [xl, xh] = toErrors(xerr, n, "xerr");
                 auto [yl, yh] = toErrors(yerr, n, "yerr");
-                inGui([&] { h.model()->setDatasetErrors(h.id, xl, xh, yl, yh); });
+                inGui([&] {
+                    Dataset d = h.get();
+                    if (d.x.size() != n) throw py::value_error("the data changed size meanwhile");
+                    d.xErrLow = xl, d.xErrHigh = xh, d.yErrLow = yl, d.yErrHigh = yh;
+                    h.editor()->setDatasetDataAndErrors(h.id, d);
+                });
             },
             py::arg("xerr") = py::none(), py::arg("yerr") = py::none(),
-            "Replace the error bars (None removes them).")
+            "Replace the error bars (None removes them; undoable).")
         .def_property_readonly("yerr", [](Line& h) {
             const Dataset d = inGui([&] { return h.get(); });
             if (d.yErrLow.isEmpty()) return py::object(py::none());

@@ -600,6 +600,25 @@ class PlotterTests(unittest.TestCase):
         self.assertAlmostEqual(st["a"]["integral"], 8.0)
         self.assertEqual(st["a"]["x_at_max"], 4.0)
 
+    def test_audit_round2(self):
+        f = self.fig
+        self.assertTrue(np.isnan(f.plot(np.ma.array([1, 2, 3.], mask=[0, 1, 0])).y[1]))
+        self.assertTrue(np.isnan(f.plot(np.array(["2024-01-01", "NaT"], "datetime64[s]"), [1, 2]).x[1]))
+        f.plot([1, 2, 3], [1, 2, 3], label="a", yerr=1)
+        line = f.plot([1, 2, 3, 4], [4, 3, 2, 1], label="a", replace=True, yerr=0.5)
+        self.assertEqual(list(line.yerr[0]), [0.5] * 4)
+        line.set_errors(yerr=0.2)
+        f.undo()  # set_errors is undoable
+        self.assertEqual(list(line.yerr[0]), [0.5] * 4)
+        self.assertEqual(f.plot([1, 2], [1, 2], label=3).label, "3")
+        f.contour(np.ones((3, 500)), x=np.linspace(0, 1, 500, dtype=np.float32))
+        # A figure that was never shown survives show(block=False).
+        g = plotter.figure()
+        plotter.show(block=False)
+        self.assertIn(g, plotter.figures())
+        g.close()
+        self.assertNotIn(g, plotter.figures())
+
     def test_audit_pyplot(self):
         import plotter.pyplot as plt
         fig, axs = plt.subplots(2, 2)

@@ -369,9 +369,12 @@ class _PltFigure:
         self._fig = _plotter.figure(None if num is None else str(num),
                                     size=(int(w * _DPI), int(h * _DPI)))
         self._size = (int(w * _DPI), int(h * _DPI))
-        self.closed = False  # set when the window is closed (by code or by the user)
-        self._fig.on("closed", lambda: setattr(self, "closed", True))
         self.axes = [PltAxes(self, self._fig.axes[0])]
+
+    @property
+    def closed(self) -> bool:
+        """True once the window was closed (by code or by the user)."""
+        return self._fig._closed
 
     def gca(self):
         return next(a for a in self.axes if a.panel == self._fig.gca())
@@ -403,6 +406,8 @@ _numbered: dict = {}
 def figure(num=None, figsize=None, **_):
     """New figure, or the existing (still open) figure with this number/name."""
     global _current
+    for key in [k for k, f in _numbered.items() if f.closed]:
+        del _numbered[key]  # let closed figures be freed
     existing = _numbered.get(num) if num is not None else None
     if existing is not None and not existing.closed:
         _current = existing
@@ -533,14 +538,19 @@ def pause(interval):
 
 
 def close(fig=None):
+    """Close the current figure, a figure object, a figure number/name, or "all"."""
     global _current
-    if fig is None or fig == "all":
-        if fig == "all":
-            _plotter.close_all()
-        elif _current is not None:
-            _current._fig.close()
+    if fig == "all":
+        _plotter.close_all()
+        _numbered.clear()
         _current = None
-    else:
-        fig._fig.close()
-        if fig is _current:
-            _current = None
+        return
+    if fig is None:
+        fig = _current
+    elif not isinstance(fig, _PltFigure):
+        fig = _numbered.get(fig)  # number or name given to figure(num=...)
+    if fig is None:
+        return
+    fig._fig.close()
+    if fig is _current:
+        _current = None

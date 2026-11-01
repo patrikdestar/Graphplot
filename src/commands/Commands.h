@@ -195,6 +195,9 @@ class SetDatasetDataCommand : public QUndoCommand {
 public:
     SetDatasetDataCommand(PlotModel* model, ObjectId id, QVector<double> x, QVector<double> y,
                           QUndoCommand* parent = nullptr);
+    // Also replaces the error bars (low/high per axis; empty = none).
+    void setNewErrors(QVector<double> xLow, QVector<double> xHigh, QVector<double> yLow,
+                      QVector<double> yHigh);
     void redo() override;
     void undo() override;
 
@@ -202,6 +205,8 @@ private:
     PlotModel* m_model;
     ObjectId m_id;
     QVector<double> m_newX, m_newY, m_oldX, m_oldY;
+    bool m_setErrors = false;
+    QVector<double> m_newXErrLow, m_newXErrHigh, m_newYErrLow, m_newYErrHigh;
     // Changing the length drops error bars; keep them so undo restores them.
     QVector<double> m_oldXErrLow, m_oldXErrHigh, m_oldYErrLow, m_oldYErrHigh;
 };

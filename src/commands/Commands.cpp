@@ -18,7 +18,23 @@ SetDatasetDataCommand::SetDatasetDataCommand(PlotModel* model, ObjectId id, QVec
     }
 }
 
-void SetDatasetDataCommand::redo() { m_model->setDatasetData(m_id, m_newX, m_newY); }
+void SetDatasetDataCommand::setNewErrors(QVector<double> xLow, QVector<double> xHigh,
+                                         QVector<double> yLow, QVector<double> yHigh)
+{
+    m_setErrors = true;
+    m_newXErrLow = std::move(xLow);
+    m_newXErrHigh = std::move(xHigh);
+    m_newYErrLow = std::move(yLow);
+    m_newYErrHigh = std::move(yHigh);
+    setText("Update dataset data and errors");
+}
+
+void SetDatasetDataCommand::redo()
+{
+    m_model->setDatasetData(m_id, m_newX, m_newY);
+    if (m_setErrors)
+        m_model->setDatasetErrors(m_id, m_newXErrLow, m_newXErrHigh, m_newYErrLow, m_newYErrHigh);
+}
 
 void SetDatasetDataCommand::undo()
 {

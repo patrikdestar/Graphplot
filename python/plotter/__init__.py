@@ -11,9 +11,9 @@ figures, sends NumPy data and reads back what the user selected::
     fig = plotter.figure()
     fig.plot(x, np.sin(x), label="Signal 1", color="blue")
     fig.marker(25.0, color="green", label="Marker 1")
-    fig.show()
+    fig.show(block=False)
 
-    xmin, xmax = fig.wait_for_region()     # let the user drag a region
+    xmin, xmax = fig.wait_for_region()     # let the user drag a region (None if closed)
     m = (x >= xmin) & (x <= xmax)
 
 Event loop
@@ -73,20 +73,23 @@ def _ipython_active() -> bool:
 
 def figure(title: str | None = None, size: tuple[int, int] = (1000, 650)) -> Figure:
     """Create a new figure window (shown with ``fig.show()``)."""
+    _forget_closed()
     fig = Figure(title, int(size[0]), int(size[1]))
     _figures.append(fig)
     return fig
 
 
 def _forget_closed() -> None:
-    # Closed figures stay usable through their handles, but show() must not
-    # re-open them and the module must not keep them alive forever.
-    _figures[:] = [f for f in _figures if f.is_open]
+    # Figures the user (or code) closed: show() must not re-open them, and the
+    # module must not keep them alive (their data is freed once no handle
+    # refers to them). Figures not shown yet are kept.
+    _figures[:] = [f for f in _figures if not f._closed]
 
 
 def figures() -> list[Figure]:
-    """All figures created in this session that are still open."""
-    return [f for f in _figures if f.is_open]
+    """All figures of this session that have not been closed."""
+    _forget_closed()
+    return list(_figures)
 
 
 def show(block: bool | None = None, timeout: float | None = None) -> None:
@@ -229,35 +232,39 @@ class Axes:
         object.__setattr__(self, "figure", figure)
         object.__setattr__(self, "index", index)
 
-    def _activate(self):
-        if self.figure._current() != self.index:
-            self.figure._set_current(self.index)
+    def _call(self, fn):
+        # Name this panel as the target for the duration of one call, so the
+        # call lands here even if the user clicks another panel meanwhile.
+        # Using a panel also makes it the current one (as before).
+        with _panel_lock:
+            previous = self.figure._target
+            self.figure._target = self.index
+            try:
+                if self.figure._current() != self.index:
+                    self.figure._set_current(self.index)
+                return fn()
+            finally:
+                self.figure._target = previous
 
     def __getattr__(self, name):
         if name.startswith("__"):
             raise AttributeError(name)
         # Properties (xlabel, x_log, ...) are read from this panel.
         if isinstance(getattr(type(self.figure), name, None), property):
-            with _panel_lock:
-                self._activate()
-                return getattr(self.figure, name)
+            return self._call(lambda: getattr(self.figure, name))
         attr = getattr(self.figure, name)
         if not callable(attr):
             return attr
 
         def call(*args, **kwargs):
-            with _panel_lock:
-                self._activate()
-                return attr(*args, **kwargs)
+            return self._call(lambda: attr(*args, **kwargs))
 
         call.__name__ = name
         call.__doc__ = getattr(attr, "__doc__", None)
         return call
 
     def __setattr__(self, name, value):
-        with _panel_lock:
-            self._activate()
-            setattr(self.figure, name, value)
+        self._call(lambda: setattr(self.figure, name, value))
 
     def __repr__(self):
         return f"<Axes {self.index} of {self.figure!r}>"

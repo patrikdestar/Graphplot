@@ -64,6 +64,14 @@ void PlotEditor::setDatasetData(ObjectId id, QVector<double> x, QVector<double> 
     else m_model->setDatasetData(id, std::move(x), std::move(y));
 }
 
+void PlotEditor::setDatasetDataAndErrors(ObjectId id, const Dataset& src)
+{
+    if (!m_model->dataset(id)) return;
+    auto* cmd = new SetDatasetDataCommand(m_model, id, src.x, src.y);
+    cmd->setNewErrors(src.xErrLow, src.xErrHigh, src.yErrLow, src.yErrHigh);
+    m_stack->push(cmd);
+}
+
 ObjectId PlotEditor::addMatrix(Matrix m)
 {
     if (m.id == kInvalidId) m.id = m_model->allocateId();
