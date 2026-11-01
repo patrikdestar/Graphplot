@@ -15,6 +15,8 @@ annotate, read the results back, process, and re-plot.
 
 ![Timeline of vehicle sensor logs](docs/images/timeline.png)
 
+![Midnight dark theme](docs/images/dark_theme.png)
+
 ## Features
 
 **Plotting**
