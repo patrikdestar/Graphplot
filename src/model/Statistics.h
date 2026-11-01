@@ -19,7 +19,9 @@ struct SignalStats {
     double xAtMin = 0, xAtMax = 0;
     double std = 0;           // sample standard deviation (n - 1)
     double rms = 0;
-    double integral = 0;      // trapezoid rule over the points inside the range
+    // Trapezoid rule over consecutive points inside the range, using |dx| so
+    // that ascending and descending x give the same area (data in file order).
+    double integral = 0;
 };
 
 // Statistics of every visible dataset over [x0, x1] (in any order).

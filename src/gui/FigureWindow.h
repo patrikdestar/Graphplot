@@ -130,8 +130,8 @@ private:
     void commitView(PlotRenderer* r);
     void stepView(int direction);
     void copyToClipboard();
-    // Opens a file or folder by type (used by drag & drop); returns an error text.
-    QString openPath(const QString& path);
+    // Opens files / folders by type (used by drag & drop); shows any errors.
+    void openPaths(const QStringList& paths);
     void onExport();
     void buildStyleMenu();
 public:
@@ -173,7 +173,8 @@ private:
     Timeline* m_timeline = nullptr;
     struct ViewHistory {
         QList<ViewRange> back, forward;
-        ViewRange last;  // the view currently shown (last committed)
+        ViewRange last;        // the view currently shown (last committed)
+        bool started = false;  // set once the panel first shows data
         QTimer* settle = nullptr;  // records a view once zooming / panning pauses
     };
     QHash<PlotRenderer*, ViewHistory> m_history;

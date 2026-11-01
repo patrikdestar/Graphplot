@@ -968,9 +968,21 @@ void PropertiesPanel::refreshLimits()
 
 void PropertiesPanel::commitLimits()
 {
-    const ViewRange v{m_xMin->value(), m_xMax->value(), m_yMin->value(), m_yMax->value()};
+    // Each field commits on its own. When the edited bound crosses the other
+    // one (e.g. typing 20 as X min while the view is 0..10), keep the current
+    // width and move the other bound along, so any range can be typed.
+    const ViewRange old = m_controller->renderer()->viewRange();
+    ViewRange v{m_xMin->value(), m_xMax->value(), m_yMin->value(), m_yMax->value()};
+    auto fix = [](double& lo, double& hi, double oldLo, double oldHi) {
+        if (hi > lo) return;
+        const double w = oldHi > oldLo ? oldHi - oldLo : 1.0;
+        if (lo != oldLo) hi = lo + w;  // the minimum was edited
+        else lo = hi - w;              // the maximum was edited
+    };
+    fix(v.xmin, v.xmax, old.xmin, old.xmax);
+    fix(v.ymin, v.ymax, old.ymin, old.ymax);
     if (v.xmax > v.xmin && v.ymax > v.ymin) m_controller->renderer()->setViewRange(v);
-    else refreshLimits();  // reject an empty or inverted range
+    refreshLimits();
 }
 
 void PropertiesPanel::commitAxes()

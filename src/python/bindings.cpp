@@ -974,7 +974,9 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         "region_stats",
         [](FigurePtr self, const py::object& xmin, const py::object& xmax) {
             // Convert the Python arguments here, while the GIL is held.
-            const bool useRegion = xmin.is_none() || xmax.is_none();
+            if (xmin.is_none() != xmax.is_none())
+                throw py::value_error("pass both xmin and xmax, or neither (to use the selected region)");
+            const bool useRegion = xmin.is_none();
             const double a = useRegion ? 0.0 : xmin.cast<double>();
             const double b = useRegion ? 0.0 : xmax.cast<double>();
             const auto stats = inGui([&] {

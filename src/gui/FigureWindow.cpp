@@ -109,7 +109,6 @@ FigureWindow::~FigureWindow() = default;
 void FigureWindow::wireAxes(const Axes& ax)
 {
     PlotRenderer* renderer = ax.renderer;
-    m_history[renderer].last = renderer->viewRange();  // the starting view
     connect(renderer, &PlotRenderer::viewChanged, this, [this, renderer] { recordView(renderer); });
     PlotModel* model = ax.model;
     // Show the peak list automatically once there are peaks.
@@ -145,6 +144,13 @@ void FigureWindow::commitView(PlotRenderer* r)
     ViewHistory& h = m_history[r];
     if (h.settle) h.settle->stop();
     const ViewRange now = r->viewRange();
+    // The history starts with the first view that shows data (not the empty
+    // default range of a fresh panel).
+    if (!h.started) {
+        h.started = !r->model()->datasets().empty() || !r->model()->matrices().empty();
+        h.last = now;
+        return;
+    }
     if (now == h.last) return;  // nothing new (e.g. the result of Back / Forward)
     h.back << h.last;
     if (h.back.size() > 100) h.back.removeFirst();
@@ -166,9 +172,12 @@ void FigureWindow::stepView(int direction)
 
 void FigureWindow::copyToClipboard()
 {
+    // Same size and look as File > Export (nominal figure size, export mode).
+    const QSize size = m_figureSize.isValid() ? m_figureSize : m_plot->size();
     for (const Axes& ax : m_axes) ax.renderer->setExportMode(true);
-    const QPixmap pm = m_plot->toPixmap(m_plot->width(), m_plot->height(), 2.0);
+    const QPixmap pm = m_plot->toPixmap(size.width(), size.height(), 2.0);
     for (const Axes& ax : m_axes) ax.renderer->setExportMode(false);
+    m_plot->replot();
     QGuiApplication::clipboard()->setImage(pm.toImage());
     statusBar()->showMessage("Figure copied to the clipboard", 3000);
 }
@@ -182,29 +191,40 @@ void FigureWindow::dragEnterEvent(QDragEnterEvent* e)
 
 void FigureWindow::dropEvent(QDropEvent* e)
 {
-    QStringList errors;
-    for (const QUrl& url : e->mimeData()->urls()) {
-        if (!url.isLocalFile()) continue;
-        const QString err = openPath(url.toLocalFile());
-        if (!err.isEmpty()) errors << QFileInfo(url.toLocalFile()).fileName() + ": " + err;
-    }
-    if (!errors.isEmpty()) QMessageBox::warning(this, "Open", errors.join("\n"));
-    e->acceptProposedAction();
+    QStringList paths;
+    for (const QUrl& url : e->mimeData()->urls())
+        if (url.isLocalFile()) paths << url.toLocalFile();
+    if (paths.isEmpty()) return;  // nothing we can open: refuse the drop
+    // Always a copy: accepting a "move" would let the source delete the file.
+    e->setDropAction(Qt::CopyAction);
+    e->accept();
+    // Open after the drop returns, so the drag source isn't blocked while
+    // files load or an error box is shown.
+    QTimer::singleShot(0, this, [this, paths] { openPaths(paths); });
 }
 
-QString FigureWindow::openPath(const QString& path)
+void FigureWindow::openPaths(const QStringList& paths)
 {
-    const QFileInfo fi(path);
-    QString err;
-    if (fi.suffix().compare("gpstyle", Qt::CaseInsensitive) == 0) {
-        QStringList errs;
-        applyStyle(path, &errs);
-        return errs.join("; ");
+    QStringList errors, logs;
+    for (const QString& path : paths) {
+        const QFileInfo fi(path);
+        QString err;
+        if (fi.suffix().compare("gpstyle", Qt::CaseInsensitive) == 0) {
+            QStringList errs;
+            applyStyle(path, &errs);
+            err = errs.join("; ");
+        } else if (fi.isDir() || fi.fileName() == "2rr") {
+            if (openBruker(path, &err) != kInvalidId) err.clear();
+        } else if (m_timeline) {
+            logs << path;  // loaded together below (one time origin, one undo step)
+        } else if (openDataFile(path, &err)) {
+            err.clear();
+        }
+        if (!err.isEmpty()) errors << fi.fileName() + ": " + err;
     }
-    if (fi.isDir() || fi.fileName() == "2rr") return openBruker(path, &err) != kInvalidId ? QString() : err;
-    // Text logs: into the timeline if this window is one, else as column data.
-    if (m_timeline) return m_timeline->loadCsv({path}, false, &err) ? QString() : err;
-    return openDataFile(path, &err) ? QString() : err;
+    QString err;
+    if (!logs.isEmpty() && !m_timeline->loadCsv(logs, false, &err)) errors << err;
+    if (!errors.isEmpty()) QMessageBox::warning(this, "Open", errors.join("\n"));
 }
 
 void FigureWindow::updateRegionLabel()

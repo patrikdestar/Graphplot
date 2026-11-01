@@ -747,8 +747,10 @@ void Timeline::updateCursorVisuals()
         for (const TimePin& p : m_pins)
             if (!near || std::abs(p.t - t) < std::abs(near->t - t)) near = &p;
         if (near)
-            text += QString("   %1t from %2: %3%4")
-                        .arg(QChar(0x0394), near->label, t >= near->t ? "+" : "",
+            // Non-breaking spaces: the label is rich text, where plain runs collapse.
+            text += QString("\u00a0\u00a0\u00a0%1t from %2: %3%4")
+                        .arg(QChar(0x0394), near->label.isEmpty() ? QString("marker") : near->label,
+                             t >= near->t ? "+" : "",
                              formatSeconds(t - near->t, res));
         m_navTimeLabel->setText(text, f, false);
         m_navTimeLabel->position->setCoords(t, 0.0);
@@ -798,6 +800,7 @@ void Timeline::applyPin(ObjectId id, const std::optional<TimePin>& state)
     }
     std::sort(m_pins.begin(), m_pins.end(), [](const TimePin& a, const TimePin& b) { return a.t < b.t; });
     rebuildPinVisuals();
+    updateCursorVisuals();  // the delta-t readout depends on the markers
     emit pinsChanged();
 }
 

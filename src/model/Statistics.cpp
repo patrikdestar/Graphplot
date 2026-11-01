@@ -14,7 +14,9 @@ std::vector<SignalStats> rangeStats(const PlotModel& model, double x0, double x1
         SignalStats s;
         s.id = d.id;
         s.name = d.name;
-        double sum = 0, sumSq = 0;
+        // Welford's running mean / variance: exact enough even for values on a
+        // large offset (the naive sum of squares cancels catastrophically).
+        double mean = 0, m2 = 0, meanSq = 0;
         bool havePrev = false;
         double px = 0, py = 0;
         for (qsizetype i = 0; i < d.x.size(); ++i) {
@@ -26,19 +28,20 @@ std::vector<SignalStats> rangeStats(const PlotModel& model, double x0, double x1
             if (s.n == 0 || y < s.min) s.min = y, s.xAtMin = x;
             if (s.n == 0 || y > s.max) s.max = y, s.xAtMax = x;
             ++s.n;
-            sum += y;
-            sumSq += y * y;
-            if (havePrev) s.integral += 0.5 * (y + py) * (x - px);
+            const double delta = y - mean;
+            mean += delta / double(s.n);
+            m2 += delta * (y - mean);
+            meanSq += (y * y - meanSq) / double(s.n);  // running mean of y^2 (no overflow of a sum)
+            // |dx|: descending axes (ppm) give a positive area for positive data.
+            if (havePrev) s.integral += 0.5 * (y + py) * std::abs(x - px);
             havePrev = true;
             px = x;
             py = y;
         }
         if (s.n > 0) {
-            s.mean = sum / double(s.n);
-            s.rms = std::sqrt(sumSq / double(s.n));
-            // Sum of squared deviations, guarded against tiny negative rounding.
-            const double ss = std::max(0.0, sumSq - double(s.n) * s.mean * s.mean);
-            s.std = s.n > 1 ? std::sqrt(ss / double(s.n - 1)) : 0.0;
+            s.mean = mean;
+            s.rms = std::sqrt(meanSq);
+            s.std = s.n > 1 ? std::sqrt(std::max(0.0, m2) / double(s.n - 1)) : 0.0;
         }
         out.push_back(s);
     }

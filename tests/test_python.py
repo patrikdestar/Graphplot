@@ -591,6 +591,8 @@ class PlotterTests(unittest.TestCase):
         fig.plot([0, 1, 2], [5, 5, 5], label="a")  # same name -> distinct key
         with self.assertRaises(ValueError):
             fig.region_stats()  # nothing selected
+        with self.assertRaises(ValueError):
+            fig.region_stats(1)  # only one bound
         st = fig.region_stats(4, 0)
         self.assertEqual(len(st), 2)
         self.assertEqual(st["a"]["n"], 5)

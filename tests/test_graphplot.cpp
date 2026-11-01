@@ -1291,6 +1291,15 @@ private slots:
         QVERIFY(std::abs(s.std - std::sqrt(10.0 / 3)) < 1e-12);
         QVERIFY(std::abs(s.rms - std::sqrt(26.0 / 4)) < 1e-12);
         QCOMPARE(rangeStats(m, 20, 30)[0].n, qsizetype(0));  // empty range
+        // Values on a large offset keep their spread; descending x integrates positive.
+        PlotModel m2;
+        Dataset e;
+        e.x = {4, 3, 2, 1};
+        e.y = {1e8 + 0.001, 1e8 + 0.002, 1e8 + 0.003, 1e8 + 0.004};
+        m2.insertDataset(e);
+        const SignalStats o = rangeStats(m2, 0, 10)[0];
+        QVERIFY(std::abs(o.std - 0.0012909944) < 1e-8);
+        QVERIFY(o.integral > 0);
     }
 
     void featureLimitsAndViewHistory()
@@ -1320,6 +1329,10 @@ private slots:
         fwd->trigger();
         QCOMPARE(w->renderer()->viewRange(), (ViewRange{10, 20, 0, 5}));
         QCOMPARE(xMin->value(), 10.0);
+        // A range that doesn't overlap the current one can be typed min-first.
+        xMin->setValue(30);  // view is 10..20: X max follows (width kept)
+        QCOMPARE(w->renderer()->viewRange().xmin, 30.0);
+        QCOMPARE(w->renderer()->viewRange().xmax, 40.0);
     }
 
     void featureTimelinePinSteps()
@@ -1354,7 +1367,8 @@ private slots:
         QDropEvent drop(QPointF(10, 10), Qt::CopyAction, mime, Qt::LeftButton, Qt::NoModifier);
         const int before = int(w->model()->datasets().size());
         QCoreApplication::sendEvent(w.get(), &drop);
-        QCOMPARE(int(w->model()->datasets().size()), before + 1);
+        QCOMPARE(drop.dropAction(), Qt::CopyAction);  // never a move
+        QTRY_COMPARE(int(w->model()->datasets().size()), before + 1);  // opened after the drop
         delete mime;
     }
 
