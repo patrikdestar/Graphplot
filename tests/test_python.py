@@ -1188,8 +1188,52 @@ class PlotterTests(unittest.TestCase):
         g.canvas.flush_events()
         line, caps, bars = plt.errorbar([1, 2], [1, 2], yerr=0.1)
         n, bins, patches = plt.hist([1, 2, 2, 3])
-        self.assertEqual(len(list(patches)), 1)
+        self.assertEqual(len(list(patches)), 10)  # one per bin, as matplotlib
         self.assertEqual(plt.gca().get_xscale(), "linear")
+        plt.close("all")
+
+    def test_round10_fixes(self):
+        import plotter.pyplot as plt
+        fig, axs = plt.subplots(2, 2)
+        for ax in axs.flat:
+            ax.plot([0, 1], [0, 1])
+            ax.set(xlabel="x", ylabel="y")
+            ax.label_outer()
+        self.assertEqual(axs[0, 1].get_xlabel(), "")
+        self.assertEqual(axs[0, 1].get_ylabel(), "")
+        self.assertEqual(axs[1, 0].get_xlabel(), "x")
+        fig.supxlabel("T")
+        self.assertEqual(axs[0, 0].get_xlabel(), "")
+        plt.close("all")
+        # Per-bin patches: restyling one bar splits the histogram into bars.
+        n, bins, patches = plt.hist(np.arange(10.0), bins=5)
+        patches[0].set_facecolor("red")
+        self.assertEqual(len(plt.gca()._ax.lines()), 5)
+        bars = plt.gca().bar(["a", "b"], [1, 2])
+        self.assertEqual([b.get_height() for b in bars], [1.0, 2.0])
+        plt.gca().bar_label(bars)
+        plt.plot(1, 1, "ro")  # one point from scalars
+        # fig.legend lists a twin's lines; legend handles from another subplot.
+        fig, ax = plt.subplots()
+        ax.plot([1, 2], [1, 2], label="host")
+        ax2 = ax.twinx()
+        ax2.plot([1, 2], [3, 1], "r", label="twin")
+        fig.legend()
+        self.assertTrue(ax._ax.legend_with_twin)
+        self.assertIsNotNone(ax.get_legend())
+        h, l = ax.get_legend_handles_labels()
+        self.assertEqual(l, ["host"])
+        fig, (a1, a2) = plt.subplots(1, 2)
+        l1, = a1.plot([0, 1], [0, 1])
+        l2, = a2.plot([0, 1], [1, 0])
+        a1.legend(handles=[l1, l2], labels=["one", "two"])
+        self.assertIn("two", [x.label for x in a1._ax.lines()])
+        ax.autoscale_view()
+        for t in ax.get_xticklabels():
+            t.set_rotation(30)
+        fig.autofmt_xdate()
+        fig.canvas.draw()
+        self.assertEqual(plt.cm.viridis, "viridis")
         plt.close("all")
 
     def test_round6_correctness(self):

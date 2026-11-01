@@ -210,7 +210,7 @@ const QList<Entry>& table()
           << boo("legend.frameon", "draw a frame around the legend", &Style::legendFrame)
           << choice("legend.loc", "legend position", &Style::legendLoc,
                     {"upper right", "upper left", "lower right", "lower left", "upper center",
-                     "lower center", "center left", "center right", "center"})
+                     "lower center", "center left", "center right", "center", "best"})
           << dbl("legend.fontsize", "legend font size (pt)", &Style::legendFontSize, 1)
           << col("legend.facecolor", "legend background", &Style::legendFace)
           << col("legend.edgecolor", "legend frame colour", &Style::legendEdge)

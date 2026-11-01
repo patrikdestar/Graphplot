@@ -1623,6 +1623,9 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
             });
         },
         py::arg("visible") = true);
+    fig.def_property_readonly(
+        "legend_visible", [](FigurePtr self) { return inGui([&] { return self->model()->axesInfo().legendVisible; }); },
+        "Whether legend() turned the legend on (it shows when there are labelled items).");
     fig.def_property(
         "legend_with_twin",
         [](FigurePtr self) { return inGui([&] { return self->model()->axesInfo().legendWithTwin; }); },
@@ -1645,7 +1648,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
             QString loc = v.is_none() ? QString() : QString::fromStdString(py::str(v).cast<std::string>()).trimmed();
             if (loc == "right") loc = "center right";  // matplotlib's alias
             static const QStringList ok = {"upper right", "upper left", "lower right", "lower left", "upper center",
-                                           "lower center", "center left", "center right", "center"};
+                                           "lower center", "center left", "center right", "center", "best"};
             if (!loc.isEmpty() && !ok.contains(loc))
                 throw py::value_error("legend_loc must be None or one of: " + ok.join(", ").toStdString());
             inGui([&] {

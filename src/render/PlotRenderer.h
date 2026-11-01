@@ -135,6 +135,7 @@ public:
     // Takes effect in the current replot (it is called from afterLayout).
     void setMaxTicksY(int n);
     void applyLegendLoc(const Style& st);
+    void placeLegendBest();  // legend.loc 'best': the corner over the fewest data points
     // Draw the region also in exports (default: no, it is a selection aid).
     void setRegionInExports(bool on) { m_regionInExports = on; }
 
@@ -245,6 +246,7 @@ private:
     bool m_hasHome = false;
     bool m_autoHome = true;
     bool m_regionInExports = false;
+    bool m_legendBest = false;
     bool m_ownTitle = false;
     PlotRenderer* m_twinHost = nullptr;   // set for a twin panel
     PlotRenderer* m_twin = nullptr;       // set on the host of a twin

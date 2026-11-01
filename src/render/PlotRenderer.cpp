@@ -245,6 +245,9 @@ PlotRenderer::PlotRenderer(PlotModel* model, QCustomPlot* plot, QCPAxisRect* rec
         m_rect->update(QCPLayoutElement::upLayout);       // its legend and axes
     });
     connect(m_plot, &QCustomPlot::beforeReplot, this, &PlotRenderer::updateTwinMargin);
+    connect(m_plot, &QCustomPlot::beforeReplot, this, [this] {
+        if (m_legendBest) placeLegendBest();
+    });
     applyStyle();
     applyAxesInfo();
 }
@@ -440,6 +443,9 @@ void PlotRenderer::setupAppearance()
         p->addLayer("regions", p->layer("images"), QCustomPlot::limAbove);
         p->addLayer("objects", p->layer("main"), QCustomPlot::limAbove);
     }
+    // Filled areas (bars, fill_between, histograms) below the lines, as in
+    // matplotlib (patches below lines). Added for figures made before it existed too.
+    if (!p->layer("fills")) p->addLayer("fills", p->layer("regions"), QCustomPlot::limAbove);
     m_imageLayer = p->layer("images");
     m_regionLayer = p->layer("regions");
     m_objectLayer = p->layer("objects");
@@ -895,6 +901,7 @@ void PlotRenderer::applyDatasetAppearance(ObjectId id)
     p->setPen(pen);
     p->setName(d->name);
     p->setVisible(s.visible);
+    p->setLayer(s.fillColor.isValid() ? QStringLiteral("fills") : QStringLiteral("main"));
     // Filled symbols (open symbols like x/+ ignore the brush).
     const QColor edge = s.markerEdge.isValid() ? ink(s.markerEdge) : color;
     QPen edgePen(edge.alpha() == 0 ? QColor(Qt::transparent) : edge, 1.0);
@@ -948,12 +955,16 @@ void PlotRenderer::syncLegend()
         if (QCPGraph* g = m_markers.value(mk.id).legendSample)
             m_legend->addItem(new RichLegendItem(m_legend, g, m_model->style().mathText));
     // twinx: the host's legend can list the twin's lines too (one legend).
-    if (m_twin && m_model->axesInfo().legendWithTwin)
+    if (m_twin && m_model->axesInfo().legendWithTwin) {
         for (const auto& d : m_twin->m_model->datasets()) {
             QCPAbstractPlottable* p = m_twin->m_plottables.value(d.id);
             if (p && d.style.visible && d.style.inLegend && !d.name.isEmpty())
                 m_legend->addItem(new RichLegendItem(m_legend, p, m_model->style().mathText));
         }
+        for (const auto& mk : m_twin->m_model->markers())
+            if (QCPGraph* g = m_twin->m_markers.value(mk.id).legendSample)
+                m_legend->addItem(new RichLegendItem(m_legend, g, m_model->style().mathText));
+    }
     for (const auto& m : m_model->matrices()) {
         const MatrixVisual v = m_matrices.value(m.id);
         // Images without contours have no legend entry (as in matplotlib); the
@@ -961,8 +972,9 @@ void PlotRenderer::syncLegend()
         if (v.contour && m.style.visible && m.style.showContours && !m.name.isEmpty())
             m_legend->addItem(new RichLegendItem(m_legend, v.contour, m_model->style().mathText));
     }
-    m_legend->setVisible(m_model->axesInfo().legendVisible &&
-                               m_legend->itemCount() > 0);
+    // A twin whose lines the host lists shows no legend of its own (no duplicates).
+    const bool listedByHost = m_twinHost && m_twinHost->m_model->axesInfo().legendWithTwin;
+    m_legend->setVisible(m_model->axesInfo().legendVisible && m_legend->itemCount() > 0 && !listedByHost);
     // The host lists this panel's lines: keep it current.
     if (m_twinHost && m_twinHost->m_model->axesInfo().legendWithTwin) m_twinHost->syncLegend();
 }
@@ -1563,7 +1575,10 @@ void PlotRenderer::applyLegendLoc(const Style& st)
 {
     // The panel's own position, else the style's.
     const QString loc = m_model->axesInfo().legendLoc;
-    Qt::Alignment legendAlign = locToAlignment(loc.isEmpty() ? st.legendLoc : loc);
+    const QString effective = loc.isEmpty() ? st.legendLoc : loc;
+    m_legendBest = effective == "best";
+    if (m_legendBest) return;  // placed before each replot (placeLegendBest)
+    Qt::Alignment legendAlign = locToAlignment(effective);
     if (m_twinHost && loc.isEmpty()) {  // the twin's legend on the other side, so the two do not overlap
         if (legendAlign & Qt::AlignRight) legendAlign = (legendAlign & ~Qt::AlignRight) | Qt::AlignLeft;
         else if (legendAlign & Qt::AlignLeft) legendAlign = (legendAlign & ~Qt::AlignLeft) | Qt::AlignRight;
@@ -1571,8 +1586,51 @@ void PlotRenderer::applyLegendLoc(const Style& st)
     m_rect->insetLayout()->setInsetAlignment(0, legendAlign);
 }
 
+void PlotRenderer::placeLegendBest()
+{
+    if (!m_legend->visible()) return;
+    const QRect box = m_rect->rect();
+    const QSize size = m_legend->outerRect().size().isEmpty() ? m_legend->minimumOuterSizeHint()
+                                                              : m_legend->outerRect().size();
+    if (box.width() < 10 || size.isEmpty()) return;
+    // matplotlib's order of preference for ties.
+    static const char* order[] = {"upper right", "upper left", "lower left", "lower right", "center right",
+                                  "center left", "lower center", "upper center", "center"};
+    // Sample the visible data (at most ~2000 points per dataset).
+    QVector<QPointF> pts;
+    for (const auto& d : m_model->datasets()) {
+        if (!d.style.visible || d.x.isEmpty()) continue;
+        const qsizetype step = std::max<qsizetype>(1, d.x.size() / 2000);
+        for (qsizetype i = 0; i < d.x.size(); i += step)
+            if (std::isfinite(d.x[i]) && std::isfinite(d.y[i]))
+                pts << QPointF(m_x->coordToPixel(d.x[i]), m_y->coordToPixel(d.y[i]));
+    }
+    const int margin = 10;
+    Qt::Alignment best = Qt::AlignTop | Qt::AlignRight;
+    int bestCount = std::numeric_limits<int>::max();
+    for (const char* name : order) {
+        const Qt::Alignment a = locToAlignment(QString::fromLatin1(name));
+        const int x = (a & Qt::AlignLeft) ? box.left() + margin
+                      : (a & Qt::AlignRight) ? box.right() - margin - size.width()
+                                              : box.center().x() - size.width() / 2;
+        const int y = (a & Qt::AlignTop) ? box.top() + margin
+                      : (a & Qt::AlignBottom) ? box.bottom() - margin - size.height()
+                                               : box.center().y() - size.height() / 2;
+        const QRectF r(x, y, size.width(), size.height());
+        int count = 0;
+        for (const QPointF& p : pts) count += r.contains(p);
+        if (count < bestCount) {
+            bestCount = count;
+            best = a;
+        }
+        if (count == 0) break;
+    }
+    m_rect->insetLayout()->setInsetAlignment(0, best);
+}
+
 void PlotRenderer::applyAxesInfo()
 {
+    if (m_twin) m_twin->syncLegend();  // its legend hides while this one lists its lines
     applyLegendLoc(displayStyle());
     const AxesInfo& info = m_model->axesInfo();
     const Style st = displayStyle();

@@ -262,6 +262,10 @@ class PltAxes:
                         x = idx  # numbers or dates: the index is x (as matplotlib)
             else:
                 x, y = args.pop(0), args.pop(0)
+            if _np.ndim(x) == 0:  # plot(1, 2, 'ro'): one point
+                x = [x]
+            if _np.ndim(y) == 0:
+                y = [y]
             fmt = args.pop(0) if args and isinstance(args[0], str) else ""
             opts = dict(kw)
             color, ls, marker = _parse_fmt(fmt) if fmt else (None, None, None)
@@ -414,7 +418,7 @@ class PltAxes:
                 w = None if weights is None else weights[i]
                 results.append(self.hist(d, bins, range, density=density, weights=w, histtype=histtype, **k))
             return (_np.array([r[0] for r in results]), results[0][1], [r[2] for r in results])  # one _Patches each
-        kw.pop("edgecolor", None)
+        kw_edge = kw.pop("edgecolor", kw.pop("ec", None))
         fill = kw.pop("facecolor", None)
         opts = _common(kw)
         if histtype == "bar":
@@ -422,7 +426,12 @@ class PltAxes:
         counts, edges, line = self._ax.hist(x, bins, range, density=density, weights=weights,
                                             histtype=histtype, fill=fill,
                                             **{k: v for k, v in opts.items() if k in ("label", "color", "width", "style")})
-        return counts, edges, _Patches([line])
+        edges_a = _np.asarray(edges, dtype=float)
+        rects = [(float(edges_a[i]), 0.0, float(edges_a[i + 1] - edges_a[i]), float(c))
+                 for i, c in enumerate(_np.asarray(counts, dtype=float))]
+        if kw_edge is not None and kw_edge != "none":
+            line.color = _mpl_color(kw_edge)  # the outline
+        return counts, edges, _RectGroup(self, line, rects, None)
 
     def stairs(self, values, edges=None, fill=False, **kw):
         values = _np.asarray(values, dtype=float)
@@ -673,6 +682,7 @@ class PltAxes:
     def twinx(self):
         """A second y axis on the right, sharing this panel's x axis."""
         twin = PltAxes(self.figure, self._ax.twinx())
+        twin._twin_of = self
         self.figure.axes.append(twin)
         return twin
 
@@ -793,7 +803,7 @@ class PltAxes:
         left = x - w / 2 if align == "center" else x
         if isinstance(color, (list, tuple)) and color and not isinstance(color[0], (int, float)):
             # One colour per bar: one filled shape per bar.
-            out = [self.bar(xi, hi, wi, bi, align, color=ci, label=label if i == 0 else None, **kw)
+            out = [self.bar(xi, hi, wi, bi, align, color=ci, label=label if i == 0 else None, **kw)._line
                    for i, (xi, hi, wi, bi, ci) in enumerate(zip(x, h, w, b, color))]
             line = out[0]
         else:
@@ -803,11 +813,13 @@ class PltAxes:
             opts["style"] = "none"
             opts["color"] = opts.get("color") or self._ax._take_color()
             line = self._ax.plot(xs_, ys_, fill=opts["color"], **opts)  # opaque, as matplotlib
+            out = None
         if yerr is not None:
             self._ax.plot(x, b + h, yerr=yerr, style="none", color="k")
         if tick_label is not None:
             self._ax.set_xticks(list(x), [str(t) for t in _np.atleast_1d(tick_label)])
-        return line
+        return _RectGroup(self, line, [(float(l0), float(b0), float(w0), float(h0))
+                                       for l0, b0, w0, h0 in zip(_np.atleast_1d(left), b, w, h)], out)
 
     def barh(self, y, width, height=0.8, left=0.0, color=None, label=None, tick_label=None, xerr=None,
              align="center", edgecolor=None, capsize=None, **kw):
@@ -823,7 +835,7 @@ class PltAxes:
         bottom = y - ht / 2 if align == "center" else y
         if isinstance(color, (list, tuple)) and color and not isinstance(color[0], (int, float)):
             # One colour per bar: one filled shape per bar.
-            out = [self.barh(yi, wi, hi, li, color=ci, label=label if i == 0 else None, align=align, **kw)
+            out = [self.barh(yi, wi, hi, li, color=ci, label=label if i == 0 else None, align=align, **kw)._line
                    for i, (yi, wi, hi, li, ci) in enumerate(zip(y, wd, ht, lf, color))]
             line = out[0]
         else:
@@ -833,11 +845,13 @@ class PltAxes:
             opts["style"] = "none"
             opts["color"] = opts.get("color") or self._ax._take_color()
             line = self._ax.plot(xs, ys, fill=opts["color"], **opts)
+            out = None
         if xerr is not None:
             self._ax.plot(lf + wd, bottom + ht / 2, xerr=xerr, style="none", color="k")
         if tick_label is not None:
             self._ax.set_yticks(list(y), [str(t) for t in _np.atleast_1d(tick_label)])
-        return line
+        return _RectGroup(self, line, [(float(l0), float(b0), float(w0), float(h0))
+                                       for l0, b0, w0, h0 in zip(lf, bottom, wd, ht)], out)
 
     def step(self, x, y, *args, where="pre", **kw):
         """Step plot (where: 'pre', 'post', 'mid')."""
@@ -866,6 +880,7 @@ class PltAxes:
         """Clear this panel: data, objects, title, labels, ticks and scales."""
         ax = self._ax
         ax.clear()
+        ax.legend_with_twin = False
         ax.title = ax.xlabel = ax.ylabel = ""
         ax.x_log = ax.y_log = ax.x_reversed = ax.y_reversed = False
         ax.set_xticks(None)
@@ -992,7 +1007,9 @@ class PltAxes:
 
     def label_outer(self):
         """Only the outer panels of a grid keep their axis labels."""
-        rows, cols, index = getattr(self, "_grid_pos", (1, 1, 0))
+        if not hasattr(self, "_grid_pos"):
+            return
+        rows, cols, index = self._grid_pos
         if index // cols < rows - 1:
             self._ax.xlabel = ""
         if index % cols > 0:
@@ -1030,16 +1047,22 @@ class PltAxes:
         if handles is not None:
             handles = [h[0] if isinstance(h, (list, tuple)) else h for h in handles]
             labels = list(labels) if labels is not None else [h.label for h in handles]
+            host = getattr(self, "_twin_of", None)
+            if host is not None and any(hasattr(h, "_panel") and h in host._ax.lines() for h in handles):
+                # Called on the twin with the host's lines: the merged legend lives on the host.
+                return host.legend(handles=handles, labels=labels, loc=loc, frameon=frameon, fontsize=fontsize)
             own = self._ax.lines()
+            twin = next((a for a in self.figure.axes if getattr(a, "_twin_of", None) is self), None)
             for h, lab in zip(handles, labels):
                 h.label = str(lab)
                 if hasattr(h, "_panel") and h not in own:
-                    # A line of the twinx panel: this legend lists the twin's lines
-                    # (one legend for both, as the matplotlib idiom intends).
-                    self._ax.legend_with_twin = True
-                    for other in self.figure.axes:
-                        if other is not self and h in other._ax.lines():
-                            other._ax.legend(False)
+                    if twin is not None and h in twin._ax.lines():
+                        # A line of this panel's twinx: one legend lists both panels' lines.
+                        self._ax.legend_with_twin = True
+                    else:
+                        # A line of another panel: an entry with the same look here.
+                        self._ax.plot([], [], label=str(lab), color=h.color, style=h.style, width=h.width,
+                                      marker=None if h.marker == "none" else h.marker)
         elif len(args) == 1 or labels is not None:
             labels = labels if labels is not None else args[0]
             for h, lab in zip(self._ax.lines(), labels):
@@ -1047,8 +1070,10 @@ class PltAxes:
         self._ax.legend(True)
         params = {}
         if isinstance(loc, int):
-            loc = self._LEGEND_CODES.get(loc)  # 0 = "best": keep the current position
-        if isinstance(loc, str) and loc != "best":
+            loc = self._LEGEND_CODES.get(loc, "best")
+        if loc is None and self._ax.legend_loc is None:
+            loc = "best"  # matplotlib's default
+        if isinstance(loc, str):
             self._ax.legend_loc = loc  # this panel only, as in matplotlib
         if frameon is not None:
             params["legend.frameon"] = bool(frameon)
@@ -1074,8 +1099,41 @@ class PltAxes:
         if enable:
             self._ax.autoscale(x=axis in ("both", "x"), y=axis in ("both", "y"))
 
-    def relim(self):
+    def relim(self, *_, **__):
         pass
+
+    def autoscale_view(self, tight=None, scalex=True, scaley=True):
+        self._ax.autoscale(x=bool(scalex), y=bool(scaley))
+
+    def get_legend_handles_labels(self):
+        lines = [l for l in self._ax.lines() if l.label and not l.label.startswith("_")]
+        return lines, [l.label for l in lines]
+
+    def get_xticklabels(self, *_, **__):
+        return [_TickLabel(self, "x", t) for t in self._tick_texts("x")]
+
+    def get_yticklabels(self, *_, **__):
+        return [_TickLabel(self, "y", t) for t in self._tick_texts("y")]
+
+    def _tick_texts(self, axis):
+        t = getattr(self._ax, "get_" + axis + "ticks")()
+        return list(t[1]) if t is not None and len(t[1]) else [str(v) for v in getattr(self, "get_" + axis + "ticks")()]
+
+    def clabel(self, *_, **__):
+        """Contour labels are not drawn (accepted for compatibility)."""
+        return []
+
+    def bar_label(self, container, labels=None, fmt="%g", padding=0, **kw):
+        """Value labels at the end of each bar of a bar() result."""
+        out = []
+        for i, r in enumerate(container):
+            h = r.get_height()
+            text = labels[i] if labels is not None else (fmt % h if "%" in fmt else fmt.format(h))
+            x = r.get_x() + r.get_width() / 2
+            y = r.get_y() + h
+            out.append(self.text(x, y, text, ha="center", va="bottom" if h >= 0 else "top",
+                                 **{k: v for k, v in kw.items() if k in ("fontsize", "color")}))
+        return out
 
     def tick_params(self, axis="both", **kw):
         """Label rotation (rotation= / labelrotation=) is applied; other tick
@@ -1154,6 +1212,8 @@ class _PltFigure:
                                  f"212) is not supported - use plt.subplots() or one shape")
             grid = self._fig.subplots(rows, cols, squeeze=False)
             self.axes = [PltAxes(self, a) for row in grid for a in row]
+            for i, a in enumerate(self.axes):
+                a._grid_pos = (rows, cols, i)
             self._grid = (rows, cols)
         if not 1 <= index <= rows * cols:
             raise ValueError(f"subplot index {index} is outside a {rows}x{cols} grid")
@@ -1164,20 +1224,29 @@ class _PltFigure:
     def suptitle(self, s, **_):
         self._fig.suptitle = str(s)  # size from the style (axes.titlesize)
 
+    def autofmt_xdate(self, bottom=0.2, rotation=30, ha="right", which=None):
+        """Rotate the x tick labels of the bottom panels (date labels)."""
+        for a in self.axes:
+            rows, cols, i = getattr(a, "_grid_pos", (1, 1, 0))
+            if i // cols == rows - 1 and not hasattr(a, "_twin_of"):
+                a._ax.x_tick_rotation = float(rotation)
+
     def get_axes(self):
         return list(self.axes)
 
     def supxlabel(self, s, **_):
         """x label shared by the panels: drawn on the bottom row."""
-        bottom = [a for a in self.axes if getattr(a, "_grid_pos", (1, 1, 0))[2] //
-                  getattr(a, "_grid_pos", (1, 1, 0))[1] == getattr(a, "_grid_pos", (1, 1, 0))[0] - 1]
-        for a in bottom or self.axes[-1:]:
+        cells = [a for a in self.axes if not hasattr(a, "_twin_of")]
+        bottom = [a for a in cells if hasattr(a, "_grid_pos")
+                  and a._grid_pos[2] // a._grid_pos[1] == a._grid_pos[0] - 1]
+        for a in bottom or cells[-1:]:
             a.set_xlabel(s)
 
     def supylabel(self, s, **_):
         """y label shared by the panels: drawn on the left column."""
-        left = [a for a in self.axes if getattr(a, "_grid_pos", (1, 1, 0))[2] % getattr(a, "_grid_pos", (1, 1, 0))[1] == 0]
-        for a in left or self.axes[:1]:
+        cells = [a for a in self.axes if not hasattr(a, "_twin_of")]
+        left = [a for a in cells if hasattr(a, "_grid_pos") and a._grid_pos[2] % a._grid_pos[1] == 0]
+        for a in left or cells[:1]:
             a.set_ylabel(s)
 
     @property
@@ -1206,8 +1275,15 @@ class _PltFigure:
         self._fig.sca(self._fig.axes[0])
 
     def legend(self, *args, **kw):
-        """Figure legend: shown on the first panel (plotter legends live inside a panel)."""
-        return self.axes[0].legend(*args, **kw)
+        """Figure legend: shown on the first panel (plotter legends live inside a
+        panel); it also lists the lines of that panel's twinx axis."""
+        host = self.axes[0]
+        twins = [a for a in self.axes[1:] if getattr(a, "_twin_of", None) is host]
+        if twins and not args and "handles" not in kw:
+            host._ax.legend_with_twin = True
+            for t in twins:
+                t._ax.legend(False)
+        return host.legend(*args, **kw)
 
     def colorbar(self, mappable=None, ax=None, label=None, **kw):
         target = ax if ax is not None else self.gca()
@@ -1286,6 +1362,8 @@ def subplots(nrows=1, ncols=1, sharex=False, sharey=False, figsize=None, squeeze
                              wspace=px(wspace), squeeze=False)
     axes = [[PltAxes(fig, a) for a in row] for row in grid]
     fig.axes = [a for row in axes for a in row]
+    for i, a in enumerate(fig.axes):
+        a._grid_pos = (nrows, ncols, i)  # for label_outer / supxlabel
     fig._grid = (nrows, ncols)
     fig._fig.sca(grid[0][0])
     # Like matplotlib: an object ndarray (axs[0, 1], axs.flat, axs.ravel()).
@@ -1693,7 +1771,7 @@ class _Canvas:
     """Drawing is automatic; these only let pending window events run."""
 
     def draw(self):
-        _plotter.process_events() if hasattr(_plotter, "process_events") else None
+        _plotter._plotter.process_events(0)
 
     draw_idle = draw
     flush_events = draw
@@ -1721,3 +1799,119 @@ def _add_handle_methods():
 
 
 _add_handle_methods()
+
+
+class _Rect:
+    """One bar of a bar chart / histogram (matplotlib's Rectangle API subset)."""
+
+    def __init__(self, group, i):
+        self._group, self._i = group, i
+
+    def get_x(self):
+        return self._group._rects[self._i][0]
+
+    def get_y(self):
+        return self._group._rects[self._i][1]
+
+    def get_width(self):
+        return self._group._rects[self._i][2]
+
+    def get_height(self):
+        return self._group._rects[self._i][3]
+
+    def get_xy(self):
+        return (self.get_x(), self.get_y())
+
+    def get_facecolor(self):
+        return self._group._line_of(self._i).fill
+
+    def set_facecolor(self, c):
+        line = self._group._separate(self._i)
+        line.fill = _mpl_color(c)
+        line.color = _mpl_color(c)
+
+    set_color = set_facecolor
+
+    def set_edgecolor(self, c):
+        pass  # bars are drawn without an outline
+
+    def set_alpha(self, a):
+        line = self._group._separate(self._i)
+        r, g, b, _ = _plotter._plotter._rgba(line.fill)
+        line.fill = (r, g, b, float(a))
+
+    def set_hatch(self, *_):
+        pass
+
+    def set_label(self, s):
+        self._group._line_of(self._i).label = str(s)
+
+
+class _RectGroup(list):
+    """bar() / hist() result: one _Rect per bar (iterate, index, get_height ...).
+    All bars are one filled shape until a single bar is restyled; then each bar
+    becomes its own shape. Other attributes go to the drawn Line."""
+
+    def __init__(self, ax, line, rects, lines=None):
+        super().__init__(_Rect(self, i) for i in range(len(rects)))
+        self._ax, self._line, self._rects, self._lines = ax, line, rects, lines
+
+    def _line_of(self, i):
+        return self._lines[i] if self._lines else self._line
+
+    def _separate(self, i):
+        if self._lines is None:
+            fill = self._line.fill or self._line.color
+            label = self._line.label
+            self._line.remove()
+            self._lines = []
+            for k, (x0, y0, w, h) in enumerate(self._rects):
+                xs, ys = PltAxes._bar_outline([x0], [w], [h], [y0], True)
+                self._lines.append(self._ax._ax.plot(xs, ys, fill=fill, color=fill, style="none",
+                                                     label=label if k == 0 and label else None))
+            self._line = self._lines[0]
+        return self._lines[i]
+
+    @property
+    def patches(self):
+        return list(self)
+
+    def __getattr__(self, name):
+        return getattr(self._line, name)
+
+
+class _TickLabel:
+    """A tick label (matplotlib Text subset): set_rotation / set_ha apply to the axis."""
+
+    def __init__(self, ax, axis, text):
+        self._ax, self._axis, self._text = ax, axis, text
+
+    def get_text(self):
+        return self._text
+
+    def set_rotation(self, deg):
+        self._ax._rotate(self._axis, {"rotation": deg})
+
+    def set_ha(self, *_):
+        pass
+
+    set_horizontalalignment = set_ha
+
+    def set_fontsize(self, *_):
+        pass
+
+
+class _ColormapNames:
+    """plt.cm.viridis etc.: the colour map name (plotter takes names everywhere)."""
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return name
+
+
+cm = _ColormapNames()
+
+
+def get_cmap(name=None, lut=None):
+    return name or "viridis"
