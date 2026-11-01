@@ -176,13 +176,19 @@ void FigureWindow::stepView(int direction)
     m_renderer->setViewRange(h.last);
 }
 
+void FigureWindow::setExportMode(bool on)
+{
+    for (const Axes& ax : m_axes) ax.renderer->setExportMode(on);
+    emit exportModeChanged(on);  // the timeline's own items (navigator, marker labels)
+}
+
 void FigureWindow::copyToClipboard()
 {
     // Same size and look as File > Export (nominal figure size, export mode).
     const QSize size = m_figureSize.isValid() ? m_figureSize : m_plot->size();
-    for (const Axes& ax : m_axes) ax.renderer->setExportMode(true);
+    setExportMode(true);
     const QPixmap pm = m_plot->toPixmap(size.width(), size.height(), 2.0);
-    for (const Axes& ax : m_axes) ax.renderer->setExportMode(false);
+    setExportMode(false);
     m_plot->replot();
     QGuiApplication::clipboard()->setImage(pm.toImage());
     statusBar()->showMessage("Figure copied to the clipboard", 3000);
@@ -1070,9 +1076,9 @@ bool FigureWindow::exportTo(const QString& fileName, int width, int height, doub
     o.width = width;
     o.height = height;
     o.scale = scale;
-    for (const Axes& ax : m_axes) ax.renderer->setExportMode(true);
+    setExportMode(true);
     const bool ok = exportFigure(m_axes.front().renderer, fileName, o, error);
-    for (const Axes& ax : m_axes) ax.renderer->setExportMode(false);
+    setExportMode(false);
     return ok;
 }
 

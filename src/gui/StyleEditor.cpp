@@ -110,6 +110,7 @@ bool StyleEditor::collect(Style* out)
         QTableWidgetItem* v = m_table->item(r, 1);
         if (!s.set(m_table->item(r, 0)->text(), v->text(), &err)) {
             v->setBackground(QColor(255, 220, 220));
+            v->setForeground(QColor(Qt::black));  // readable on the pink also in dark themes
             errors << m_table->item(r, 0)->text() + ": " + err;
         } else {
             v->setBackground(Qt::NoBrush);

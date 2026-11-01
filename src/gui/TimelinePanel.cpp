@@ -102,7 +102,7 @@ TimelinePanel::TimelinePanel(Timeline* tl, QWidget* parent) : QWidget(parent), m
     m_autoFit = new QCheckBox("Auto-fit Y to the visible window");
     m_clock = new QCheckBox("Clock time (instead of seconds)");
     m_cursorLabel = new QLabel("–");
-    m_cursorLabel->setStyleSheet("color: #52514e;");
+    m_cursorLabel->setForegroundRole(QPalette::PlaceholderText);
     form->addRow("Navigator", m_nav);
     form->addRow(m_autoFit);
     form->addRow(m_clock);

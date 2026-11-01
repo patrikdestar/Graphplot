@@ -154,6 +154,15 @@ Timeline::Timeline(FigureWindow* window) : QObject(window), m_win(window), m_plo
         rebuildPinVisuals();
         updateCursorVisuals();
     });
+    // Exports: the navigator and marker labels use the figure's colours too.
+    connect(m_win, &FigureWindow::exportModeChanged, this, [this](bool on) {
+        // A script may export right after plotting, before the event loop ran
+        // the pending Y auto-fit: do it now so the file shows fitted rows.
+        if (on && m_fitScheduled) autoFitNow();
+        m_navRenderer->setExportMode(on);
+        applyThemeColors();
+        rebuildPinVisuals();
+    });
 
     // Time-only zooming in rows: Y follows the data (auto-fit) or Shift+wheel.
     m_win->controller()->setZoomAxes(ZoomAxes::XOnly);

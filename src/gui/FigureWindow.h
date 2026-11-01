@@ -114,6 +114,9 @@ signals:
     void closed();
     void currentAxesChanged(int index);
     void panelCreated(int index);
+    // Exports draw with the figure's own colours (not the display theme);
+    // emitted around every export so extra items can follow.
+    void exportModeChanged(bool exporting);
 
 protected:
     void closeEvent(QCloseEvent* e) override;
@@ -147,6 +150,7 @@ private:
     void commitView(PlotRenderer* r);
     void stepView(int direction);
     void copyToClipboard();
+    void setExportMode(bool on);
     // Opens files / folders by type (used by drag & drop); shows any errors.
     void openPaths(const QStringList& paths);
     void onExport();

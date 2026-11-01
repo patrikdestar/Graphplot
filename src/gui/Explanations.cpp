@@ -92,6 +92,13 @@ const QHash<QString, QString>& table()
         {"2D data (contours)/Visible", "Show or hide this 2D dataset."},
 
         // ---- Peaks list -------------------------------------------------------------------
+        {"Peaks/Threshold", "Minimum peak height. Empty: the current lowest contour level (what you see is what is picked)."},
+        {"Peaks/Min. distance", "Minimum separation between two peaks, in data points."},
+        {"Peaks/Skip diagonal ±", "Skip peaks closer than this to the diagonal (|x − y|), to pick only cross peaks."},
+        {"2D data (contours)/Base level", "Lowest positive contour level. Alt+wheel over the plot scrolls it; * and / halve or double it."},
+        {"Axes/Reverse X", "High values on the left (NMR ppm convention)."},
+        {"Axes/Diagonal", "Dashed y = x line (homonuclear 2D spectra)."},
+        {"Rows/New row", "Add an empty row; then drag signals onto it."},
         {"Peaks/Negative peaks too", "Also pick negative peaks (minima)."},
         {"Peaks/Visible area only", "Pick only inside the visible area; otherwise the whole spectrum."},
         {"Peaks/Delete selected", "Delete the peaks selected in the table (Del)."},

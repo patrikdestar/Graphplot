@@ -64,8 +64,9 @@ public:
     bool plotOverlayActive(bool exporting) const;
     // Applies the theme's plot colours to a style (screen display only).
     void applyTo(Style& s) const;
-    // Very dark data colours (e.g. 'k' lines) become the theme foreground so
-    // they stay visible on a dark background.
+    // Very dark data colours stay visible on a dark background: near-black
+    // greys (e.g. 'k' lines) become the theme's text colour, dark saturated
+    // colours (navy) get lighter with the same hue; others are unchanged.
     QColor ink(const QColor& c) const;
 
     QPalette palette() const;  // widget palette of the current theme

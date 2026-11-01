@@ -85,11 +85,6 @@ QList<ThemeDef> buildThemes()
     return out;
 }
 
-double luminance(const QColor& c)
-{
-    return 0.2126 * c.redF() + 0.7152 * c.greenF() + 0.0722 * c.blueF();
-}
-
 }  // namespace
 
 DisplayTheme::DisplayTheme() { m_current = themes().front(); }
@@ -162,10 +157,22 @@ void DisplayTheme::applyTo(Style& s) const
 
 QColor DisplayTheme::ink(const QColor& col) const
 {
-    if (!col.isValid() || !m_current.dark || luminance(col) > 0.22) return col;
-    QColor out = m_current.c.foreground;
-    out.setAlpha(col.alpha());
-    return out;
+    if (!col.isValid() || !m_current.dark) return col;
+    const QColor hsl = col.toHsl();
+    const double l = hsl.lightnessF(), sat = hsl.hslSaturationF();
+    // Near-black greys ('k', '#333'): the theme's text colour.
+    if (sat < 0.25 && l < 0.3) {
+        QColor out = m_current.c.foreground;
+        out.setAlpha(col.alpha());
+        return out;
+    }
+    // Dark saturated colours (navy, dark red): same hue, lighter, so series
+    // stay distinguishable. Pure red / blue (lightness 0.5) are kept as they are.
+    if (l < 0.3) {
+        QColor out = QColor::fromHslF(hsl.hslHueF(), sat, 0.6, col.alphaF());
+        return out;
+    }
+    return col;
 }
 
 QPalette DisplayTheme::palette() const

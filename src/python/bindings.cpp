@@ -36,6 +36,7 @@
 
 #include <QApplication>
 #include <QDir>
+#include <QEventLoop>
 #include <QPointer>
 #include <QSet>
 #include <QTimer>
@@ -1715,6 +1716,9 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         "screenshot",
         [](FigurePtr self, const std::string& filename) {
             const bool ok = inGui([&] {
+                // Finish pending updates (auto-fit, queued replots, panel
+                // lists) so the image shows the current state.
+                QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
                 return self->w()->grab().save(toPath(filename));
             });
             if (!ok) throw std::runtime_error("could not save screenshot");

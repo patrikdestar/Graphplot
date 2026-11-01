@@ -2,7 +2,6 @@
 #include "PropertiesPanel.h"
 
 #include "model/DataExport.h"
-#include "render/DisplayTheme.h"
 
 #include "commands/PlotEditor.h"
 #include "interaction/InteractionController.h"
@@ -190,6 +189,7 @@ PropertiesPanel::PropertiesPanel(PlotEditor* editor, InteractionController* cont
         if (m_current.kind == ObjectKind::Region) refreshCurrentPage();
     });
     connect(m_model, &PlotModel::axesInfoChanged, this, &PropertiesPanel::refreshAxes);
+    connect(m_model, &PlotModel::styleChanged, this, structural);  // e.g. annotation.color swatches
 
     connect(m_controller, &InteractionController::selectionChanged, this,
             [this](ObjectRef ref) { showObject(ref); });
@@ -320,7 +320,9 @@ void PropertiesPanel::buildUi()
     m_emptyPage = new QLabel("Select an object to edit its properties.");
     static_cast<QLabel*>(m_emptyPage)->setWordWrap(true);
     static_cast<QLabel*>(m_emptyPage)->setAlignment(Qt::AlignTop | Qt::AlignLeft);
-    static_cast<QLabel*>(m_emptyPage)->setStyleSheet("color: #7a7974; padding: 6px;");
+    // Muted text from the palette, so it stays readable in every theme.
+    static_cast<QLabel*>(m_emptyPage)->setForegroundRole(QPalette::PlaceholderText);
+    static_cast<QLabel*>(m_emptyPage)->setMargin(6);
     m_datasetPage = buildDatasetPage();
     m_markerPage = buildMarkerPage();
     m_annotationPage = buildAnnotationPage();
@@ -368,7 +370,7 @@ QWidget* PropertiesPanel::buildDatasetPage()
     fillRow->addWidget(m_dsFillColor);
     fillRow->addStretch();
     m_dsInfo = new QLabel;
-    m_dsInfo->setStyleSheet("color: #52514e;");
+    m_dsInfo->setForegroundRole(QPalette::PlaceholderText);
     form->addRow("Name", m_dsName);
     form->addRow("Colour", m_dsColor);
     form->addRow("Line width", m_dsWidth);
@@ -582,7 +584,7 @@ QWidget* PropertiesPanel::buildMatrixPage()
     m_mxVisible = new QCheckBox("Visible");
     m_mxInfo = new QLabel;
     m_mxInfo->setWordWrap(true);
-    m_mxInfo->setStyleSheet("color: #52514e;");
+    m_mxInfo->setForegroundRole(QPalette::PlaceholderText);
     form->addRow("Name", m_mxName);
     form->addRow("Base level", baseRow);
     form->addRow("Level factor", m_mxFactor);
@@ -703,10 +705,9 @@ void PropertiesPanel::refreshTreeItem(const ObjectRef& ref)
             QString t = a->text;
             t.replace('\n', ' ');
             item->setText(0, t.isEmpty() ? "(empty)" : t);
-            // Unset colour = the style's annotation colour (as drawn on screen).
-            const QColor ac = a->color.isValid() ? a->color : m_model->style().annotationColor;
-            item->setIcon(0, swatchIcon(DisplayTheme::instance()->plotOverlayActive(false)
-                                            ? DisplayTheme::instance()->ink(ac) : ac));
+            // Unset colour = the style's annotation colour. Swatches always
+            // show the stored colours (as exported), like datasets and markers.
+            item->setIcon(0, swatchIcon(a->color.isValid() ? a->color : m_model->style().annotationColor));
         }
         break;
     case ObjectKind::Region: {

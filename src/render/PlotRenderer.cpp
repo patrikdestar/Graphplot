@@ -784,8 +784,10 @@ void PlotRenderer::applyMatrixAppearance(ObjectId id)
     const MatrixVisual v = m_matrices.value(id);
     if (!m || !v.contour) return;
     ContourStyle cs = m->style;
-    cs.positiveColor = ink(cs.positiveColor);  // dark contours stay visible on dark themes
-    cs.negativeColor = ink(cs.negativeColor);
+    if (!cs.showImage) {  // over the (light) colour-map image the original colours read best
+        cs.positiveColor = ink(cs.positiveColor);  // dark contours stay visible on dark themes
+        cs.negativeColor = ink(cs.negativeColor);
+    }
     v.contour->setContourStyle(cs);  // recomputes only if the levels changed
     v.contour->setName(m->name);
     v.contour->setVisible(m->style.visible);
@@ -1013,6 +1015,9 @@ void PlotRenderer::applyStyle()
         p->plotLayout()->setMargins(QMargins(pad, pad, pad, pad));
     }
     m_rect->setBackground(st.axesFace);
+    QPen diagPen(st.axesEdge, 1, Qt::DashLine);  // the y = x line follows the frame colour
+    diagPen.setCosmetic(true);
+    m_diagonal->setPen(diagPen);
 
     auto cosmetic = [](const QColor& c, double w, Qt::PenStyle style = Qt::SolidLine) {
         QPen pen(c, w, style, Qt::FlatCap);

@@ -70,7 +70,10 @@ void Appearance::applyWidgetPalette()
         // "System": the platform's own style and palette.
         if (!m_originalStyle.isEmpty() && app->style()->name() != m_originalStyle)
             QApplication::setStyle(QStyleFactory::create(m_originalStyle));
-        QApplication::setPalette(QApplication::style()->standardPalette());
+        // A default QPalette = the platform theme's palette (follows OS
+        // light/dark mode and colour schemes); same for tooltips.
+        QApplication::setPalette(QPalette());
+        QToolTip::setPalette(QPalette());
         return;
     }
     // Fusion draws every widget from the palette, so the theme looks the same

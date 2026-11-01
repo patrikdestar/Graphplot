@@ -1455,6 +1455,31 @@ private slots:
         app->setThemePlots(false, false);
         QCOMPARE(w->plot()->axisRect()->backgroundBrush().color(), QColor(Qt::white));
         app->setThemePlots(true, false);
+        // Saturated colours stay as they are; near-black greys become the theme
+        // text colour; dark saturated colours keep their hue.
+        const DisplayTheme* dt = DisplayTheme::instance();
+        QCOMPARE(dt->ink(QColor(255, 0, 0)), QColor(255, 0, 0));
+        QCOMPARE(dt->ink(QColor(0, 0, 255)), QColor(0, 0, 255));
+        QCOMPARE(dt->ink(QColor(0x0b, 0x0b, 0x0b)), dt->current().c.foreground);
+        QCOMPARE(dt->ink(QColor(0, 0, 0x80)).hslHue(), QColor(0, 0, 0x80).hslHue());
+        QVERIFY(dt->ink(QColor(0, 0, 0x80)).lightnessF() > 0.5);
+        // A timeline export is light everywhere, the navigator included.
+        {
+            FigureWindow tw;
+            Timeline* tl = tw.timeline();
+            const int row = tl->addRow("r");
+            tl->addSignal(row, "s", {0, 1, 2}, {0, 1, 0});
+            tl->addPin(1, "pin");
+            tw.resize(600, 500);
+            tw.show();
+            QVERIFY(tw.exportTo(dir.filePath("tl.png"), 300, 300, 1.0));
+            QImage ti(dir.filePath("tl.png"));
+            const QRect nav = tl->navigatorRenderer()->axisRect()->rect();
+            QVERIFY(nav.isValid());
+            // Sample the navigator area in export coordinates (same layout at this size).
+            QVERIFY(ti.pixelColor(ti.width() / 2, ti.height() - 30).lightnessF() > 0.6);
+            QVERIFY(tl->navigatorRenderer()->axisRect()->backgroundBrush().color().lightnessF() < 0.3);  // screen
+        }
         // Every theme applies without errors; back to the default.
         for (const ThemeDef& t : DisplayTheme::themes()) QVERIFY(app->setTheme(t.id, false));
         QVERIFY(app->setTheme("system", false));
