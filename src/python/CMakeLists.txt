@@ -38,6 +38,11 @@ foreach(f ${PLOTTER_PY_FILES})
 endforeach()
 add_custom_target(plotter_python ALL DEPENDS ${_py_outputs})
 
-install(TARGETS _plotter LIBRARY DESTINATION plotter)
+# `cmake --install` puts the package into <prefix>/<GRAPHPLOT_PYTHON_INSTALL_DIR>/plotter.
+# Set it to a site-packages folder (e.g. the one printed by
+# `python3 -m site --user-site`) to make `import plotter` work without PYTHONPATH.
+set(GRAPHPLOT_PYTHON_INSTALL_DIR "python" CACHE PATH
+    "Folder (absolute, or relative to the install prefix) that receives the 'plotter' package")
+install(TARGETS _plotter LIBRARY DESTINATION "${GRAPHPLOT_PYTHON_INSTALL_DIR}/plotter")
 list(TRANSFORM PLOTTER_PY_FILES PREPEND "${PROJECT_SOURCE_DIR}/python/plotter/")
-install(FILES ${PLOTTER_PY_FILES} DESTINATION plotter)
+install(FILES ${PLOTTER_PY_FILES} DESTINATION "${GRAPHPLOT_PYTHON_INSTALL_DIR}/plotter")

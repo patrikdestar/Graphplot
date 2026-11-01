@@ -76,6 +76,8 @@ endforeach()
 # ---- Standalone application ------------------------------------------------------
 add_executable(graphplot WIN32 src/app/main.cpp)
 target_link_libraries(graphplot PRIVATE graphplot_ui)
+include(GNUInstallDirs)
+install(TARGETS graphplot RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 # ---- Python module -------------------------------------------------------------------
 if(GRAPHPLOT_BUILD_PYTHON)

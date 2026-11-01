@@ -131,23 +131,31 @@ def _figure_show(self: Figure, block: bool | None = None, timeout: float | None 
 Figure.show = _figure_show
 
 
-def _accept_pathlike(name: str) -> None:
-    """Let a Figure method take pathlib.Path (and other os.PathLike) paths."""
+def _accept_pathlike(name: str, keyword: str) -> None:
+    """Let a Figure method take pathlib.Path (and other os.PathLike) paths,
+    given positionally or by its keyword name."""
     import functools
     import os
 
     native = getattr(Figure, name)
 
     @functools.wraps(native)
-    def method(self, path, *args, **kwargs):
-        return native(self, os.fspath(path), *args, **kwargs)
+    def method(self, *args, **kwargs):
+        if args:
+            args = (os.fspath(args[0]),) + args[1:]
+        elif keyword in kwargs:
+            kwargs[keyword] = os.fspath(kwargs[keyword])
+        return native(self, *args, **kwargs)
 
     setattr(Figure, name, method)
 
 
 for _name in ("open_bruker", "export_peaks", "import_peaks", "use_style", "save_style",
               "savefig", "screenshot"):
-    _accept_pathlike(_name)
+    # The keyword name of the path argument, read from the native signature.
+    _doc = getattr(Figure, _name).__doc__ or ""
+    _kw = _doc.split("(self: plotter._plotter.Figure, ", 1)[-1].split(":", 1)[0]
+    _accept_pathlike(_name, _kw)
 Figure.vline = lambda self, x, **kw: self.marker(x, "v", **kw)
 Figure.vline.__doc__ = "Vertical marker at x (same keywords as marker())."
 Figure.hline = lambda self, y, **kw: self.marker(y, "h", **kw)

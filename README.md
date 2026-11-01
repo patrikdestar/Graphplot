@@ -87,20 +87,27 @@ annotate, read the results back, process, and re-plot.
 
 Requirements:
 
-- A C++20 compiler
+- A C++20 compiler (GCC ≥ 11, Clang ≥ 14, MSVC 2022)
 - CMake ≥ 3.21
-- Qt ≥ 6.2 with the Widgets, PrintSupport and Svg modules
-- For Python: Python ≥ 3.8, pybind11 and NumPy
+- Qt ≥ 6.2 with the Widgets, PrintSupport and Svg modules (Test for the tests)
+- For Python: Python ≥ 3.8 with its development headers, pybind11 and NumPy
 
 QCustomPlot 2.1.1 is vendored in `third_party/`.
 
-```bash
-sudo apt install build-essential cmake qt6-base-dev qt6-svg-dev libgl1-mesa-dev
-```
+**Debian / Ubuntu** (everything from the distribution, no `pip` needed):
 
 ```bash
-pip install pybind11 numpy
+sudo apt install build-essential cmake qt6-base-dev qt6-svg-dev libgl1-mesa-dev python3-dev pybind11-dev python3-numpy
 ```
+
+Or, in a virtual environment, take pybind11 and NumPy from pip (recent
+distributions refuse `pip install` into the system Python):
+
+```bash
+python3 -m venv ~/.venvs/graphplot && . ~/.venvs/graphplot/bin/activate && pip install pybind11 numpy
+```
+
+Configure, build and test:
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -114,10 +121,77 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
-Options: `-DGRAPHPLOT_BUILD_PYTHON=OFF` and `-DGRAPHPLOT_BUILD_TESTS=OFF`. On
-macOS/Windows, add `-DCMAKE_PREFIX_PATH=/path/to/Qt/6.x/<platform>`.
+Options:
 
-## Quick start
+- `-DGRAPHPLOT_BUILD_PYTHON=OFF`: the application only.
+- `-DGRAPHPLOT_BUILD_TESTS=OFF`: skip the tests.
+- `-DPython_EXECUTABLE=/path/to/python3`: build the module for that Python
+  (it only loads in the Python it was built for).
+- **macOS / Windows:** install Qt with the Qt online installer and add
+  `-DCMAKE_PREFIX_PATH=/path/to/Qt/6.x/<platform>` (e.g. `macos`,
+  `msvc2022_64`). On Windows, run the commands in the *x64 Native Tools
+  Command Prompt* and put Qt's `bin` folder on `PATH`.
+
+Build problems are covered in [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md#building).
+
+## Installing (optional)
+
+Without installing, run the app as `./build/graphplot` and make Python find
+the package with `export PYTHONPATH=$PWD/build/python`. To install
+permanently, install the app to a prefix and the Python package straight
+into your (user or virtual-environment) `site-packages`:
+
+```bash
+cmake -S . -B build -DGRAPHPLOT_PYTHON_INSTALL_DIR="$(python3 -c 'import sysconfig; print(sysconfig.get_path("platlib"))')"
+```
+
+```bash
+cmake --build build -j && cmake --install build --prefix ~/.local
+```
+
+This puts `graphplot` in `~/.local/bin` and `plotter` where `import plotter`
+finds it. (Inside a virtual environment, `platlib` is the environment's
+`site-packages`; for the system Python use `python3 -m site --user-site`.)
+
+## Getting started: your first plot from Python
+
+```python
+import numpy as np
+import plotter
+
+x = np.linspace(0, 10, 500)
+fig = plotter.figure("First plot")
+fig.plot(x, np.sin(x), label="sin")
+fig.plot(x, np.cos(x), label="cos", style="--")
+fig.xlabel, fig.ylabel = "Time (s)", "Amplitude"
+fig.legend()
+fig.show(block=False)            # the window opens; the script continues
+
+region = fig.wait_for_region()   # drag along X with the Region tool (R)
+if region is not None:           # None if you closed the window
+    stats = fig.region_stats()
+    print(f"mean of sin in {region}: {stats['sin']['mean']:.3f}")
+    m = fig.region_mask(x)
+    fig.plot(x[m], np.sin(x[m]) ** 2, label="sin² (region)")
+fig.savefig("first_plot.png")    # also .svg / .pdf
+plotter.show()                   # keep the window open until you close it
+```
+
+What happens:
+
+1. `fig.show(block=False)` opens the window and returns at once.
+2. `wait_for_region()` keeps the window responsive until you drag a region,
+   then returns `(xmin, xmax)`.
+3. The script computes something from the selection and plots it back into
+   the same window; every edit can be undone with Ctrl+Z.
+
+At an interactive prompt (`python -i`, or IPython after `%gui plotter`) the
+window stays live while you type, so you can do all of this step by step.
+More: `examples/demo.py` (the full tour: markers, callbacks, region
+analysis) and `examples/live_update.py` (streaming data from a worker
+thread).
+
+## Running the app and the examples
 
 The application:
 
@@ -139,9 +213,15 @@ The application:
 
 - With no arguments, the app shows 1D demo data.
 - `data.csv` stands for a column file: X followed by one or more Y columns.
+  Several files can be given at once.
 - A folder argument opens a Bruker 2D spectrum. It can be the experiment
-  folder or its `pdata/N` folder.
+  folder, its `pdata/N` folder or the `2rr` file.
 - `--demo2d` shows a synthetic 2D spectrum.
+- `--timeline a.csv b.csv` opens sensor logs as a timeline (one row per file;
+  add `--row-per-column` for one row per signal).
+- `--screenshot out.png` renders the window to a file and exits (for scripts
+  and documentation).
+- `--help` lists the options.
 
 Python:
 
@@ -165,8 +245,8 @@ python examples/hep_style.py
 python examples/matplotlib_port.py
 ```
 
-- `make_sample_nmr.py` writes a synthetic COSY to `sample_nmr/` in Bruker
-  format.
+- `make_sample_nmr.py` writes a synthetic COSY in Bruker format; open it
+  from `sample_nmr/cosy/1` (the experiment folder).
 - `nmr_cross_peaks.py` opens it, picks the cross peaks, assigns them and
   exports the peak list.
 - `hep_style.py` draws histograms, data points, an uncertainty band and a
@@ -180,7 +260,7 @@ python examples/matplotlib_port.py
 import plotter
 
 fig = plotter.figure()
-spec = fig.open_bruker("~/data/cosy/1")             # ppm axes, TopSpin orientation
+spec = fig.open_bruker("sample_nmr/cosy/1")         # experiment folder; ppm axes, TopSpin orientation
 spec.scale_levels(0.5)                              # lower the contours (same as one '*' key press)
 cross = fig.pick_peaks(exclude_diagonal=0.1)        # off-diagonal peaks in the visible area
 for p in cross:
@@ -201,6 +281,7 @@ In the app, *File → Open time series (CSV)…* (Ctrl+T) does the same. From
 Python:
 
 ```python
+import numpy as np
 import plotter
 
 tl = plotter.timeline("Test drive")
@@ -209,8 +290,11 @@ tl.clock_time = True                               # 14:03:27.250 instead of sec
 tl.window = (40, 50)                               # visible time window (s)
 print(tl.values_at(42.0))                          # every signal at t = 42 s
 tl.pin(42.0, "hard braking")                       # time marker through all rows
+
+ax = tl.signal("ax [m/s2]")                        # a loaded signal (a Line), by column name
+t, a = ax.x, ax.y                                  # its data as NumPy arrays
 row = tl.add_row("jerk")                           # computed signals in new rows
-row.plot(t, jerk, label="jerk")
+row.plot(t, np.gradient(a, t), label="jerk")
 tl.show()
 ```
 
