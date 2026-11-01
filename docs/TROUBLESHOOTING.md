@@ -73,9 +73,11 @@ with `thread.join()` without running the event loop.
 **`RuntimeError: the figure is not shown: call fig.show(block=False) first`.**
 `wait_for_region()` without a timeout needs a visible window to select in.
 
-**`RuntimeError: the figure has been closed`.** The window was closed; its
-data is gone. Keep a figure open while you use its handles, or copy the data
-you need (`line.x`, `line.y`) before closing.
+**Using a figure after closing its window.** Closing the window keeps the
+figure's data: you can still read it, plot into it, `savefig` or `save` it,
+and `show()` it again. Only when Python no longer refers to the figure at all
+is it freed; a handle that outlives that raises
+`RuntimeError: the figure has been closed`.
 
 **`KeyError: ... no longer exists`.** The object was removed (by you, by
 undo, or by `clear()`). Handles stay valid across undo/redo of the object

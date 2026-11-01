@@ -40,23 +40,20 @@ __copyright__ = "Copyright (c) 2026 Justinas Minkevicius. All rights reserved."
 __license__ = "Proprietary - no use without the author's written permission (see LICENSE)"
 
 import sys as _sys
-import threading as _threading
 
 from ._plotter import Annotation, Contour, Figure, Line, Marker, Peak
 from ._plotter import process_events as _process_events
 from ._plotter import _run_until_closed
+from . import _plotter
 from . import style
 
 __all__ = [
     "style", "figure", "Axes", "timeline", "Timeline", "TimelineRow", "TimePin", "show", "pause", "figures", "close_all",
-    "theme", "themes", "tooltips", "load",
+    "theme", "themes", "theme_options", "tooltips", "load",
     "Figure", "Line", "Contour", "Marker", "Annotation", "Peak",
 ]
 
 _figures: list[Figure] = []
-# Serialises "make panel current + call" sequences of Axes proxies, so two
-# threads using different panels of one figure cannot interleave.
-_panel_lock = _threading.RLock()
 
 
 def _interactive() -> bool:
@@ -111,6 +108,13 @@ def themes() -> dict:
     return {tid: f"{name} - {desc}" for tid, name, desc, _dark in _plotter._themes()}
 
 
+def theme_options() -> dict:
+    """{"plots": bool, "exports": bool}: whether dark themes colour the plots
+    on screen and the exports (see theme())."""
+    plots, exports = _plotter._theme_options()
+    return {"plots": plots, "exports": exports}
+
+
 def theme(name: str | None = None, *, plots: bool | None = None, exports: bool | None = None,
           save: bool = False) -> str:
     """Get or set the display theme of all windows; returns the current theme id.
@@ -153,9 +157,13 @@ def _figure_show(self: Figure, block: bool | None = None, timeout: float | None 
     self._show()
     if block is None:
         block = not _interactive()
+    on_gui_thread = _plotter._is_gui_thread()
+    if block and not on_gui_thread:
+        raise RuntimeError("show(block=True) must be called from the main thread; "
+                           "from a worker thread use show(block=False)")
     if block:
         _run_until_closed([self], -1.0 if timeout is None else float(timeout))
-    else:
+    elif on_gui_thread:
         _process_events(0)  # paint the window right away
     return self
 
@@ -227,6 +235,12 @@ def _hist(self: Figure, data, bins=10, range=None, *, density=False, weights=Non
     import numpy as np
 
     data = np.asarray(data, dtype=float).ravel()
+    # NaN / inf entries are ignored (as in matplotlib), together with their weights.
+    finite = np.isfinite(data)
+    if not finite.all():
+        data = data[finite]
+        if weights is not None:
+            weights = np.asarray(weights, dtype=float).ravel()[finite]
     counts, edges = np.histogram(data, bins=bins, range=range, weights=weights)
     widths = np.diff(edges)
     if histtype == "errorbar":
@@ -294,18 +308,18 @@ class Axes:
         object.__setattr__(self, "index", index)
 
     def _call(self, fn):
-        # Name this panel as the target for the duration of one call, so the
-        # call lands here even if the user clicks another panel meanwhile.
-        # Using a panel also makes it the current one (as before).
-        with _panel_lock:
-            previous = self.figure._target
-            self.figure._target = self.index
-            try:
-                if self.figure._current() != self.index:
-                    self.figure._set_current(self.index)
-                return fn()
-            finally:
-                self.figure._target = previous
+        # Name this panel as the target of this thread's calls for the
+        # duration of one call (thread-local in the native module, so threads
+        # never wait for each other), so the call lands here even if the user
+        # clicks another panel meanwhile. Using a panel also makes it current.
+        previous = self.figure._target
+        self.figure._target = self.index
+        try:
+            if self.figure._current() != self.index:
+                self.figure._set_current(self.index)
+            return fn()
+        finally:
+            self.figure._target = previous
 
     def __getattr__(self, name):
         if name.startswith("__"):
@@ -713,7 +727,9 @@ class Timeline:
         def iso(t):
             return datetime.fromtimestamp(origin + t, tz=timezone.utc).isoformat(timespec="milliseconds")
 
-        with open(path, "w", newline="") as f:
+        import os
+
+        with open(os.path.expanduser(os.fspath(path)), "w", newline="") as f:
             w = csv.writer(f)
             if resample is None:
                 w.writerow(["signal", "time_s"] + (["time_utc"] if origin is not None else []) + ["value"])

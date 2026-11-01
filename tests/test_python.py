@@ -707,7 +707,10 @@ class PlotterTests(unittest.TestCase):
                 plotter.theme("nope")
             self.fig.plot([0, 1], [0, 1])
             with tempfile.TemporaryDirectory() as d:
-                self.fig.savefig(os.path.join(d, "light.png"))  # exports stay light by default
+                self.fig.savefig(os.path.join(d, "light.svg"))  # exports stay light by default
+                svg = open(os.path.join(d, "light.svg")).read()
+            self.assertIn("#ffffff", svg.lower())
+            self.assertNotIn("#141d31", svg.lower())  # Midnight's plot background
             self.assertFalse(plotter.tooltips(False))
             self.assertTrue(plotter.tooltips(True))
         finally:
@@ -739,6 +742,56 @@ class PlotterTests(unittest.TestCase):
             g.close()
             q.close()
         pk_fig.close()
+
+    def test_audit_round4(self):
+        import threading
+        import plotter.pyplot as plt
+        f = self.fig
+        # Labels: None and non-strings everywhere.
+        m = f.marker(1.0, label=None)
+        m.label = 5
+        self.assertEqual(m.label, "5")
+        line = f.plot([0, 1], [0, 1])
+        line.label = None
+        with self.assertRaises(ValueError):
+            f.marker(1.0, width=-1)
+        with self.assertRaises(ValueError):
+            f.set_xlim(1, 1)
+        f.set_xlim(8, 2)  # high, low: reversed axis
+        self.assertTrue(f.x_reversed)
+        self.assertEqual(f.xlim(), (2.0, 8.0))
+        # Annotation colour reports what is drawn; fontsize None = style default.
+        a = f.annotate("t", 0.5, 0.5)
+        self.assertNotEqual(a.color, "#000000")
+        a.fontsize = None
+        with self.assertRaises(ValueError):
+            a.fontsize = -5
+        # hist ignores NaN; automatic names are not repeated.
+        counts, _, _ = f.hist([1.0, 2.0, np.nan, 3.0], bins=3)
+        self.assertEqual(counts.sum(), 3)
+        names = {ln.label for ln in f.lines()}
+        self.assertEqual(len(names), len(f.lines()))
+        # show(block=False) from a worker thread works.
+        errors = []
+        t = threading.Thread(target=lambda: (f.show(block=False) if True else None))
+        try:
+            t.start()
+            while t.is_alive():
+                plotter.pause(0.01)
+        except Exception as e:  # pragma: no cover
+            errors.append(e)
+        self.assertEqual(errors, [])
+        # pyplot: matplotlib-style limits, hidden "_" labels, closed figure replaced.
+        plt.figure()
+        plt.plot([0, 1], [0, 1], label="_nolegend_")
+        self.assertNotEqual(plt.gca().panel.lines()[0].label, "_nolegend_")  # not shown as a legend entry
+        plt.xlim(8, 2)
+        self.assertEqual(plt.xlim(), (8.0, 2.0))
+        old = plt.gcf()
+        old.native.close()
+        self.assertIsNot(plt.gcf(), old)
+        plt.close("all")
+        self.assertIn("plots", plotter.theme_options())
 
     def test_pyplot_compat_round2(self):
         import io
@@ -810,7 +863,7 @@ class PlotterTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 self.fig.savefig(os.path.join(d, "out.xyz"))
 
-    def test_closed_figure_raises(self):
+    def test_closed_figure_keeps_its_data(self):
         fig = plotter.figure()
         fig.show(block=False)
         fig.close()

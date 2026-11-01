@@ -118,6 +118,8 @@ def _common(kw: dict, ax=None):
         out["color"] = _mpl_color(out["color"])
     if "label" in out and out["label"] is not None:
         out["label"] = str(out["label"])
+        if out["label"].startswith("_"):  # "_nolegend_", "_child0": hidden from the legend
+            out["label"] = None
     if kw.get("alpha") is not None:
         if out.get("color") is None and ax is not None:
             out["color"] = ax._take_color()
@@ -341,23 +343,33 @@ class PltAxes:
     def get_ylabel(self):
         return self._ax.ylabel
 
+    # Limits in matplotlib's convention: (left, right) / (bottom, top) in
+    # display order, so set_xlim(8, 2) draws a reversed (ppm-style) axis and
+    # get_xlim() then returns (8, 2).
+    def _set_lim(self, axis, first, second):
+        if isinstance(first, (tuple, list)):
+            first, second = first
+        cur = self._get_lim(axis)
+        first = cur[0] if first is None else float(first)
+        second = cur[1] if second is None else float(second)
+        setattr(self._ax, axis + "_reversed", first > second)
+        getattr(self._ax, "set_" + axis + "lim")(min(first, second), max(first, second))
+
+    def _get_lim(self, axis):
+        lo, hi = getattr(self._ax, axis + "lim")()
+        return (hi, lo) if getattr(self._ax, axis + "_reversed") else (lo, hi)
+
     def set_xlim(self, left=None, right=None):
-        if isinstance(left, (tuple, list)):
-            left, right = left
-        lo, hi = self._ax.xlim()
-        self._ax.set_xlim(lo if left is None else left, hi if right is None else right)
+        self._set_lim("x", left, right)
 
     def set_ylim(self, bottom=None, top=None):
-        if isinstance(bottom, (tuple, list)):
-            bottom, top = bottom
-        lo, hi = self._ax.ylim()
-        self._ax.set_ylim(lo if bottom is None else bottom, hi if top is None else top)
+        self._set_lim("y", bottom, top)
 
     def get_xlim(self):
-        return self._ax.xlim()
+        return self._get_lim("x")
 
     def get_ylim(self):
-        return self._ax.ylim()
+        return self._get_lim("y")
 
     def set_xscale(self, scale):
         self._ax.x_log = scale == "log"
@@ -520,7 +532,8 @@ def figure(num=None, figsize=None, **_):
 
 
 def gcf():
-    return _current if _current is not None else figure()
+    """The current figure; a new one if there is none or it was closed (as in matplotlib)."""
+    return _current if _current is not None and not _current.closed else figure()
 
 
 def gca():

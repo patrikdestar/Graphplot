@@ -61,6 +61,12 @@ void runOnGuiThreadBlocking(const std::function<void()>& task)
     if (!delivered) throw std::runtime_error("could not run the call on the GUI thread");
 }
 
+CallContext& callContext()
+{
+    thread_local CallContext ctx;
+    return ctx;
+}
+
 bool isGuiThread()
 {
     auto* app = QCoreApplication::instance();

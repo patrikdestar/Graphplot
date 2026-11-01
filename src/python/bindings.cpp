@@ -47,6 +47,28 @@
 
 namespace py = pybind11;
 using namespace gp;
+
+// A text argument (labels, titles, comments): None means "" and any other
+// object is converted with str(), as plot(label=3) always did. Keeps every
+// text parameter consistent.
+struct Text {
+    std::string value;
+    operator const std::string&() const { return value; }
+    bool empty() const { return value.empty(); }
+};
+namespace pybind11::detail {
+template <>
+struct type_caster<Text> {
+    PYBIND11_TYPE_CASTER(Text, const_name("str"));
+    bool load(handle src, bool)
+    {
+        if (!src) return false;
+        value.value = src.is_none() ? std::string() : str(src).cast<std::string>();
+        return true;
+    }
+    static handle cast(const Text& t, return_value_policy, handle) { return str(t.value).release(); }
+};
+}  // namespace pybind11::detail
 using gp::pyglue::inGui;
 
 namespace {
@@ -247,15 +269,13 @@ public:
         return m_w;
     }
     bool alive() const { return !m_w.isNull(); }
-    // The panel figure-level calls act on: the one an Axes proxy names
-    // (target), else the window's current panel. Naming it explicitly keeps
-    // a call from a worker thread in its panel even if the user clicks
-    // another panel meanwhile. Only read on the GUI thread.
-    std::atomic<int> target{-1};
+    // The panel figure-level calls act on: the one an Axes proxy names for
+    // the calling Python thread (see pyglue::CallContext), else the window's
+    // current panel. Read on the GUI thread, inside the caller's context.
     int panel() const
     {
         FigureWindow* win = w();
-        const int t = target.load();
+        const int t = pyglue::callContext().panelTargets.value(this, -1);
         return t >= 0 && t < win->axesCount() ? t : win->currentAxes();
     }
     PlotModel* model() const { return w()->axes(panel()).model; }
@@ -583,7 +603,7 @@ FigurePtr makeFigure(const py::object& title, int width, int height)
     win->setAttribute(Qt::WA_DeleteOnClose, false);  // keep data accessible after closing
     win->setFigureSize(QSize(width, height));
     if (!title.is_none()) {
-        const QString t = QString::fromStdString(title.cast<std::string>());
+        const QString t = QString::fromStdString(py::str(title).cast<std::string>());
         win->setWindowTitle(t);
         AxesInfo info = win->model()->axesInfo();
         info.title = t;
@@ -652,14 +672,16 @@ PYBIND11_MODULE(_plotter, mod)
             throw py::value_error("unknown theme '" + id + "'");
     });
     mod.def("_theme_options", [] {
+        pyglue::ensureApp();
         return inGui([] {
             return std::make_pair(DisplayTheme::instance()->themePlots(), DisplayTheme::instance()->themeExports());
         });
     });
     mod.def("_set_theme_options", [](const py::object& plots, const py::object& exports, bool save) {
         pyglue::ensureApp();
-        const std::optional<bool> p = plots.is_none() ? std::nullopt : std::optional<bool>(plots.cast<bool>());
-        const std::optional<bool> e = exports.is_none() ? std::nullopt : std::optional<bool>(exports.cast<bool>());
+        // Python truthiness (bool(x)), like every other switch.
+        const std::optional<bool> p = plots.is_none() ? std::nullopt : std::optional<bool>(py::bool_(plots));
+        const std::optional<bool> e = exports.is_none() ? std::nullopt : std::optional<bool>(py::bool_(exports));
         inGui([&] {
             if (p) Appearance::instance()->setThemePlots(*p, save);
             if (e) Appearance::instance()->setThemeExports(*e, save);
@@ -674,6 +696,7 @@ PYBIND11_MODULE(_plotter, mod)
         inGui([&] { Appearance::instance()->setTooltipsEnabled(on, save); });
     });
 
+    mod.def("_is_gui_thread", [] { return pyglue::isGuiThread() || !QCoreApplication::instance(); });
     mod.def("process_events", &pyglue::processEvents, py::arg("ms") = 0,
             "Run the Qt event loop for `ms` milliseconds (keeps windows responsive in scripts).");
     mod.def(
@@ -860,7 +883,7 @@ Returns a Line handle.)doc");
             const double factor = factorObj.is_none() ? 0.0 : factorObj.cast<double>();
             const double linewidth = linewidthObj.is_none() ? 0.0 : linewidthObj.cast<double>();
             Matrix m = matrixFromNumpy(z, x, y);
-            if (!label.is_none()) m.name = QString::fromStdString(label.cast<std::string>());
+            if (!label.is_none()) m.name = QString::fromStdString(py::str(label).cast<std::string>());
             if (!levelsObj.is_none() && levels < 1) throw py::value_error("levels must be >= 1");
             if (!factorObj.is_none() && !(factor > 1.0)) throw py::value_error("factor must be > 1");
             m.style.levelCount = levels;
@@ -966,7 +989,7 @@ region            'view' (visible area), 'all', or 'selection' (selected X regio
 Peaks closer than min_distance to existing peaks are not added again.)doc");
     fig.def(
         "add_peak",
-        [](FigurePtr self, double x, double y, const std::string& label, const std::string& comment,
+        [](FigurePtr self, double x, double y, const Text& label, const Text& comment,
            bool snap) {
             const ObjectId id = inGui([&] {
                 Peak p;
@@ -1041,13 +1064,14 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
     fig.def(
         "marker",
         [](FigurePtr self, double pos, const std::string& orientation, const py::object& color,
-           const std::string& label, const std::string& style, double width, bool showValue) {
+           const Text& label, const std::string& style, double width, bool showValue) {
             Marker m;
             m.orientation = toOrientation(orientation);
             m.position = pos;
             m.label = QString::fromStdString(label);
             const QColor c = toColor(color);
             m.lineStyle = toLineStyle(style);
+            checkWidth(width);
             m.lineWidth = width;
             m.showValue = showValue;
             const ObjectId id = inGui([&] {
@@ -1277,10 +1301,21 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
     fig.def(
         "set_xlim",
         [](FigurePtr self, double a, double b) {
+            if (!std::isfinite(a) || !std::isfinite(b) || a == b)
+                throw py::value_error("limits must be two different finite numbers");
             inGui([&] {
+                // (high, low) reverses the axis, as in matplotlib; (low, high)
+                // keeps the current direction (e.g. ppm axes stay reversed).
+                if (a > b) {
+                    AxesInfo info = self->model()->axesInfo();
+                    if (!info.xReversed) {
+                        info.xReversed = true;
+                        self->editor()->setAxesInfo(info);
+                    }
+                }
                 ViewRange r = self->renderer()->viewRange();
-                r.xmin = a;
-                r.xmax = b;
+                r.xmin = std::min(a, b);
+                r.xmax = std::max(a, b);
                 self->renderer()->setViewRange(r);
             });
         },
@@ -1288,10 +1323,21 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
     fig.def(
         "set_ylim",
         [](FigurePtr self, double a, double b) {
+            if (!std::isfinite(a) || !std::isfinite(b) || a == b)
+                throw py::value_error("limits must be two different finite numbers");
             inGui([&] {
+                // (high, low) reverses the axis, as in matplotlib; (low, high)
+                // keeps the current direction (e.g. ppm axes stay reversed).
+                if (a > b) {
+                    AxesInfo info = self->model()->axesInfo();
+                    if (!info.yReversed) {
+                        info.yReversed = true;
+                        self->editor()->setAxesInfo(info);
+                    }
+                }
                 ViewRange r = self->renderer()->viewRange();
-                r.ymin = a;
-                r.ymax = b;
+                r.ymin = std::min(a, b);
+                r.ymax = std::max(a, b);
                 self->renderer()->setViewRange(r);
             });
         },
@@ -1454,8 +1500,15 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
     });
     fig.def("_axes_count", [](FigurePtr self) { return inGui([&] { return self->w()->axesCount(); }); });
     fig.def("_current", [](FigurePtr self) { return inGui([&] { return self->w()->currentAxes(); }); });
-    fig.def_property("_target", [](FigurePtr self) { return self->target.load(); },
-                     [](FigurePtr self, int i) { self->target = i; });
+    // Target panel of this figure for calls from the current Python thread
+    // (-1: the current panel). Thread-local: no locking needed.
+    fig.def_property(
+        "_target", [](FigurePtr self) { return pyglue::callContext().panelTargets.value(self.get(), -1); },
+        [](FigurePtr self, int i) {
+            auto& targets = pyglue::callContext().panelTargets;
+            if (i < 0) targets.remove(self.get());
+            else targets.insert(self.get(), i);
+        });
     fig.def_property_readonly("_closed", [](FigurePtr self) { return self->closed || !self->alive(); });
     fig.def("_set_current", [](FigurePtr self, int i) {
         inGui([&] {
@@ -1610,11 +1663,11 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
             return out;
         });
     });
-    fig.def("_tl_add_pin", [tl](FigurePtr self, double t, const std::string& label, const py::object& color) {
+    fig.def("_tl_add_pin", [tl](FigurePtr self, double t, const Text& label, const py::object& color) {
         const QColor c = toColor(color);
         return inGui([&] { return tl(self)->addPin(t, QString::fromStdString(label), c); });
     });
-    fig.def("_tl_update_pin", [tl](FigurePtr self, ObjectId id, double t, const std::string& label) {
+    fig.def("_tl_update_pin", [tl](FigurePtr self, ObjectId id, double t, const Text& label) {
         inGui([&] {
             for (const TimePin& p : tl(self)->pins())
                 if (p.id == id) {
@@ -1645,6 +1698,9 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
     fig.def(
         "savefig",
         [](FigurePtr self, const std::string& filename, int width, int height, double scale) {
+            if (width < 0 || height < 0) throw py::value_error("width and height must be >= 0 (0: figure size)");
+            if (!(scale > 0) || !std::isfinite(scale) || scale > 20)
+                throw py::value_error("scale must be > 0 and <= 20");
             QString err;
             const bool ok = inGui([&] {
                 return self->w()->exportTo(toPath(filename), width, height, scale, &err);
@@ -1686,7 +1742,7 @@ Remove a callback with off(event, callback).)doc");
         .def_property_readonly("y", [](Line& h) { return toNumpy(inGui([&] { return h.get().y; })); })
         .def_property("label",
                       [](Line& h) { return inGui([&] { return h.get().name.toStdString(); }); },
-                      [](Line& h, const std::string& v) {
+                      [](Line& h, const Text& v) {
                           h.setStyle([&](QString& n, DatasetStyle& s) {
                               n = QString::fromStdString(v);
                               s.inLegend = !v.empty();
@@ -1706,7 +1762,7 @@ Remove a callback with off(event, callback).)doc");
                       })
         .def_property("style",
                       [](Line& h) { return lineStyleName(inGui([&] { return h.get().style.lineStyle; })).toStdString(); },
-                      [](Line& h, const std::string& v) {
+                      [](Line& h, const Text& v) {
                           const LineStyle ls = toLineStyle(v);
                           h.setStyle([&](QString&, DatasetStyle& s) { s.lineStyle = ls; });
                       })
@@ -1753,7 +1809,7 @@ Remove a callback with off(event, callback).)doc");
         }, "(low, high) arrays or None")
         .def_property("step",
                       [](Line& h) { return stepModeName(inGui([&] { return h.get().style.step; })).toStdString(); },
-                      [](Line& h, const std::string& v) {
+                      [](Line& h, const Text& v) {
                           bool ok = false;
                           const StepMode m = parseStepMode(QString::fromStdString(v), &ok);
                           if (!ok) throw py::value_error("step must be 'none', 'pre', 'post' or 'mid'");
@@ -1805,7 +1861,7 @@ Remove a callback with off(event, callback).)doc");
         }, "(x0, x1, y0, y1) of the grid")
         .def_property("label",
                       [](Contour& h) { return inGui([&] { return h.get().name.toStdString(); }); },
-                      [](Contour& h, const std::string& v) {
+                      [](Contour& h, const Text& v) {
                           h.setStyle([&](QString& n, ContourStyle&) { n = QString::fromStdString(v); });
                       })
         .def_property("base_level",
@@ -1888,7 +1944,7 @@ Remove a callback with off(event, callback).)doc");
         })
         .def_property("label",
                       [](MarkerH& h) { return inGui([&] { return h.get().label.toStdString(); }); },
-                      [](MarkerH& h, const std::string& v) {
+                      [](MarkerH& h, const Text& v) {
                           h.edit([&](Marker& m) { m.label = QString::fromStdString(v); });
                       })
         .def_property("color",
@@ -1899,7 +1955,7 @@ Remove a callback with off(event, callback).)doc");
                       })
         .def_property("style",
                       [](MarkerH& h) { return lineStyleName(inGui([&] { return h.get().lineStyle; })).toStdString(); },
-                      [](MarkerH& h, const std::string& v) {
+                      [](MarkerH& h, const Text& v) {
                           const LineStyle ls = toLineStyle(v);
                           h.edit([&](Marker& m) { m.lineStyle = ls; });
                       })
@@ -1944,12 +2000,12 @@ Remove a callback with off(event, callback).)doc");
         .def_property_readonly("intensity", [](PeakH& h) { return inGui([&] { return h.get().intensity; }); })
         .def_property("label",
                       [](PeakH& h) { return inGui([&] { return h.get().label.toStdString(); }); },
-                      [](PeakH& h, const std::string& v) {
+                      [](PeakH& h, const Text& v) {
                           h.edit([&](Peak& p) { p.label = QString::fromStdString(v); }, "Edit peak label");
                       })
         .def_property("comment",
                       [](PeakH& h) { return inGui([&] { return h.get().comment.toStdString(); }); },
-                      [](PeakH& h, const std::string& v) {
+                      [](PeakH& h, const Text& v) {
                           h.edit([&](Peak& p) { p.comment = QString::fromStdString(v); }, "Edit peak comment");
                       }, "Free-text notes; never drawn on the plot.")
         .def_property("label_offset",
@@ -1987,7 +2043,13 @@ Remove a callback with off(event, callback).)doc");
                           h.edit([&](Annotation& a) { a.x = p.first; a.y = p.second; });
                       })
         .def_property("color",
-                      [](AnnotationH& h) { return colorName(inGui([&] { return h.get().color; })); },
+                      [](AnnotationH& h) {
+                          // Unset: the style's annotation colour (what is drawn).
+                          return colorName(inGui([&] {
+                              const QColor c = h.get().color;
+                              return c.isValid() ? c : h.model()->style().annotationColor;
+                          }));
+                      },
                       [](AnnotationH& h, const py::object& v) {
                           const QColor c = toColor(v);
                           h.edit([&](Annotation& a) { a.color = c; });
@@ -1999,7 +2061,13 @@ Remove a callback with off(event, callback).)doc");
                               return f > 0 ? f : h.model()->style().annotationSize;
                           });
                       },
-                      [](AnnotationH& h, double v) { h.edit([&](Annotation& a) { a.fontSize = v; }); })
+                      [](AnnotationH& h, const py::object& v) {
+                          // None: follow the style again.
+                          const double size = v.is_none() ? 0.0 : v.cast<double>();
+                          if (!v.is_none() && !(size > 0 && std::isfinite(size)))
+                              throw py::value_error("fontsize must be a positive number (or None for the style default)");
+                          h.edit([&](Annotation& a) { a.fontSize = size; });
+                      })
         .def("remove", [](AnnotationH& h) { inGui([&] { h.get(); h.editor()->removeAnnotation(h.id); }); })
         .def("__repr__", [](AnnotationH& h) {
             return inGui([&]() -> std::string {

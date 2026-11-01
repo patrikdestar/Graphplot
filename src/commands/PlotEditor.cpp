@@ -29,7 +29,17 @@ ObjectId PlotEditor::addDataset(Dataset d)
     if (!d.style.color.isValid()) d.style.color = m_model->takeNextDatasetColor();
     if (!(d.style.lineWidth > 0)) d.style.lineWidth = m_model->style().lineWidth;
     if (!(d.style.scatterSize > 0)) d.style.scatterSize = m_model->style().markerSize;
-    if (d.name.isEmpty()) d.name = QString("Dataset %1").arg(m_model->datasets().size() + 1);
+    if (d.name.isEmpty()) {
+        // "Dataset N" with the first N not in use (counting would repeat a
+        // name after a removal).
+        for (int n = int(m_model->datasets().size()) + 1;; ++n) {
+            const QString name = QString("Dataset %1").arg(n);
+            if (!m_model->datasetByName(name)) {
+                d.name = name;
+                break;
+            }
+        }
+    }
     const ObjectId id = d.id;
     m_stack->push(new AddDatasetCommand(m_model, std::move(d)));
     return id;
