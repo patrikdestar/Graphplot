@@ -805,6 +805,40 @@ class PlotterTests(unittest.TestCase):
             line.append([1], [1, 2])
         self.assertEqual(f._repr_png_()[:4], b"\x89PNG")
 
+    def test_images_and_colorbar(self):
+        import plotter.pyplot as plt
+        f = self.fig
+        y, x = np.mgrid[0:20, 0:30]
+        z = np.sin(x / 5.0) * np.cos(y / 4.0)
+        img = f.image(z, (0, 3), (0, 2), cmap="magma", vmin=-1, vmax=1)
+        self.assertFalse(img.contours)
+        self.assertTrue(img.image and img.colorbar)
+        self.assertEqual(img.cmap, "magma")
+        self.assertEqual(img.clim, (-1.0, 1.0))
+        img.cmap = "viridis_r"
+        img.clim = None
+        with self.assertRaises(ValueError):
+            img.cmap = "rainbowz"
+        with self.assertRaises(ValueError):
+            f.image(z, vmin=1, vmax=0)
+        with tempfile.TemporaryDirectory() as d:
+            f.save(os.path.join(d, "i.gpfig"))
+            g = plotter.load(os.path.join(d, "i.gpfig"))
+            c = g.contours()[0]
+            self.assertEqual((c.cmap, c.colorbar, c.contours), ("viridis_r", True, False))
+            g.close()
+            # pyplot
+            fig, ax = plt.subplots()
+            im = ax.imshow(z, cmap="gray", extent=(0, 3, 0, 2), origin="lower")
+            plt.colorbar(im, label="I")
+            self.assertTrue(im.colorbar)
+            self.assertEqual(im.label, "I")
+            ax2 = plt.figure().gca()
+            ax2.pcolormesh(np.linspace(0, 3, 31), np.linspace(0, 2, 21), z)  # edges
+            plt.colorbar()
+            plt.savefig(os.path.join(d, "img.png"))
+            plt.close("all")
+
     def test_pyplot_compat_round2(self):
         import io
         import plotter.pyplot as plt

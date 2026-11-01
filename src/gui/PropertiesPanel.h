@@ -138,6 +138,9 @@ private:
     QCheckBox* m_mxNegative = nullptr;
     QDoubleSpinBox* m_mxWidth = nullptr;
     QCheckBox* m_mxImage = nullptr;
+    QCheckBox* m_mxContours = nullptr;
+    QCheckBox* m_mxColorBar = nullptr;
+    QComboBox* m_mxColormap = nullptr;
     QCheckBox* m_mxVisible = nullptr;
     QLabel* m_mxInfo = nullptr;
 

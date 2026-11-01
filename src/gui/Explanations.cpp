@@ -90,6 +90,10 @@ const QHash<QString, QString>& table()
         {"2D data (contours)/Negative levels", "Also draw contours for negative values (phase-sensitive spectra)."},
         {"2D data (contours)/Colour-map image", "Show the intensities as a colour image under the contours."},
         {"2D data (contours)/Visible", "Show or hide this 2D dataset."},
+        {"2D data (contours)/Colour map", "Colours of the image: auto (white-blue, or blue-white-red for signed data),\n"
+                                          "viridis, magma, inferno, plasma, cividis (perceptually uniform), gray, blues, rdbu."},
+        {"2D data (contours)/Colour bar", "Show a colour bar with the value scale beside the plot (for the image)."},
+        {"2D data (contours)/Contour lines", "Draw the contour lines. Off: the colour-map image alone (like imshow)."},
 
         // ---- Peaks list -------------------------------------------------------------------
         {"Peaks/Threshold", "Minimum peak height. Empty: the current lowest contour level (what you see is what is picked)."},

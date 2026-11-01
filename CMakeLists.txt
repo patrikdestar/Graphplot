@@ -53,6 +53,7 @@ target_link_libraries(graphplot_model PUBLIC Qt6::Core Qt6::Gui)
 add_library(graphplot_ui STATIC
   src/render/PlotRenderer.h src/render/PlotRenderer.cpp
   src/render/DisplayTheme.h src/render/DisplayTheme.cpp
+  src/render/ColorBar.h src/render/ColorBar.cpp
   src/render/Exporter.h src/render/Exporter.cpp
   src/render/ContourPlottable.h src/render/ContourPlottable.cpp
   src/render/PeakOverlay.h src/render/PeakOverlay.cpp

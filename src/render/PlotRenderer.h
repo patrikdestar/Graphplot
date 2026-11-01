@@ -132,6 +132,7 @@ private:
     struct MatrixVisual {
         ContourPlottable* contour = nullptr;
         QCPColorMap* image = nullptr;
+        double lo = 0, hi = 0;  // finite data range (for automatic colour limits)
     };
     struct RegionVisual {
         QCPItemRect* rect = nullptr;
@@ -157,6 +158,8 @@ private:
     void applyMatrixAppearance(ObjectId id);
     void applyMatrixData(ObjectId id);
     void updateMatrixImage(ObjectId id);
+    void applyImageAppearance(const Matrix& m, MatrixVisual& v);  // colour map + limits (cheap)
+    void updateColorBar();
 
     void onMarkerAdded(ObjectId id);
     void onMarkerRemoved(ObjectId id);
@@ -193,6 +196,8 @@ private:
     RichTextItem* m_insideLabel = nullptr;
     QCPItemStraightLine* m_diagonal = nullptr;
     PeakOverlay* m_peaks = nullptr;
+    class ColorBar* m_colorBar = nullptr;
+    int m_y2Padding = 0;  // the right axis' own padding (the colour bar adds to it)
 
     QHash<ObjectId, QCPAbstractPlottable*> m_plottables;
     struct ErrorVisual {

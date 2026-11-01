@@ -3,12 +3,14 @@
 
 #include "DisplayTheme.h"
 
+#include "ColorBar.h"
 #include "ContourPlottable.h"
 #include "PeakOverlay.h"
 #include "RichElements.h"
 #include "qcustomplot.h"
 
 #include <algorithm>
+#include <limits>
 #include <cmath>
 
 namespace gp {
@@ -217,6 +219,7 @@ void PlotRenderer::setPanelVisible(bool visible)
     m_rect->setVisible(visible);
     m_axisLabels->setVisible(visible);
     m_peaks->setVisible(visible);
+    if (m_colorBar) m_colorBar->setVisible(false);  // re-shown by updateColorBar()
     for (int i = 0; i < m_plot->itemCount(); ++i) {
         QCPAbstractItem* it = m_plot->item(i);
         if (it->clipAxisRect() == m_rect) it->setVisible(visible);
@@ -225,6 +228,7 @@ void PlotRenderer::setPanelVisible(bool visible)
         // Re-apply per-object visibility rules (empty labels, inactive region, ...).
         applyStyle();
         applyRegion();
+        updateColorBar();
     }
 }
 
@@ -710,7 +714,9 @@ void PlotRenderer::syncLegend()
     }
     for (const auto& m : m_model->matrices()) {
         const MatrixVisual v = m_matrices.value(m.id);
-        if (v.contour && m.style.visible && !m.name.isEmpty())
+        // Images without contours have no legend entry (as in matplotlib); the
+        // colour bar carries their name.
+        if (v.contour && m.style.visible && m.style.showContours && !m.name.isEmpty())
             m_legend->addItem(new RichLegendItem(m_legend, v.contour, m_model->style().mathText));
     }
     m_legend->setVisible(m_model->axesInfo().legendVisible &&
@@ -790,11 +796,64 @@ void PlotRenderer::applyMatrixAppearance(ObjectId id)
     }
     v.contour->setContourStyle(cs);  // recomputes only if the levels changed
     v.contour->setName(m->name);
-    v.contour->setVisible(m->style.visible);
-    // The colour map only has to be rebuilt when it is switched on (the data
-    // path rebuilds it too); level scrolling must not redo nx*ny cells.
+    v.contour->setVisible(m->style.visible && m->style.showContours);
+    // The colour map's cells only have to be rebuilt when it is switched on
+    // (the data path rebuilds them too); level scrolling must not redo nx*ny
+    // cells. Colours and limits are cheap.
     if (m->style.showImage != (v.image != nullptr)) updateMatrixImage(id);
-    else if (v.image) v.image->setVisible(m->style.visible);
+    else if (v.image) applyImageAppearance(*m, m_matrices[id]);
+    updateColorBar();
+    syncLegend();  // contours on/off, name
+}
+
+void PlotRenderer::applyImageAppearance(const Matrix& m, MatrixVisual& v)
+{
+    if (!v.image) return;
+    const ContourStyle& s = m.style;
+    const bool signedData = v.lo < 0 && v.hi > 0;
+    QCPColorGradient g;
+    colormapGradient(s.colormap, signedData, &g);
+    QCPRange range;
+    if (s.fixedRange && s.vmax > s.vmin) {
+        range = QCPRange(s.vmin, s.vmax);
+    } else if (colormapIsDiverging(s.colormap, signedData)) {
+        const double a = std::max({std::abs(v.lo), std::abs(v.hi), 1e-300});
+        range = QCPRange(-a, a);  // zero sits in the middle of the map
+    } else {
+        range = QCPRange(v.lo, v.hi > v.lo ? v.hi : v.lo + 1);
+    }
+    v.image->setGradient(g);
+    v.image->setDataRange(range);
+    v.image->setVisible(s.visible);
+}
+
+void PlotRenderer::updateColorBar()
+{
+    // One colour bar per panel: for the first visible image that asks for one.
+    const Matrix* shown = nullptr;
+    for (const Matrix& m : m_model->matrices())
+        if (m.style.visible && m.style.showImage && m.style.colorBar && m_matrices.value(m.id).image) {
+            shown = &m;
+            break;
+        }
+    if (!shown) {
+        if (m_colorBar && m_colorBar->visible()) {
+            m_colorBar->setVisible(false);
+            m_y2->setPadding(m_y2Padding);
+        }
+        return;
+    }
+    if (!m_colorBar) {
+        m_colorBar = new ColorBar(m_plot, m_rect);
+        m_colorBar->setLayer(m_objectLayer);
+        m_y2Padding = m_y2->padding();
+    }
+    const Style st = displayStyle();
+    const QCPColorMap* img = m_matrices.value(shown->id).image;
+    m_colorBar->set(img->gradient(), img->dataRange(), shown->name, font(st.ytick.labelSize), st.axesEdge,
+                    st.ytick.labelColor, st.mathText);
+    m_colorBar->setVisible(m_panelVisible);
+    m_y2->setPadding(m_y2Padding + m_colorBar->requiredWidth());  // room in the right margin
 }
 
 void PlotRenderer::updateMatrixImage(ObjectId id)
@@ -815,30 +874,19 @@ void PlotRenderer::updateMatrixImage(ObjectId id)
         v.image->setTightBoundary(false);
     }
     auto* data = new QCPColorMapData(m->nx, m->ny, QCPRange(m->x0, m->x1), QCPRange(m->y0, m->y1));
-    double lo = 0, hi = 0;
+    double lo = std::numeric_limits<double>::infinity(), hi = -lo;
     for (int iy = 0; iy < m->ny; ++iy)
         for (int ix = 0; ix < m->nx; ++ix) {
             const double z = m->z[qsizetype(iy) * m->nx + ix];
             data->setCell(ix, iy, z);
             if (std::isfinite(z)) lo = std::min(lo, z), hi = std::max(hi, z);
         }
+    if (!(hi >= lo)) lo = hi = 0;  // no finite value
+    v.lo = lo;
+    v.hi = hi;
     v.image->setData(data, false);
-    // Signed data: diverging blue-white-red around zero; otherwise white->blue.
-    QCPColorGradient g;
-    g.clearColorStops();
-    if (lo < 0 && hi > 0) {
-        const double a = std::max(-lo, hi);
-        g.setColorStopAt(0.0, QColor(0x2a, 0x78, 0xd6));
-        g.setColorStopAt(0.5, Qt::white);
-        g.setColorStopAt(1.0, QColor(0xe3, 0x49, 0x48));
-        v.image->setDataRange(QCPRange(-a, a));
-    } else {
-        g.setColorStopAt(0.0, Qt::white);
-        g.setColorStopAt(1.0, QColor(0x2a, 0x78, 0xd6));
-        v.image->setDataRange(QCPRange(lo, hi > lo ? hi : lo + 1));
-    }
-    v.image->setGradient(g);
-    v.image->setVisible(m->style.visible);
+    applyImageAppearance(*m, v);
+    updateColorBar();
 }
 
 // ---- markers -------------------------------------------------------------------------

@@ -22,7 +22,8 @@ contour/contourf (geometric contour levels), axhline, axvline (full-height
 markers), text, annotate, xlabel, ylabel, title, xlim, ylim, xscale, yscale,
 legend, grid, tight_layout (no-op), and the matching Axes methods
 (set_xlabel, set_xlim, set_yscale, ax.set(...), ...).
-Not supported: images (imshow), polar/3D axes, twin axes, colorbars.
+Images: imshow, pcolormesh and colorbar (2-D arrays, uniform grids).
+Not supported: RGB images, polar/3D axes, twin axes.
 Differences: legend position / font are figure-wide (last call wins);
 contour levels are geometric (base * factor**k) as in NMR
 software; figure sizes are converted at 100 pixels per inch.
@@ -293,9 +294,73 @@ class PltAxes:
                                 label=label)
 
     def contourf(self, *args, **kw):
+        cmap = kw.pop("cmap", None)
         c = self.contour(*args, **kw)
         c.image = True
+        if cmap is not None:
+            c.cmap = cmap
+        self._last_image = c
         return c
+
+    # ---- images ------------------------------------------------------------------------
+    @staticmethod
+    def _centres(edges_or_centres, n):
+        """Cell-centre (start, stop) from n+1 edges or n centres (1-D or 2-D grids)."""
+        a = _np.asarray(edges_or_centres, dtype=float)
+        if a.size == n + 1:
+            a = 0.5 * (a[:-1] + a[1:])
+        return float(a[0]), float(a[-1])
+
+    def imshow(self, X, cmap=None, vmin=None, vmax=None, origin=None, extent=None, aspect=None,
+               interpolation=None, label=None, **kw):
+        """Colour-mapped image of a 2-D array (matplotlib conventions: row 0 at the
+        top unless origin='lower'; extent = (left, right, bottom, top) pixel edges)."""
+        z = _np.asarray(X, dtype=float)
+        if z.ndim != 2:
+            raise ValueError("imshow: only 2-D arrays (RGB images are not supported)")
+        ny, nx = z.shape
+        upper = (origin or "upper") == "upper"
+        if extent is None:
+            x, y = (0.0, nx - 1.0), (0.0, ny - 1.0)
+            if upper:
+                self._ax.y_reversed = True  # row 0 at the top, y grows downwards
+        else:
+            left, right, bottom, top = (float(v) for v in extent)
+            dx, dy = (right - left) / nx, (top - bottom) / ny
+            x = (left + dx / 2, right - dx / 2)
+            # Row 0 is at the top for origin='upper', at the bottom for 'lower'.
+            y = (top - dy / 2, bottom + dy / 2) if upper else (bottom + dy / 2, top - dy / 2)
+        c = self._ax.image(z, x, y, cmap=cmap or "viridis", colorbar=False, vmin=vmin, vmax=vmax,
+                           label=label)
+        self._last_image = c
+        return c
+
+    def pcolormesh(self, *args, cmap=None, vmin=None, vmax=None, shading=None, label=None, **kw):
+        """pcolormesh(C) or pcolormesh(X, Y, C) on a uniform grid (X, Y: edges or centres)."""
+        if len(args) == 1:
+            c_arr, x, y = _np.asarray(args[0], dtype=float), None, None
+        elif len(args) == 3:
+            X, Y, c_arr = (_np.asarray(a, dtype=float) for a in args)
+            ny, nx = c_arr.shape
+            X = X[0] if X.ndim == 2 else X
+            Y = Y[:, 0] if Y.ndim == 2 else Y
+            x, y = self._centres(X, nx), self._centres(Y, ny)
+        else:
+            raise TypeError("pcolormesh(C) or pcolormesh(X, Y, C)")
+        c = self._ax.image(c_arr, x, y, cmap=cmap or "viridis", colorbar=False, vmin=vmin, vmax=vmax,
+                           label=label)
+        self._last_image = c
+        return c
+
+    def colorbar(self, mappable=None, label=None, **kw):
+        """Show the colour bar of an image (default: the last one drawn in this panel)."""
+        m = mappable if mappable is not None else getattr(self, "_last_image", None)
+        if m is None:
+            raise RuntimeError("colorbar: no image (imshow / pcolormesh / contourf) to show it for")
+        m.colorbar = True
+        if label is not None:
+            m.label = str(label)
+        return m
 
     def axvline(self, x=0, ymin=0, ymax=1, **kw):
         # ymin / ymax (partial lines) are accepted; markers always span the panel.
@@ -592,6 +657,13 @@ stairs = _ax_call("stairs")
 fill_between = _ax_call("fill_between")
 contour = _ax_call("contour")
 contourf = _ax_call("contourf")
+imshow = _ax_call("imshow")
+pcolormesh = _ax_call("pcolormesh")
+
+
+def colorbar(mappable=None, label=None, ax=None, **kw):
+    target = ax if ax is not None else gca()
+    return target.colorbar(mappable, label=label, **kw)
 axvline = _ax_call("axvline")
 axhline = _ax_call("axhline")
 text = _ax_call("text")

@@ -71,6 +71,11 @@ struct ContourStyle {
     double lineWidth = 0.0;  // <= 0: style default (contour.linewidth)
     bool showImage = false;  // colour-map image underneath the contours
     bool visible = true;
+    bool showContours = true;  // false + showImage: a plain image (imshow)
+    QString colormap;          // image colours: "" / "auto", "viridis", "magma", ... (see render/ColorBar.h)
+    bool colorBar = false;     // colour bar beside the panel (for the image)
+    bool fixedRange = false;   // image colour limits: vmin..vmax instead of the data range
+    double vmin = 0.0, vmax = 1.0;
     bool operator==(const ContourStyle&) const = default;
 };
 

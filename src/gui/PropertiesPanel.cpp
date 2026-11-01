@@ -2,6 +2,7 @@
 #include "PropertiesPanel.h"
 
 #include "model/DataExport.h"
+#include "render/ColorBar.h"
 
 #include "commands/PlotEditor.h"
 #include "interaction/InteractionController.h"
@@ -581,6 +582,10 @@ QWidget* PropertiesPanel::buildMatrixPage()
     m_mxWidth->setSingleStep(0.25);
     m_mxWidth->setKeyboardTracking(false);
     m_mxImage = new QCheckBox("Colour-map image");
+    m_mxContours = new QCheckBox("Contour lines");
+    m_mxColorBar = new QCheckBox("Colour bar");
+    m_mxColormap = new QComboBox;
+    for (const QString& name : colormapNames()) m_mxColormap->addItem(name);
     m_mxVisible = new QCheckBox("Visible");
     m_mxInfo = new QLabel;
     m_mxInfo->setWordWrap(true);
@@ -594,6 +599,9 @@ QWidget* PropertiesPanel::buildMatrixPage()
     form->addRow("Line width", m_mxWidth);
     form->addRow(m_mxNegative);
     form->addRow(m_mxImage);
+    form->addRow("Colour map", m_mxColormap);
+    form->addRow(m_mxColorBar);
+    form->addRow(m_mxContours);
     form->addRow(m_mxVisible);
     form->addRow(m_mxInfo);
 
@@ -610,6 +618,9 @@ QWidget* PropertiesPanel::buildMatrixPage()
     connect(m_mxWidth, &QDoubleSpinBox::valueChanged, this, [this] { commitMatrix(true); });
     connect(m_mxNegative, &QCheckBox::toggled, this, [this] { commitMatrix(false); });
     connect(m_mxImage, &QCheckBox::toggled, this, [this] { commitMatrix(false); });
+    connect(m_mxContours, &QCheckBox::toggled, this, [this] { commitMatrix(false); });
+    connect(m_mxColorBar, &QCheckBox::toggled, this, [this] { commitMatrix(false); });
+    connect(m_mxColormap, &QComboBox::activated, this, [this] { commitMatrix(false); });
     connect(m_mxVisible, &QCheckBox::toggled, this, [this] { commitMatrix(false); });
     return box;
 }
@@ -880,7 +891,8 @@ void PropertiesPanel::refreshCurrentPage()
         const Matrix* m = m_model->matrix(m_current.id);
         if (!m) return;
         const QSignalBlocker b1(m_mxName), b2(m_mxBase), b3(m_mxFactor), b4(m_mxCount),
-            b5(m_mxNegative), b6(m_mxWidth), b7(m_mxImage), b8(m_mxVisible);
+            b5(m_mxNegative), b6(m_mxWidth), b7(m_mxImage), b8(m_mxVisible), b9(m_mxContours),
+            b10(m_mxColorBar), b11(m_mxColormap);
         if (!m_mxName->hasFocus()) m_mxName->setText(m->name);
         if (!m_mxBase->hasFocus()) m_mxBase->setText(QString::number(m->style.baseLevel, 'g', 6));
         showValue(m_mxFactor, m->style.factor);
@@ -890,6 +902,10 @@ void PropertiesPanel::refreshCurrentPage()
         m_mxNegative->setChecked(m->style.showNegative);
         showValue(m_mxWidth, m->style.lineWidth);
         m_mxImage->setChecked(m->style.showImage);
+        m_mxContours->setChecked(m->style.showContours);
+        m_mxColorBar->setChecked(m->style.colorBar);
+        const int cm = m_mxColormap->findText(m->style.colormap.isEmpty() ? QString("auto") : m->style.colormap);
+        m_mxColormap->setCurrentIndex(std::max(0, cm));
         m_mxVisible->setChecked(m->style.visible);
         const std::vector<double> lv = contourLevels(m->style);
         double top = m->style.baseLevel;
@@ -992,6 +1008,13 @@ void PropertiesPanel::commitMatrix(bool mergeable)
     s.showNegative = m_mxNegative->isChecked();
     s.lineWidth = edited(m_mxWidth, m->style.lineWidth);
     s.showImage = m_mxImage->isChecked();
+    s.showContours = m_mxContours->isChecked();
+    if (!s.showContours) s.showImage = true;  // never invisible
+    s.colorBar = m_mxColorBar->isChecked();
+    const QString cmap = m_mxColormap->currentText();
+    // Keep a reversed ("_r") map unless another one was chosen.
+    if (cmap != QString(s.colormap).remove("_r") && !(cmap == "auto" && s.colormap.isEmpty()))
+        s.colormap = cmap == "auto" ? QString() : cmap;
     s.visible = m_mxVisible->isChecked();
     m_editor->setMatrixAppearance(m->id, m_mxName->text(), s, mergeable);
 }

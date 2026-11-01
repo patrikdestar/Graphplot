@@ -28,6 +28,9 @@ annotate, read the results back, process, and re-plot.
   optional colour-map image underneath.
 - Multi-panel figures: subplots, ratio/residual panels with touching frames,
   shared axes.
+- **Colour-mapped images** (heat maps, `imshow`) with perceptually uniform
+  colour maps (viridis, magma, inferno, plasma, cividis, …) and a colour bar;
+  on their own or under contour lines.
 - Linear or logarithmic axes, which can also be reversed (ppm convention).
 
 **NMR**

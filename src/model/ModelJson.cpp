@@ -114,7 +114,11 @@ QJsonObject matrixToJson(const Matrix& m)
             {"negativeColor", colorText(s.negativeColor)},
             {"lineWidth", s.lineWidth},
             {"image", s.showImage},
-            {"visible", s.visible}};
+            {"visible", s.visible},
+            {"contours", s.showContours},
+            {"colormap", s.colormap},
+            {"colorBar", s.colorBar},
+            {"clim", s.fixedRange ? QJsonValue(QJsonArray{s.vmin, s.vmax}) : QJsonValue()}};
 }
 
 bool matrixFromJson(const QJsonObject& o, Matrix* m)
@@ -136,6 +140,12 @@ bool matrixFromJson(const QJsonObject& o, Matrix* m)
     s.lineWidth = o["lineWidth"].toDouble();
     s.showImage = o["image"].toBool();
     s.visible = o["visible"].toBool(true);
+    s.showContours = o["contours"].toBool(true);
+    s.colormap = o["colormap"].toString();
+    s.colorBar = o["colorBar"].toBool();
+    const QJsonArray clim = o["clim"].toArray();
+    s.fixedRange = clim.size() == 2 && clim[1].toDouble() > clim[0].toDouble();
+    if (s.fixedRange) s.vmin = clim[0].toDouble(), s.vmax = clim[1].toDouble();
     return decodeArray(o["z"], &m->z) && m->nx >= 2 && m->ny >= 2 &&
            m->z.size() == qsizetype(m->nx) * m->ny;
 }

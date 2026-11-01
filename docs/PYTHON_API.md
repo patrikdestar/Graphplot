@@ -43,6 +43,7 @@ File paths may be strings with `~` or `pathlib.Path` objects.
 | `hist(data, bins=10, range=None, *, density=False, weights=None, histtype='step', label, color, fill, width, style)` | `(counts, edges, Line)` |
 | `fill_between(x, y1, y2=0, *, label, color, alpha=0.3, step=None, line=False)` | `Line` (one undo step; `line=True` also draws the edges) |
 | `contour(z, x=None, y=None, *, label, levels, factor, base=None, color, negative_color, negative=True, image=False, linewidth)` | `Contour` |
+| `image(z, x=None, y=None, *, cmap='viridis', colorbar=True, vmin=None, vmax=None, label=None)` | `Contour` drawn as a colour-mapped image only (heat map) |
 | `open_bruker(path)` | `Contour` (Bruker processed 2D spectrum, ppm axes) |
 | `marker(position, orientation='v', *, color, label='', style='--', width=1.5, show_value=True)` | `Marker` |
 | `vline(x, **kw)`, `hline(y, **kw)` | `Marker` |
@@ -101,6 +102,14 @@ Plotting options:
 - The positive levels are `base * factor**k` for `k = 0 … levels-1`. With
   `negative=True`, they are mirrored for negative values.
 - `base=None` places the top level just below `max |z|`.
+- Images: `image=True` draws a colour map under the contours, `contours=False`
+  the image alone; `cmap` is `'auto'` (white–blue, or blue–white–red for
+  signed data), `'viridis'`, `'magma'`, `'inferno'`, `'plasma'`, `'cividis'`,
+  `'gray'`, `'blues'` or `'rdbu'` (`'_r'` reverses); `vmin`/`vmax` fix the
+  colour limits (diverging maps are otherwise centred on zero);
+  `colorbar=True` shows the scale beside the panel, labelled with the name.
+  The `Contour` handle has matching properties: `cmap`, `contours`,
+  `colorbar`, `clim` (`(vmin, vmax)` or `None`), `image`.
 
 ### Peaks (2D spectra)
 
@@ -307,9 +316,9 @@ import plotter.pyplot as plt
 
 | Supported | Not supported |
 |---|---|
-| `figure`, `subplots` (incl. `gridspec_kw` height ratios / hspace), `fig.add_subplot`, `gcf`, `gca`, `sca`, `close` (figure, number, name or `'all'`), `show`, `pause`, `savefig(dpi=, format=)` to a path or a binary file object | `imshow`, colour bars |
+| `figure`, `subplots` (incl. `gridspec_kw` height ratios / hspace), `fig.add_subplot`, `gcf`, `gca`, `sca`, `close` (figure, number, name or `'all'`), `show`, `pause`, `savefig(dpi=, format=)` to a path or a binary file object | non-uniform `pcolormesh` grids |
 | `plot` with format strings (`'r--o'`, `'C1--'`, several x/y/fmt groups), `scatter`, `errorbar(fmt=)`, `hist` (one or several datasets; `step`, `stepfilled`/`bar`, `errorbar`), `stairs` | polar and 3D axes |
-| `fill_between` (incl. `where=`), `contour`/`contourf` (X, Y, Z), `axhline`, `axvline`, `text` (incl. `transform=ax.transAxes`), `annotate` | twin axes |
+| `fill_between` (incl. `where=`), `contour`/`contourf` (X, Y, Z), `imshow` (origin, extent, cmap, vmin/vmax), `pcolormesh` (uniform grids, edges or centres), `colorbar(mappable, label=)`, `axhline`, `axvline`, `text` (incl. `transform=ax.transAxes`), `annotate` | twin axes, RGB images |
 | `xlabel`, `ylabel`, `title`, `xlim`, `ylim`, `xscale`, `yscale`, `legend(labels, loc=name or code, frameon=)`, `ax.set(...)`, `grid`, `plt.style.use`; colours `'C0'`…, `'tab:blue'`…, `'0.5'` | `rcParams` (use `plotter.style.set`) |
 
 Axes methods use the matplotlib names (`set_xlabel`, `set_xlim`,

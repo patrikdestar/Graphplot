@@ -810,6 +810,22 @@ Figure.sca = lambda self, ax: self._set_current(ax.index if isinstance(ax, Axes)
 Figure.sca.__doc__ = "Make an Axes (or panel index) the current panel for Figure-level calls."
 Figure.errorbar = _errorbar
 Figure.hist = _hist
+
+
+def _image(self: Figure, z, x=None, y=None, *, cmap="viridis", colorbar=True, vmin=None, vmax=None,
+           label=None) -> Contour:
+    """Show 2D data z[row=y, column=x] as a colour-mapped image (no contours).
+
+    x, y      cell-centre coordinates: full uniformly spaced arrays or (start, stop)
+    cmap      'viridis' (default), 'magma', 'inferno', 'plasma', 'cividis', 'gray',
+              'blues', 'rdbu', 'auto' ('_r' reverses)
+    colorbar  colour bar beside the panel; vmin, vmax: fixed colour limits
+    Returns a Contour handle (contours can be switched on later: c.contours = True)."""
+    return self.contour(z, x, y, label=label, image=True, contours=False, cmap=cmap, colorbar=colorbar,
+                        vmin=vmin, vmax=vmax)
+
+
+Figure.image = _image
 Figure.fill_between = _fill_between
 Figure.set_style = style._figure_set_style
 

@@ -27,6 +27,7 @@
 #include "model/Style.h"
 #include "model/PlotModel.h"
 #include "qcustomplot.h"
+#include "render/ColorBar.h"
 #include "render/DisplayTheme.h"
 #include "render/PlotRenderer.h"
 
@@ -207,6 +208,29 @@ QColor requiredColor(const py::object& obj, const char* what)
 {
     if (obj.is_none()) throw py::value_error(std::string(what) + " cannot be None");
     return toColor(obj, what);
+}
+
+// Colour map name for 2D images (None = automatic).
+QString checkedColormap(const py::object& v)
+{
+    if (v.is_none()) return {};
+    const QString name = QString::fromStdString(py::str(v).cast<std::string>()).trimmed().toLower();
+    QCPColorGradient g;
+    if (!colormapGradient(name, false, &g))
+        throw py::value_error("unknown colour map '" + name.toStdString() + "' (" +
+                              colormapNames().join(", ").toStdString() + "; '_r' reverses)");
+    return name == "auto" ? QString() : name;
+}
+
+// (fixed, vmin, vmax) from optional limits; one missing limit keeps the data's.
+std::tuple<bool, double, double> colorLimits(const py::object& vmin, const py::object& vmax)
+{
+    if (vmin.is_none() && vmax.is_none()) return {false, 0.0, 1.0};
+    if (vmin.is_none() || vmax.is_none()) throw py::value_error("give both vmin and vmax (or neither)");
+    const double lo = vmin.cast<double>(), hi = vmax.cast<double>();
+    if (!(hi > lo) || !std::isfinite(lo) || !std::isfinite(hi))
+        throw py::value_error("vmin must be smaller than vmax (finite numbers)");
+    return {true, lo, hi};
 }
 
 void checkWidth(double v)
@@ -879,7 +903,8 @@ Returns a Line handle.)doc");
            const py::object& label, const py::object& levelsObj, const py::object& factorObj,
            const py::object& base,
            const py::object& color, const py::object& negativeColor, bool negative, bool image,
-           const py::object& linewidthObj) {
+           const py::object& linewidthObj, const py::object& cmap, bool contours, bool colorbar,
+           const py::object& vmin, const py::object& vmax) {
             const int levels = levelsObj.is_none() ? 0 : levelsObj.cast<int>();
             const double factor = factorObj.is_none() ? 0.0 : factorObj.cast<double>();
             const double linewidth = linewidthObj.is_none() ? 0.0 : linewidthObj.cast<double>();
@@ -893,8 +918,12 @@ Returns a Line handle.)doc");
             m.style.positiveColor = toColor(color);
             if (!negativeColor.is_none()) m.style.negativeColor = toColor(negativeColor, "negative_color");
             m.style.showNegative = negative;
-            m.style.showImage = image;
+            m.style.showImage = image || !contours;  // no contours: show the image
             m.style.lineWidth = linewidth;
+            m.style.showContours = contours;
+            m.style.colorBar = colorbar;
+            m.style.colormap = checkedColormap(cmap);
+            std::tie(m.style.fixedRange, m.style.vmin, m.style.vmax) = colorLimits(vmin, vmax);
             const ObjectId id = inGui([&] {
                 const bool first = self->model()->datasets().empty() && self->model()->matrices().empty();
                 const ObjectId nid = self->editor()->addMatrix(m);
@@ -910,7 +939,9 @@ Returns a Line handle.)doc");
         py::arg("label") = py::none(), py::arg("levels") = py::none(), py::arg("factor") = py::none(),
         py::arg("base") = py::none(), py::arg("color") = py::none(),
         py::arg("negative_color") = py::none(), py::arg("negative") = true,
-        py::arg("image") = false, py::arg("linewidth") = py::none(),
+        py::arg("image") = false, py::arg("linewidth") = py::none(), py::arg("cmap") = py::none(),
+        py::arg("contours") = true, py::arg("colorbar") = false, py::arg("vmin") = py::none(),
+        py::arg("vmax") = py::none(),
         R"doc(Show 2D data z[row=y, column=x] as contour lines on a regular grid.
 
 x, y      grid coordinates: full uniformly spaced arrays or (start, stop); default: indices
@@ -918,6 +949,9 @@ levels    number of positive levels: base * factor**k, k = 0..levels-1
 base      lowest level; default chooses the top level just below max |z|
 negative  also draw the mirrored negative levels (in negative_color)
 image     draw a colour-map image underneath the contours
+cmap      image colours: 'auto', 'viridis', 'magma', 'inferno', 'plasma', 'cividis',
+          'gray', 'blues', 'rdbu' ('_r' reverses); contours=False: image only
+colorbar  colour bar beside the panel; vmin, vmax: fixed colour limits
 In the window, Alt+mouse wheel (or the wheel in 'Levels' mode) scrolls the
 levels; '*' and '/' halve / double them. Returns a Contour handle.)doc");
 
@@ -1919,6 +1953,46 @@ Remove a callback with off(event, callback).)doc");
         .def_property("image",
                       [](Contour& h) { return inGui([&] { return h.get().style.showImage; }); },
                       [](Contour& h, bool v) { h.setStyle([&](QString&, ContourStyle& s) { s.showImage = v; }); })
+        .def_property("cmap",
+                      [](Contour& h) {
+                          const QString c = inGui([&] { return h.get().style.colormap; });
+                          return (c.isEmpty() ? QString("auto") : c).toStdString();
+                      },
+                      [](Contour& h, const py::object& v) {
+                          const QString c = checkedColormap(v);
+                          h.setStyle([&](QString&, ContourStyle& s) { s.colormap = c; });
+                      })
+        .def_property("contours",
+                      [](Contour& h) { return inGui([&] { return h.get().style.showContours; }); },
+                      [](Contour& h, bool v) {
+                          h.setStyle([&](QString&, ContourStyle& s) {
+                              s.showContours = v;
+                              if (!v) s.showImage = true;  // never invisible
+                          });
+                      })
+        .def_property("colorbar",
+                      [](Contour& h) { return inGui([&] { return h.get().style.colorBar; }); },
+                      [](Contour& h, bool v) { h.setStyle([&](QString&, ContourStyle& s) { s.colorBar = v; }); })
+        .def_property("clim",
+                      [](Contour& h) -> py::object {
+                          const ContourStyle s = inGui([&] { return h.get().style; });
+                          if (!s.fixedRange) return py::none();
+                          return py::make_tuple(s.vmin, s.vmax);
+                      },
+                      [](Contour& h, const py::object& v) {
+                          bool fixed = false;
+                          double lo = 0, hi = 1;
+                          if (!v.is_none()) {
+                              const auto pair = v.cast<std::pair<py::object, py::object>>();
+                              std::tie(fixed, lo, hi) = colorLimits(pair.first, pair.second);
+                          }
+                          h.setStyle([&](QString&, ContourStyle& s) {
+                              s.fixedRange = fixed;
+                              s.vmin = lo;
+                              s.vmax = hi;
+                          });
+                      },
+                      "Image colour limits (vmin, vmax), or None for the data range.")
         .def_property("visible",
                       [](Contour& h) { return inGui([&] { return h.get().style.visible; }); },
                       [](Contour& h, bool v) { h.setStyle([&](QString&, ContourStyle& s) { s.visible = v; }); })
