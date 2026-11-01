@@ -128,7 +128,11 @@ def _common(kw: dict, ax=None):
             r, g, b, _ = _plotter._plotter._rgba(out["color"])
             out["color"] = (r, g, b, float(kw["alpha"]))
     kw.pop("alpha", None)
-    kw.pop("zorder", None)
+    # Purely cosmetic matplotlib keywords without an equivalent: accepted, ignored.
+    for k in ("zorder", "ecolor", "mfc", "markerfacecolor", "mec", "markeredgecolor", "mew",
+              "markeredgewidth", "markevery", "antialiased", "rasterized", "solid_capstyle",
+              "dash_capstyle", "picker", "gid", "clip_on"):
+        kw.pop(k, None)
     if out.get("style") in ("", " ", "None"):
         out["style"] = "none"
     if out.get("marker") in ("", " ", "None"):
@@ -395,6 +399,84 @@ class PltAxes:
         x, y = xytext if xytext is not None else xy
         return self.text(x, y, text, **{k: v for k, v in kw.items() if k in ("fontsize", "color")})
 
+    def bar(self, x, height, width=0.8, bottom=0.0, align="center", color=None, label=None,
+            edgecolor=None, **kw):
+        """Vertical bars (drawn as one filled outline)."""
+        x = _np.atleast_1d(_np.asarray(x, dtype=float))
+        h = _np.broadcast_to(_np.asarray(height, dtype=float), x.shape)
+        w = _np.broadcast_to(_np.asarray(width, dtype=float), x.shape)
+        b = _np.broadcast_to(_np.asarray(bottom, dtype=float), x.shape)
+        left = x - w / 2 if align == "center" else x
+        xs, ys = [], []
+        for l0, wi, hi, bi in zip(left, w, h, b):
+            xs += [l0, l0, l0 + wi, l0 + wi]
+            ys += [bi, bi + hi, bi + hi, bi]
+        opts = _common(dict(kw, **({"label": label} if label is not None else {}),
+                            **({"color": color} if color is not None else {})), self._ax)
+        return self._ax.plot(xs, ys, fill=True, **opts)
+
+    def barh(self, y, width, height=0.8, left=0.0, color=None, label=None, **kw):
+        """Horizontal bars (drawn as one filled outline)."""
+        y = _np.atleast_1d(_np.asarray(y, dtype=float))
+        wd = _np.broadcast_to(_np.asarray(width, dtype=float), y.shape)
+        ht = _np.broadcast_to(_np.asarray(height, dtype=float), y.shape)
+        lf = _np.broadcast_to(_np.asarray(left, dtype=float), y.shape)
+        xs, ys = [], []
+        for yi, wi, hi, li in zip(y - ht / 2, wd, ht, lf):
+            xs += [li, li + wi, li + wi, li, li]
+            ys += [yi, yi, yi + hi, yi + hi, yi]
+            xs.append(_np.nan)
+            ys.append(_np.nan)
+        opts = _common(dict(kw, **({"label": label} if label is not None else {}),
+                            **({"color": color} if color is not None else {})), self._ax)
+        return self._ax.plot(xs, ys, **opts)
+
+    def step(self, x, y, *args, where="pre", **kw):
+        """Step plot (where: 'pre', 'post', 'mid')."""
+        lines = self.plot(x, y, *args, **kw)
+        for ln in lines:
+            ln.step = where
+        return lines
+
+    def semilogx(self, *args, **kw):
+        lines = self.plot(*args, **kw)
+        self.set_xscale("log")
+        return lines
+
+    def semilogy(self, *args, **kw):
+        lines = self.plot(*args, **kw)
+        self.set_yscale("log")
+        return lines
+
+    def loglog(self, *args, **kw):
+        lines = self.plot(*args, **kw)
+        self.set_xscale("log")
+        self.set_yscale("log")
+        return lines
+
+    def cla(self):
+        """Remove everything from this panel."""
+        self._ax.clear()
+
+    def get_title(self):
+        return self._ax.title
+
+    def get_lines(self):
+        return self._ax.lines()
+
+    def axis(self, arg=None, **_):
+        """axis([xmin, xmax, ymin, ymax]) sets the limits; axis() returns them.
+        'off' / 'equal' / 'tight' are accepted ('tight' autoscales)."""
+        if isinstance(arg, (list, tuple)) and len(arg) == 4:
+            self.set_xlim(arg[0], arg[1])
+            self.set_ylim(arg[2], arg[3])
+        elif arg == "tight":
+            self._ax.autoscale()
+        return (*self.get_xlim(), *self.get_ylim())
+
+    def margins(self, *_, **__):
+        pass  # autoscale chooses the margins
+
     # ---- decorations --------------------------------------------------------------
     def set_xlabel(self, s, **_):
         self._ax.xlabel = str(s)
@@ -594,6 +676,26 @@ class _PltFigure:
     def suptitle(self, s, **_):
         self._fig.suptitle = str(s)
 
+    def set_size_inches(self, w, h=None, forward=True):
+        if h is None:
+            w, h = w
+        self._size = (int(w * _DPI), int(h * _DPI))
+
+    def get_size_inches(self):
+        return _np.array([self._size[0] / _DPI, self._size[1] / _DPI])
+
+    def clf(self):
+        """Clear every panel (data and objects)."""
+        for ax in self.axes:
+            ax.cla()
+
+    def legend(self, *args, **kw):
+        """Figure legend: shown on the first panel (plotter legends live inside a panel)."""
+        return self.axes[0].legend(*args, **kw)
+
+    def subplots_adjust(self, *_, **__):
+        pass  # layout is automatic; use subplots(gridspec_kw=...) for spacing
+
     def tight_layout(self, *_, **__):
         pass  # layout is automatic
 
@@ -671,6 +773,40 @@ def subplots(nrows=1, ncols=1, sharex=False, sharey=False, figsize=None, squeeze
     return fig, arr
 
 
+def subplot(*args, **kw):
+    """subplot(211) / subplot(2, 1, 1): the panel of a grid on the current figure."""
+    return gcf().add_subplot(*args, **kw)
+
+
+def clf():
+    gcf().clf()
+
+
+def cla():
+    gca().cla()
+
+
+def suptitle(s, **kw):
+    gcf().suptitle(s, **kw)
+
+
+def get_fignums():
+    """Numbers / names of the open pyplot figures created with figure(num=...)."""
+    return [k for k, f in _numbered.items() if not f.closed]
+
+
+def ion():
+    pass  # windows are always interactive at the prompt
+
+
+def ioff():
+    pass
+
+
+def draw():
+    _plotter.pause(0)  # process pending updates
+
+
 def _ax_call(name):
     def f(*args, **kw):
         return getattr(gca(), name)(*args, **kw)
@@ -680,6 +816,14 @@ def _ax_call(name):
 
 
 plot = _ax_call("plot")
+bar = _ax_call("bar")
+barh = _ax_call("barh")
+step = _ax_call("step")
+semilogx = _ax_call("semilogx")
+semilogy = _ax_call("semilogy")
+loglog = _ax_call("loglog")
+axis = _ax_call("axis")
+margins = _ax_call("margins")
 scatter = _ax_call("scatter")
 errorbar = _ax_call("errorbar")
 hist = _ax_call("hist")

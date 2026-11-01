@@ -956,6 +956,28 @@ class PlotterTests(unittest.TestCase):
             self.assertEqual(g.axes[1].title, "right")
             g.close()
 
+    def test_pyplot_everyday_idioms(self):
+        import plotter.pyplot as plt
+        plt.figure()
+        plt.subplot(211)
+        plt.bar([1, 2, 3], [3, 5, 2], label="b")
+        plt.subplot(2, 1, 2)
+        plt.step([0, 1, 2], [1, 3, 2], where="post")
+        plt.semilogy([1, 2, 3], [1, 10, 100])
+        ax = plt.gca()
+        self.assertTrue(ax.panel.y_log)
+        self.assertEqual(len(ax.get_lines()), 2)
+        plt.errorbar([1, 2], [1, 2], yerr=0.1, ecolor="r", mfc="w")  # cosmetic keywords accepted
+        plt.axis([0, 4, 0.5, 200])
+        self.assertEqual(plt.axis()[:2], (0.0, 4.0))
+        plt.suptitle("S")
+        self.assertEqual(plt.gcf().native.suptitle, "S")
+        plt.gcf().set_size_inches(5, 4)
+        plt.ion(), plt.ioff(), plt.draw()
+        plt.cla()
+        self.assertEqual(plt.gca().get_lines(), [])
+        plt.close("all")
+
     def test_pyplot_compat_round2(self):
         import io
         import plotter.pyplot as plt
