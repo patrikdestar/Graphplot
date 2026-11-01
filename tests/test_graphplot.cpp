@@ -760,6 +760,54 @@ private slots:
         QCOMPARE(w->plot()->legend->itemCount(), 1);
     }
 
+    // ---- multi-panel figures ------------------------------------------------------------------
+    void subplotsSharedAxesAndActivePanel()
+    {
+        auto w = makeWindow();  // panel 0 holds the ramp
+        GridSpec g;
+        g.rows = 2;
+        g.sharex = true;
+        g.hspace = 0;
+        g.heightRatios = {0.7, 0.3};
+        w->setGrid(g);
+        QCOMPARE(w->axesCount(), 2);
+        QCOMPARE(w->model()->datasets().size(), size_t(1));  // panel 0 is current, content kept
+        w->plot()->replot();
+        PlotRenderer* top = w->axes(0).renderer;
+        PlotRenderer* bottom = w->axes(1).renderer;
+        QVERIFY(!top->xAxis()->tickLabels());  // only the bottom panel shows x tick labels
+        QVERIFY(bottom->xAxis()->tickLabels());
+        // Frames touch (hspace 0) and share left/right edges.
+        QCOMPARE(top->axisRect()->rect().bottom() + 1, bottom->axisRect()->rect().top());
+        QCOMPARE(top->axisRect()->rect().left(), bottom->axisRect()->rect().left());
+        // Shared x: changing one changes the other.
+        top->setViewRange({10, 20, 0, 1});
+        QCOMPARE(bottom->xAxis()->range().lower, 10.0);
+        // Clicking in the lower panel makes it current; edits go there.
+        const QPoint inBottom = bottom->axisRect()->rect().center();
+        w->controller()->setMode(InteractionMode::AddVMarker);
+        QTest::mouseClick(w->plot(), Qt::LeftButton, {}, inBottom);
+        QCOMPARE(w->currentAxes(), 1);
+        QCOMPARE(int(w->axes(1).model->markers().size()), 1);
+        QCOMPARE(int(w->axes(0).model->markers().size()), 0);
+        // One undo history for the whole figure.
+        w->setCurrentAxes(0);
+        w->editor()->undo();
+        QCOMPARE(int(w->axes(1).model->markers().size()), 0);
+        // Wheel over the top panel zooms that panel (and the linked x of the other).
+        const QPoint inTop = top->axisRect()->rect().center();
+        QWheelEvent ev(inTop, w->plot()->mapToGlobal(inTop), QPoint(), QPoint(0, 120), Qt::NoButton,
+                       Qt::NoModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(w->plot(), &ev);
+        QCOMPARE(w->currentAxes(), 0);
+        QCOMPARE(bottom->xAxis()->range().size(), top->xAxis()->range().size());
+        // Styles apply to all panels.
+        QVERIFY(w->applyStyle("science"));
+        QCOMPARE(w->axes(1).model->style().xtick.direction, QString("in"));
+        QTemporaryDir dir;
+        QVERIFY(w->exportTo(dir.filePath("two.pdf")));
+    }
+
     // ---- styles & rich text ----------------------------------------------------------------
     void styleTextRoundTrip()
     {

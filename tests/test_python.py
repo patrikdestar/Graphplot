@@ -338,6 +338,39 @@ class PlotterTests(unittest.TestCase):
         line.fill = None
         self.assertIsNone(line.fill)
 
+    def test_subplots_and_ratio_panel(self):
+        x = np.linspace(0, 10, 50)
+        self.fig.plot(x, np.sin(x), label="main")
+        main, lower = self.fig.ratio_panel(0.3)
+        self.assertEqual(len(self.fig.axes), 2)
+        self.assertEqual(main, self.fig.axes[0])
+        r = lower.plot(x, np.ones_like(x), label="ratio")
+        self.assertEqual([l.label for l in main.lines()], ["main"])  # content stays in panel 0
+        self.assertEqual([l.label for l in lower.lines()], ["ratio"])
+        # Handles stay bound to their panel, whatever is current.
+        self.fig.sca(main)
+        self.assertEqual(self.fig.gca(), main)
+        main.xlabel = "x"
+        self.assertEqual(r.label, "ratio")
+        r.color = "red"
+        self.assertEqual(lower.lines()[0].color, "#e34948")
+        lower.set_xlim(2, 4)
+        self.assertEqual(main.xlim(), (2.0, 4.0))  # shared x
+        self.assertEqual(lower.ylabel, "Ratio")
+        events = []
+        self.fig.on("marker_changed", lambda m: events.append(m.position))
+        m = lower.marker(3.0)
+        m.position = 3.5
+        plotter.pause(0.05)
+        self.assertIn(3.5, events)
+        grid = self.fig.subplots(2, 2)
+        self.assertEqual(len(grid), 2)
+        self.assertEqual(len(grid[0]), 2)
+        grid[1][1].plot([0, 1], [1, 0], label="corner")
+        self.assertEqual(self.fig.gca(), grid[1][1])
+        with tempfile.TemporaryDirectory() as d:
+            self.fig.savefig(os.path.join(d, "grid.svg"))
+
     def test_savefig(self):
         self.fig.plot(self.x, np.sin(self.x), label="s")
         self.fig.marker(50, label="M")

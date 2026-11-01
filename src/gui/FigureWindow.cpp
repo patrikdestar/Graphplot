@@ -37,12 +37,17 @@ QString fmt(double v) { return QString::number(v, 'g', 6); }
 FigureWindow::FigureWindow(QWidget* parent) : QMainWindow(parent)
 {
     setWindowTitle("Graphplot");
-    m_model = new PlotModel(this);
-    m_editor = new PlotEditor(m_model, this);
+    m_stack = new QUndoStack(this);
+    m_stack->setUndoLimit(500);
     m_plot = new QCustomPlot(this);
+    m_model = new PlotModel(this);
+    m_editor = new PlotEditor(m_model, m_stack, this);
     m_renderer = new PlotRenderer(m_model, m_plot, this);
+    m_axes.push_back({m_model, m_editor, m_renderer});
     m_controller = new InteractionController(m_renderer, m_editor, this);
     setCentralWidget(m_plot);
+    connect(m_controller, &InteractionController::activeTargetChanged, this,
+            &FigureWindow::setCurrentAxes);
 
     m_panel = new PropertiesPanel(m_editor, m_controller);
     m_dock = new QDockWidget("Properties", this);
@@ -59,10 +64,6 @@ FigureWindow::FigureWindow(QWidget* parent) : QMainWindow(parent)
     addDockWidget(Qt::RightDockWidgetArea, m_peakDock);
     tabifyDockWidget(m_dock, m_peakDock);
     m_dock->raise();
-    // Show the peak list automatically once there are peaks or 2D data.
-    auto showPeaks = [this] { if (m_peakDock->isHidden()) m_peakDock->show(); };
-    connect(m_model, &PlotModel::peakAdded, this, showPeaks);
-
     buildActions();
 
     m_cursorLabel = new QLabel;
@@ -72,9 +73,7 @@ FigureWindow::FigureWindow(QWidget* parent) : QMainWindow(parent)
     statusBar()->addWidget(m_cursorLabel);
     statusBar()->addPermanentWidget(m_levelLabel);
     statusBar()->addPermanentWidget(m_regionLabel);
-    for (auto sig : {&PlotModel::matrixAdded, &PlotModel::matrixRemoved,
-                     &PlotModel::matrixAppearanceChanged})
-        connect(m_model, sig, this, &FigureWindow::updateLevelStatus);
+    wireAxes(m_axes.front());
     connect(m_controller, &InteractionController::selectionChanged, this,
             &FigureWindow::updateLevelStatus);
 
@@ -83,11 +82,6 @@ FigureWindow::FigureWindow(QWidget* parent) : QMainWindow(parent)
                 m_cursorLabel->setText(inside ? QString("x = %1    y = %2").arg(fmt(p.x()), fmt(p.y()))
                                               : QString());
             });
-    connect(m_model, &PlotModel::regionChanged, this, [this] {
-        const Region& r = m_model->region();
-        m_regionLabel->setText(r.active ? QString("Region: %1 … %2").arg(fmt(r.xmin), fmt(r.xmax))
-                                        : QString());
-    });
     connect(m_controller, &InteractionController::editRequested, this, [this](ObjectRef ref) {
         m_dock->show();
         m_panel->beginEdit(ref);
@@ -100,9 +94,160 @@ FigureWindow::FigureWindow(QWidget* parent) : QMainWindow(parent)
 
 FigureWindow::~FigureWindow() = default;
 
+void FigureWindow::wireAxes(const Axes& ax)
+{
+    PlotModel* model = ax.model;
+    // Show the peak list automatically once there are peaks.
+    connect(model, &PlotModel::peakAdded, this, [this] {
+        if (m_peakDock->isHidden()) m_peakDock->show();
+    });
+    for (auto sig : {&PlotModel::matrixAdded, &PlotModel::matrixRemoved,
+                     &PlotModel::matrixAppearanceChanged})
+        connect(model, sig, this, &FigureWindow::updateLevelStatus);
+    connect(model, &PlotModel::regionChanged, this, [this, model] {
+        if (model != m_model) return;
+        const Region& r = model->region();
+        m_regionLabel->setText(r.active ? QString("Region: %1 … %2").arg(fmt(r.xmin), fmt(r.xmax))
+                                        : QString());
+    });
+}
+
+void FigureWindow::setCurrentAxes(int index)
+{
+    if (index < 0 || index >= int(m_axes.size())) return;
+    const Axes& ax = m_axes[size_t(index)];
+    if (ax.model == m_model) return;
+    m_model = ax.model;
+    m_editor = ax.editor;
+    m_renderer = ax.renderer;
+    m_controller->setActiveTarget(index);
+    // The side panels show the active panel's objects: rebuild them.
+    auto* panel = new PropertiesPanel(m_editor, m_controller);
+    m_dock->setWidget(panel);
+    m_panel->deleteLater();
+    m_panel = panel;
+    auto* table = new PeakTable(m_editor, m_renderer, m_controller);
+    m_peakDock->setWidget(table);
+    m_peakTable->deleteLater();
+    m_peakTable = table;
+    updateLevelStatus();
+    emit currentAxesChanged(index);
+}
+
+int FigureWindow::currentAxes() const
+{
+    for (size_t i = 0; i < m_axes.size(); ++i)
+        if (m_axes[i].model == m_model) return int(i);
+    return 0;
+}
+
+void FigureWindow::setGrid(const GridSpec& spec)
+{
+    const int rows = std::max(1, spec.rows), cols = std::max(1, spec.cols);
+    QCPLayoutGrid* outer = m_plot->plotLayout();
+    if (!m_grid) {
+        // Replace the single default axis rect by a grid holding all panels.
+        QCPAxisRect* first = m_axes.front().renderer->axisRect();
+        int row = 0, col = 0;
+        for (int r = 0; r < outer->rowCount(); ++r)
+            for (int c = 0; c < outer->columnCount(); ++c)
+                if (outer->element(r, c) == first) row = r, col = c;
+        outer->take(first);
+        m_grid = new QCPLayoutGrid;
+        outer->addElement(row, col, m_grid);
+        m_grid->addElement(0, 0, first);
+    }
+    // Create the missing panels (existing ones keep their content).
+    while (int(m_axes.size()) < rows * cols) {
+        auto* rect = new QCPAxisRect(m_plot, true);
+        auto* model = new PlotModel(this);
+        model->setStyle(m_axes.front().model->style());
+        AxesInfo info = model->axesInfo();
+        info.gridVisible = m_axes.front().model->axesInfo().gridVisible;
+        model->setAxesInfo(info);
+        auto* editor = new PlotEditor(model, m_stack, this);
+        auto* renderer = new PlotRenderer(model, m_plot, rect, false, this);
+        m_axes.push_back({model, editor, renderer});
+        m_controller->addTarget(renderer, editor);
+        wireAxes(m_axes.back());
+    }
+    // Place panels row-major.
+    for (const Axes& ax : m_axes)
+        if (m_grid->elements(false).contains(ax.renderer->axisRect())) m_grid->take(ax.renderer->axisRect());
+    m_grid->simplify();
+    for (size_t i = 0; i < m_axes.size() && int(i) < rows * cols; ++i)
+        m_grid->addElement(int(i) / cols, int(i) % cols, m_axes[i].renderer->axisRect());
+    if (spec.heightRatios.size() == rows) m_grid->setRowStretchFactors(spec.heightRatios);
+    if (spec.widthRatios.size() == cols) m_grid->setColumnStretchFactors(spec.widthRatios);
+    m_grid->setRowSpacing(spec.hspace >= 0 ? spec.hspace : 8);
+    m_grid->setColumnSpacing(spec.wspace >= 0 ? spec.wspace : 8);
+
+    // Align the frames: same left/right margins per column, top/bottom per row.
+    for (QCPMarginGroup* g : m_marginGroups) delete g;
+    m_marginGroups.clear();
+    for (int c = 0; c < cols; ++c) {
+        auto* g = new QCPMarginGroup(m_plot);
+        m_marginGroups << g;
+        for (int r = 0; r < rows; ++r)
+            if (auto* rect = axesRect(r * cols + c)) rect->setMarginGroup(QCP::msLeft | QCP::msRight, g);
+    }
+    for (int r = 0; r < rows; ++r) {
+        auto* g = new QCPMarginGroup(m_plot);
+        m_marginGroups << g;
+        for (int c = 0; c < cols; ++c)
+            if (auto* rect = axesRect(r * cols + c)) rect->setMarginGroup(QCP::msTop | QCP::msBottom, g);
+    }
+
+    // Shared axes: link ranges; inner panels drop duplicate tick labels.
+    for (const QMetaObject::Connection& c : m_linkConnections) disconnect(c);
+    m_linkConnections.clear();
+    auto link = [this](QCPAxis* a, QCPAxis* b) {
+        m_linkConnections << connect(a, qOverload<const QCPRange&>(&QCPAxis::rangeChanged), b,
+                                     qOverload<const QCPRange&>(&QCPAxis::setRange));
+        m_linkConnections << connect(b, qOverload<const QCPRange&>(&QCPAxis::rangeChanged), a,
+                                     qOverload<const QCPRange&>(&QCPAxis::setRange));
+    };
+    for (int i = 0; i < rows * cols && i < int(m_axes.size()); ++i) {
+        PlotRenderer* r = m_axes[size_t(i)].renderer;
+        const int row = i / cols, col = i % cols;
+        const bool hideX = spec.sharex && row < rows - 1;
+        const bool hideY = spec.sharey && col > 0;
+        r->xAxis()->setTickLabels(!hideX);
+        r->yAxis()->setTickLabels(!hideY);
+        QCPAxisRect* rect = r->axisRect();
+        // Zero spacing (ratio panels): frames touch, no margin in between.
+        QCP::MarginSides autoSides = QCP::msAll;
+        QMargins fixed = rect->margins();
+        if (spec.hspace == 0 && row > 0) autoSides &= ~QCP::msTop, fixed.setTop(0);
+        if (spec.hspace == 0 && row < rows - 1) autoSides &= ~QCP::msBottom, fixed.setBottom(0);
+        if (spec.wspace == 0 && col > 0) autoSides &= ~QCP::msLeft, fixed.setLeft(0);
+        if (spec.wspace == 0 && col < cols - 1) autoSides &= ~QCP::msRight, fixed.setRight(0);
+        rect->setAutoMargins(autoSides);
+        rect->setMargins(fixed);
+        if (spec.sharex && col == 0 && row > 0) {
+            for (int c2 = 0; c2 < cols; ++c2)
+                if (auto* other = axesRenderer(c2)) link(other->xAxis(), axesRenderer(row * cols + c2)->xAxis());
+        }
+        if (spec.sharey && col > 0) link(axesRenderer(row * cols)->yAxis(), r->yAxis());
+    }
+    m_gridSpec = spec;
+    m_plot->replot();
+}
+
+PlotRenderer* FigureWindow::axesRenderer(int i) const
+{
+    return i >= 0 && i < int(m_axes.size()) ? m_axes[size_t(i)].renderer : nullptr;
+}
+
+QCPAxisRect* FigureWindow::axesRect(int i) const
+{
+    PlotRenderer* r = axesRenderer(i);
+    return r ? r->axisRect() : nullptr;
+}
+
 void FigureWindow::buildActions()
 {
-    QUndoStack* stack = m_editor->undoStack();
+    QUndoStack* stack = m_stack;
 
     // ---- File
     QMenu* file = menuBar()->addMenu("&File");
@@ -288,7 +433,10 @@ bool FigureWindow::applyStyle(const QString& nameOrPath, QStringList* errors)
 {
     Style s;
     if (!loadStyle(nameOrPath, &s, errors)) return false;
-    m_editor->setStyle(s, QString("Style: %1").arg(QFileInfo(nameOrPath).completeBaseName()));
+    const QString text = QString("Style: %1").arg(QFileInfo(nameOrPath).completeBaseName());
+    m_stack->beginMacro(text);
+    for (const Axes& ax : m_axes) ax.editor->setStyle(s, text);  // the style is figure-wide
+    m_stack->endMacro();
     return true;
 }
 
@@ -493,7 +641,10 @@ bool FigureWindow::exportTo(const QString& fileName, int width, int height, doub
     o.width = width;
     o.height = height;
     o.scale = scale;
-    return exportFigure(m_renderer, fileName, o, error);
+    for (const Axes& ax : m_axes) ax.renderer->setExportMode(true);
+    const bool ok = exportFigure(m_axes.front().renderer, fileName, o, error);
+    for (const Axes& ax : m_axes) ax.renderer->setExportMode(false);
+    return ok;
 }
 
 void FigureWindow::onExport()

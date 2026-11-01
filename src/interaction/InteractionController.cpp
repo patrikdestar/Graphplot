@@ -29,26 +29,63 @@ InteractionController::InteractionController(PlotRenderer* renderer, PlotEditor*
     m_plot->setFocusPolicy(Qt::StrongFocus);
     m_rubberBand = new QRubberBand(QRubberBand::Rectangle, m_plot);
 
+    addTarget(renderer, editor);
+}
+
+void InteractionController::addTarget(PlotRenderer* renderer, PlotEditor* editor)
+{
+    m_targets.push_back({renderer, editor});
     // Keep the selection valid when objects disappear (undo, Python, ...).
     PlotModel* model = editor->model();
-    connect(model, &PlotModel::markerRemoved, this, [this](ObjectId id) {
-        if (m_selection == ObjectRef{ObjectKind::Marker, id}) setSelection({});
+    auto drop = [this, editor](ObjectKind kind) {
+        return [this, editor, kind](ObjectId id) {
+            if (m_editor == editor && m_selection == ObjectRef{kind, id}) setSelection({});
+        };
+    };
+    connect(model, &PlotModel::markerRemoved, this, drop(ObjectKind::Marker));
+    connect(model, &PlotModel::annotationRemoved, this, drop(ObjectKind::Annotation));
+    connect(model, &PlotModel::datasetRemoved, this, drop(ObjectKind::Dataset));
+    connect(model, &PlotModel::peakRemoved, this, drop(ObjectKind::Peak));
+    connect(model, &PlotModel::matrixRemoved, this, drop(ObjectKind::Matrix));
+    connect(model, &PlotModel::regionChanged, this, [this, editor, model] {
+        if (m_editor == editor && m_selection.kind == ObjectKind::Region && !model->region().active)
+            setSelection({});
     });
-    connect(model, &PlotModel::annotationRemoved, this, [this](ObjectId id) {
-        if (m_selection == ObjectRef{ObjectKind::Annotation, id}) setSelection({});
-    });
-    connect(model, &PlotModel::datasetRemoved, this, [this](ObjectId id) {
-        if (m_selection == ObjectRef{ObjectKind::Dataset, id}) setSelection({});
-    });
-    connect(model, &PlotModel::peakRemoved, this, [this](ObjectId id) {
-        if (m_selection == ObjectRef{ObjectKind::Peak, id}) setSelection({});
-    });
-    connect(model, &PlotModel::matrixRemoved, this, [this](ObjectId id) {
-        if (m_selection == ObjectRef{ObjectKind::Matrix, id}) setSelection({});
-    });
-    connect(model, &PlotModel::regionChanged, this, [this, model] {
-        if (m_selection.kind == ObjectKind::Region && !model->region().active) setSelection({});
-    });
+}
+
+void InteractionController::removeTarget(PlotEditor* editor)
+{
+    for (size_t i = 0; i < m_targets.size(); ++i) {
+        if (m_targets[i].second != editor) continue;
+        disconnect(editor->model(), nullptr, this, nullptr);
+        m_targets.erase(m_targets.begin() + long(i));
+        if (m_editor == editor && !m_targets.empty()) setActiveTarget(0);
+        return;
+    }
+}
+
+void InteractionController::setActiveTarget(int index)
+{
+    if (index < 0 || index >= int(m_targets.size())) return;
+    if (m_targets[index].first == m_renderer) return;
+    setSelection({});
+    m_renderer = m_targets[index].first;
+    m_editor = m_targets[index].second;
+    emit activeTargetChanged(index);
+}
+
+int InteractionController::activeTarget() const
+{
+    for (size_t i = 0; i < m_targets.size(); ++i)
+        if (m_targets[i].first == m_renderer) return int(i);
+    return -1;
+}
+
+int InteractionController::targetAt(const QPointF& px) const
+{
+    for (size_t i = 0; i < m_targets.size(); ++i)
+        if (m_targets[i].first->axisRect()->outerRect().contains(px.toPoint())) return int(i);
+    return -1;
 }
 
 void InteractionController::setMode(InteractionMode mode)
@@ -126,6 +163,8 @@ void InteractionController::mousePress(QMouseEvent* e)
 {
     m_plot->setFocus(Qt::MouseFocusReason);
     const QPointF px = e->position();
+    // Multi-panel figures: the panel under the cursor becomes active.
+    if (const int t = targetAt(px); t >= 0) setActiveTarget(t);
     m_pressPx = px.toPoint();
     m_pressData = m_renderer->pixelToData(px);
     m_pressView = m_renderer->viewRange();
@@ -203,10 +242,10 @@ void InteractionController::mousePress(QMouseEvent* e)
             p.intensity = sampleMatrix(*m, p.x, p.y);
             if (!(e->modifiers() & Qt::ShiftModifier)) {
                 // Search radius: ~10 screen pixels expressed in grid points.
-                const double gx = std::abs(m_plot->xAxis->coordToPixel(m->x1) -
-                                           m_plot->xAxis->coordToPixel(m->x0)) / std::max(1, m->nx - 1);
-                const double gy = std::abs(m_plot->yAxis->coordToPixel(m->y1) -
-                                           m_plot->yAxis->coordToPixel(m->y0)) / std::max(1, m->ny - 1);
+                const double gx = std::abs(m_renderer->xAxis()->coordToPixel(m->x1) -
+                                           m_renderer->xAxis()->coordToPixel(m->x0)) / std::max(1, m->nx - 1);
+                const double gy = std::abs(m_renderer->yAxis()->coordToPixel(m->y1) -
+                                           m_renderer->yAxis()->coordToPixel(m->y0)) / std::max(1, m->ny - 1);
                 const int radius = std::clamp(int(std::ceil(10.0 / std::max(1e-9, std::min(gx, gy)))), 1, 50);
                 if (auto s = snapToPeak(*m, p.x, p.y, radius)) p = *s;
             }
@@ -268,8 +307,12 @@ void InteractionController::mousePress(QMouseEvent* e)
 void InteractionController::mouseMove(QMouseEvent* e)
 {
     const QPointF px = e->position();
+    {
+        const int t = targetAt(px);
+        PlotRenderer* r = (m_drag == Drag::None && t >= 0) ? m_targets[t].first : m_renderer;
+        emit cursorMoved(r->pixelToData(px), r->isInsidePlotArea(px));
+    }
     const QPointF data = m_renderer->pixelToData(px);
-    emit cursorMoved(data, m_renderer->isInsidePlotArea(px));
 
     if (m_drag == Drag::None) {
         updateHoverCursor(px);
@@ -283,10 +326,10 @@ void InteractionController::mouseMove(QMouseEvent* e)
     case Drag::Pan: {
         // Shift by the pixel delta expressed in the *press-time* view, so the
         // data point under the cursor stays under the cursor.
-        QCPAxis* xa = m_plot->xAxis;
-        QCPAxis* ya = m_plot->yAxis;
+        QCPAxis* xa = m_renderer->xAxis();
+        QCPAxis* ya = m_renderer->yAxis();
         const ViewRange v = m_pressView;
-        const QRect ar = m_plot->axisRect()->rect();
+        const QRect ar = m_renderer->axisRect()->rect();
         const double dxPx = px.x() - m_pressPx.x();
         const double dyPx = px.y() - m_pressPx.y();
         ViewRange nv = v;
@@ -305,7 +348,7 @@ void InteractionController::mouseMove(QMouseEvent* e)
     }
     case Drag::RubberBand: {
         QRect r = QRect(m_pressPx, px.toPoint()).normalized();
-        const QRect ar = m_plot->axisRect()->rect();
+        const QRect ar = m_renderer->axisRect()->rect();
         if (m_zoomAxes == ZoomAxes::XOnly) r.setTop(ar.top()), r.setBottom(ar.bottom());
         if (m_zoomAxes == ZoomAxes::YOnly) r.setLeft(ar.left()), r.setRight(ar.right());
         m_rubberBand->setGeometry(r.intersected(ar));
@@ -443,7 +486,8 @@ void InteractionController::mouseDoubleClick(QMouseEvent* e)
 void InteractionController::wheel(QWheelEvent* e)
 {
     const QPointF px = e->position();
-    if (!m_renderer->isInsidePlotArea(px) && !m_plot->axisRect()->outerRect().contains(px.toPoint()))
+    if (const int t = targetAt(px); t >= 0) setActiveTarget(t);
+    if (!m_renderer->isInsidePlotArea(px) && !m_renderer->axisRect()->outerRect().contains(px.toPoint()))
         return;
     // Some platforms turn Alt+wheel into a horizontal wheel; accept both.
     const int delta = e->angleDelta().y() != 0 ? e->angleDelta().y() : e->angleDelta().x();
@@ -461,12 +505,12 @@ void InteractionController::wheel(QWheelEvent* e)
     if (e->modifiers() & Qt::ControlModifier) axes = ZoomAxes::XOnly;
     if (e->modifiers() & Qt::ShiftModifier) axes = ZoomAxes::YOnly;
     // Wheel over an axis zooms only that axis.
-    const QRect ar = m_plot->axisRect()->rect();
+    const QRect ar = m_renderer->axisRect()->rect();
     if (px.y() > ar.bottom()) axes = ZoomAxes::XOnly;
     else if (px.x() < ar.left()) axes = ZoomAxes::YOnly;
 
-    if (axes != ZoomAxes::YOnly) m_plot->xAxis->scaleRange(factor, m_plot->xAxis->pixelToCoord(px.x()));
-    if (axes != ZoomAxes::XOnly) m_plot->yAxis->scaleRange(factor, m_plot->yAxis->pixelToCoord(px.y()));
+    if (axes != ZoomAxes::YOnly) m_renderer->xAxis()->scaleRange(factor, m_renderer->xAxis()->pixelToCoord(px.x()));
+    if (axes != ZoomAxes::XOnly) m_renderer->yAxis()->scaleRange(factor, m_renderer->yAxis()->pixelToCoord(px.y()));
     m_renderer->replot();
 }
 
@@ -516,18 +560,21 @@ bool InteractionController::key(QKeyEvent* e)
 
 void InteractionController::updateHoverCursor(const QPointF& px)
 {
+    const int t = targetAt(px);
+    PlotRenderer* r = t >= 0 ? m_targets[t].first : m_renderer;
+    const PlotModel* hoverModel = t >= 0 ? m_targets[t].second->model() : m_editor->model();
     if (m_mode == InteractionMode::AddVMarker || m_mode == InteractionMode::AddHMarker ||
         m_mode == InteractionMode::AddAnnotation) {
         m_plot->setCursor(Qt::CrossCursor);
         return;
     }
-    if (m_mode == InteractionMode::AddPeak && !m_renderer->hitTestObject(px).isValid()) {
+    if (m_mode == InteractionMode::AddPeak && !r->hitTestObject(px).isValid()) {
         m_plot->setCursor(Qt::CrossCursor);
         return;
     }
-    const ObjectRef hit = m_renderer->hitTestObject(px);
+    const ObjectRef hit = r->hitTestObject(px);
     if (hit.kind == ObjectKind::Marker) {
-        const Marker* m = m_editor->model()->marker(hit.id);
+        const Marker* m = hoverModel->marker(hit.id);
         m_plot->setCursor(m && m->orientation == Orientation::Vertical ? Qt::SizeHorCursor
                                                                          : Qt::SizeVerCursor);
         return;
@@ -536,7 +583,7 @@ void InteractionController::updateHoverCursor(const QPointF& px)
         m_plot->setCursor(Qt::SizeAllCursor);
         return;
     }
-    const RegionHit rh = m_renderer->hitTestRegion(px);
+    const RegionHit rh = r->hitTestRegion(px);
     if (rh == RegionHit::MinEdge || rh == RegionHit::MaxEdge) {
         m_plot->setCursor(Qt::SplitHCursor);
         return;

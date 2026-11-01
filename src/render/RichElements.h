@@ -57,6 +57,10 @@ protected:
     void draw(QCPPainter* painter) override;
 
 private:
+    // True when left, title and right labels do not fit side by side above
+    // the frame; the right label then goes on a second line.
+    bool stacked() const;
+
     QCPAxisRect* m_axisRect;
     RichTextBlock m_title, m_left, m_right;
     QColor m_titleColor, m_sideColor;

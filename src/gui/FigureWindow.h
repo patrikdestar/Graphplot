@@ -12,13 +12,19 @@
 
 #include "interaction/InteractionController.h"
 
+#include <QList>
 #include <QMainWindow>
+#include <vector>
 
 class QCustomPlot;
 class QLabel;
 class QActionGroup;
 class QComboBox;
 class QDockWidget;
+class QUndoStack;
+class QCPLayoutGrid;
+class QCPMarginGroup;
+class QCPAxisRect;
 
 namespace gp {
 
@@ -28,17 +34,46 @@ class PlotRenderer;
 class PropertiesPanel;
 class PeakTable;
 
+// Layout of a multi-panel figure (matplotlib's subplots).
+struct GridSpec {
+    int rows = 1;
+    int cols = 1;
+    QList<double> heightRatios;  // one per row (empty = equal)
+    QList<double> widthRatios;   // one per column
+    int hspace = -1;             // px between rows (-1 = default; 0 = frames touch)
+    int wspace = -1;
+    bool sharex = false;         // linked x ranges; only the bottom row shows x tick labels
+    bool sharey = false;
+};
+
 class FigureWindow : public QMainWindow {
     Q_OBJECT
 public:
     explicit FigureWindow(QWidget* parent = nullptr);
     ~FigureWindow() override;
 
+    // The *current* panel (the one last clicked, or selected via setCurrentAxes).
     PlotModel* model() const { return m_model; }
     PlotEditor* editor() const { return m_editor; }
     PlotRenderer* renderer() const { return m_renderer; }
     InteractionController* controller() const { return m_controller; }
     QCustomPlot* plot() const { return m_plot; }
+
+    // ---- panels (axes) ---------------------------------------------------
+    struct Axes {
+        PlotModel* model;
+        PlotEditor* editor;
+        PlotRenderer* renderer;
+    };
+    int axesCount() const { return int(m_axes.size()); }
+    const Axes& axes(int i) const { return m_axes[size_t(i)]; }
+    int currentAxes() const;
+    void setCurrentAxes(int index);
+    // Arranges the figure as rows x cols panels. Existing panels keep their
+    // content (panel 0 stays top-left); missing ones are created.
+    void setGrid(const GridSpec& spec);
+    const GridSpec& gridSpec() const { return m_gridSpec; }
+    QUndoStack* undoStack() const { return m_stack; }
 
     bool openDataFile(const QString& fileName, QString* error = nullptr);
     bool openMatrixFile(const QString& fileName, QString* error = nullptr);
@@ -53,12 +88,16 @@ public:
 
 signals:
     void closed();
+    void currentAxesChanged(int index);
 
 protected:
     void closeEvent(QCloseEvent* e) override;
 
 private:
     void buildActions();
+    void wireAxes(const Axes& ax);
+    PlotRenderer* axesRenderer(int i) const;
+    QCPAxisRect* axesRect(int i) const;
     void showContextMenu(ObjectRef ref, QPoint globalPos, QPointF dataPos);
     void onOpen();
     void onOpenMatrix();
@@ -72,6 +111,12 @@ public:
 
 private:
 
+    QUndoStack* m_stack = nullptr;
+    std::vector<Axes> m_axes;
+    QCPLayoutGrid* m_grid = nullptr;
+    QList<QCPMarginGroup*> m_marginGroups;
+    QList<QMetaObject::Connection> m_linkConnections;
+    GridSpec m_gridSpec;
     PlotModel* m_model;
     PlotEditor* m_editor;
     QCustomPlot* m_plot;

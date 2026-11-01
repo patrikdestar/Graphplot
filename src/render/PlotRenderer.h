@@ -22,6 +22,10 @@ class QCPLayer;
 class QCPTextElement;
 class QCPColorMap;
 class QCPErrorBars;
+class QCPAxisRect;
+class QCPAxis;
+class QCPLegend;
+class QCPAbstractItem;
 
 namespace gp {
 
@@ -41,10 +45,19 @@ enum class RegionHit { None, MinEdge, MaxEdge, Inside };
 class PlotRenderer : public QObject {
     Q_OBJECT
 public:
+    // Renders into the plot's default axis rect.
     PlotRenderer(PlotModel* model, QCustomPlot* plot, QObject* parent = nullptr);
+    // Renders into `rect` (multi-panel figures). The primary renderer also
+    // owns figure-level elements: header row, padding, background.
+    PlotRenderer(PlotModel* model, QCustomPlot* plot, QCPAxisRect* rect, bool primary,
+                 QObject* parent = nullptr);
     ~PlotRenderer() override;
 
     QCustomPlot* plot() const { return m_plot; }
+    QCPAxisRect* axisRect() const { return m_rect; }
+    QCPAxis* xAxis() const { return m_x; }
+    QCPAxis* yAxis() const { return m_y; }
+    bool isPrimary() const { return m_primary; }
     PlotModel* model() const { return m_model; }
 
     // ---- view ---------------------------------------------------------
@@ -110,6 +123,7 @@ private:
     };
 
     void setupAppearance();
+    void bindItem(QCPAbstractItem* item);
     void rebuildAll();
 
     void onDatasetAdded(ObjectId id);
@@ -143,6 +157,13 @@ private:
 
     PlotModel* m_model;
     QCustomPlot* m_plot;
+    QCPAxisRect* m_rect;
+    bool m_primary;
+    QCPAxis* m_x = nullptr;
+    QCPAxis* m_y = nullptr;
+    QCPAxis* m_x2 = nullptr;
+    QCPAxis* m_y2 = nullptr;
+    QCPLegend* m_legend = nullptr;
     QCPLayer* m_imageLayer = nullptr;
     QCPLayer* m_regionLayer = nullptr;
     QCPLayer* m_objectLayer = nullptr;

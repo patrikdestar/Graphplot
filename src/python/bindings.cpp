@@ -159,7 +159,8 @@ public:
     // Callbacks ------------------------------------------------------------------------
     // Events are delivered once an edit is complete (not on every intermediate
     // mouse-move during a drag), coalesced per event loop iteration.
-    void connectCallbacks();
+    void connectCallbacks();  // also picks up panels created later
+    void connectAxes(int ax);
     void addCallback(const std::string& event, py::function fn)
     {
         if (event != "region_changed" && event != "marker_changed" && event != "levels_changed" &&
@@ -182,9 +183,11 @@ private:
 
     QPointer<FigureWindow> m_w;
     std::vector<std::pair<std::string, py::function>> m_callbacks;
-    bool m_regionDirty = false;
-    QSet<ObjectId> m_dirtyMarkers;
-    QSet<ObjectId> m_dirtyMatrices;
+    QSet<int> m_dirtyRegions;
+    QSet<QPair<int, ObjectId>> m_dirtyMarkers;
+    QSet<QPair<int, ObjectId>> m_dirtyMatrices;
+    int m_connectedAxes = 0;
+    bool m_baseConnected = false;
     bool m_flushScheduled = false;
 };
 
@@ -192,14 +195,25 @@ using FigurePtr = std::shared_ptr<Figure>;
 
 // Handle base: (figure, id)
 struct Handle {
+    // Remembers the panel (axes) that was current when the object was created.
+    Handle(FigurePtr f, ObjectId i) : fig(std::move(f)), id(i), ax(fig->w()->currentAxes()) {}
+    Handle(FigurePtr f, ObjectId i, int a) : fig(std::move(f)), id(i), ax(a) {}
     FigurePtr fig;
     ObjectId id;
+    int ax;
+    PlotModel* model() const
+    {
+        FigureWindow* w = fig->w();
+        if (ax < 0 || ax >= w->axesCount()) throw py::key_error("the panel no longer exists");
+        return w->axes(ax).model;
+    }
+    PlotEditor* editor() const { return fig->w()->axes(ax).editor; }
 };
 
 struct Line : Handle {
     const Dataset& get() const
     {
-        const Dataset* d = fig->model()->dataset(id);
+        const Dataset* d = model()->dataset(id);
         if (!d) throw py::key_error("this dataset no longer exists");
         return *d;
     }
@@ -210,14 +224,14 @@ struct Line : Handle {
             QString name = d.name;
             DatasetStyle s = d.style;
             f(name, s);
-            fig->editor()->setDatasetAppearance(id, name, s);
+            editor()->setDatasetAppearance(id, name, s);
         });
     }
 };
 struct Contour : Handle {
     const Matrix& get() const
     {
-        const Matrix* m = fig->model()->matrix(id);
+        const Matrix* m = model()->matrix(id);
         if (!m) throw py::key_error("this 2D dataset no longer exists");
         return *m;
     }
@@ -228,14 +242,14 @@ struct Contour : Handle {
             QString name = m.name;
             ContourStyle s = m.style;
             f(name, s);
-            fig->editor()->setMatrixAppearance(id, name, s);
+            editor()->setMatrixAppearance(id, name, s);
         });
     }
 };
 struct MarkerH : Handle {
     Marker get() const
     {
-        const Marker* m = fig->model()->marker(id);
+        const Marker* m = model()->marker(id);
         if (!m) throw py::key_error("this marker no longer exists");
         return *m;
     }
@@ -244,14 +258,14 @@ struct MarkerH : Handle {
         inGui([&] {
             Marker m = get();
             f(m);
-            fig->editor()->updateMarker(m);
+            editor()->updateMarker(m);
         });
     }
 };
 struct PeakH : Handle {
     Peak get() const
     {
-        const Peak* p = fig->model()->peak(id);
+        const Peak* p = model()->peak(id);
         if (!p) throw py::key_error("this peak no longer exists");
         return *p;
     }
@@ -260,7 +274,7 @@ struct PeakH : Handle {
         inGui([&] {
             Peak p = get();
             f(p);
-            fig->editor()->updatePeak(p, std::nullopt, false, text);
+            editor()->updatePeak(p, std::nullopt, false, text);
         });
     }
 };
@@ -268,7 +282,7 @@ struct PeakH : Handle {
 struct AnnotationH : Handle {
     Annotation get() const
     {
-        const Annotation* a = fig->model()->annotation(id);
+        const Annotation* a = model()->annotation(id);
         if (!a) throw py::key_error("this annotation no longer exists");
         return *a;
     }
@@ -277,36 +291,46 @@ struct AnnotationH : Handle {
         inGui([&] {
             Annotation a = get();
             f(a);
-            fig->editor()->updateAnnotation(a);
+            editor()->updateAnnotation(a);
         });
     }
 };
 
+void Figure::connectAxes(int ax)
+{
+    FigureWindow* win = w();
+    PlotModel* m = win->axes(ax).model;
+    std::weak_ptr<Figure> weak = weak_from_this();
+    auto self = [weak]() { return weak.lock(); };
+    QObject::connect(m, &PlotModel::regionChanged, win, [self, ax] {
+        if (auto f = self()) {
+            f->m_dirtyRegions.insert(ax);
+            f->scheduleFlush();
+        }
+    });
+    QObject::connect(m, &PlotModel::markerChanged, win, [self, ax](ObjectId id) {
+        if (auto f = self()) {
+            f->m_dirtyMarkers.insert({ax, id});
+            f->scheduleFlush();
+        }
+    });
+    QObject::connect(m, &PlotModel::matrixAppearanceChanged, win, [self, ax](ObjectId id) {
+        if (auto f = self()) {
+            f->m_dirtyMatrices.insert({ax, id});
+            f->scheduleFlush();
+        }
+    });
+    m_connectedAxes = std::max(m_connectedAxes, ax + 1);
+}
+
 void Figure::connectCallbacks()
 {
     FigureWindow* win = w();
-    PlotModel* m = win->model();
     std::weak_ptr<Figure> weak = weak_from_this();
     auto self = [weak]() { return weak.lock(); };
-
-    QObject::connect(m, &PlotModel::regionChanged, win, [self] {
-        if (auto f = self()) {
-            f->m_regionDirty = true;
-            f->scheduleFlush();
-        }
-    });
-    QObject::connect(m, &PlotModel::markerChanged, win, [self](ObjectId id) {
-        if (auto f = self()) {
-            f->m_dirtyMarkers.insert(id);
-            f->scheduleFlush();
-        }
-    });
-    QObject::connect(m, &PlotModel::matrixAppearanceChanged, win, [self](ObjectId id) {
-        if (auto f = self()) {
-            f->m_dirtyMatrices.insert(id);
-            f->scheduleFlush();
-        }
-    });
+    for (int i = m_connectedAxes; i < win->axesCount(); ++i) connectAxes(i);
+    if (m_baseConnected) return;
+    m_baseConnected = true;
     // A drag ends with a command push (or a plain release): flush then.
     QObject::connect(win->editor()->undoStack(), &QUndoStack::indexChanged, win, [self] {
         if (auto f = self()) f->scheduleFlush();
@@ -340,25 +364,24 @@ void Figure::flush()
         return;
     }
     auto self = shared_from_this();
-    if (m_regionDirty) {
-        m_regionDirty = false;
+    FigureWindow* win = m_w;
+    for (int ax : std::exchange(m_dirtyRegions, {})) {
+        if (ax >= win->axesCount()) continue;
         ++regionVersion;
-        const Region r = model()->region();
+        const Region r = win->axes(ax).model->region();
         fire("region_changed", [r]() -> py::tuple {
             if (r.active) return py::make_tuple(r.xmin, r.xmax);
             return py::make_tuple(py::none(), py::none());
         });
     }
-    const QSet<ObjectId> markers = std::exchange(m_dirtyMarkers, {});
-    for (ObjectId id : markers) {
-        if (!model()->marker(id)) continue;
+    for (const auto& [ax, id] : std::exchange(m_dirtyMarkers, {})) {
+        if (ax >= win->axesCount() || !win->axes(ax).model->marker(id)) continue;
         ++markerVersion;
-        fire("marker_changed", [self, id]() -> py::tuple { return py::make_tuple(MarkerH{{self, id}}); });
+        fire("marker_changed", [self, id, ax]() -> py::tuple { return py::make_tuple(MarkerH{{self, id, ax}}); });
     }
-    const QSet<ObjectId> mats = std::exchange(m_dirtyMatrices, {});
-    for (ObjectId id : mats) {
-        if (!model()->matrix(id)) continue;
-        fire("levels_changed", [self, id]() -> py::tuple { return py::make_tuple(Contour{{self, id}}); });
+    for (const auto& [ax, id] : std::exchange(m_dirtyMatrices, {})) {
+        if (ax >= win->axesCount() || !win->axes(ax).model->matrix(id)) continue;
+        fire("levels_changed", [self, id, ax]() -> py::tuple { return py::make_tuple(Contour{{self, id, ax}}); });
     }
 }
 
@@ -1123,6 +1146,32 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
     fig.def_property_readonly("is_open", [](FigurePtr self) {
         return self->alive() && inGui([&] { return self->w()->isVisible(); });
     });
+    fig.def("_axes_count", [](FigurePtr self) { return inGui([&] { return self->w()->axesCount(); }); });
+    fig.def("_current", [](FigurePtr self) { return inGui([&] { return self->w()->currentAxes(); }); });
+    fig.def("_set_current", [](FigurePtr self, int i) {
+        inGui([&] {
+            if (i < 0 || i >= self->w()->axesCount()) throw py::index_error("no such panel");
+            self->w()->setCurrentAxes(i);
+        });
+    });
+    fig.def(
+        "_subplots",
+        [](FigurePtr self, int rows, int cols, bool sharex, bool sharey, std::vector<double> hr,
+           std::vector<double> wr, int hspace, int wspace) {
+            inGui([&] {
+                GridSpec g;
+                g.rows = rows;
+                g.cols = cols;
+                g.sharex = sharex;
+                g.sharey = sharey;
+                g.heightRatios = QList<double>(hr.begin(), hr.end());
+                g.widthRatios = QList<double>(wr.begin(), wr.end());
+                g.hspace = hspace;
+                g.wspace = wspace;
+                self->w()->setGrid(g);
+                self->connectCallbacks();
+            });
+        });
     fig.def("_take_color", [](FigurePtr self) {
         return colorName(inGui([&] { return self->model()->takeNextDatasetColor(); }));
     });
@@ -1206,7 +1255,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
                 if (xv.size() != yv.size()) throw py::value_error("x and y must have the same length");
                 inGui([&] {
                     h.get();
-                    h.fig->editor()->setDatasetData(h.id, xv, yv, undoable);
+                    h.editor()->setDatasetData(h.id, xv, yv, undoable);
                 });
             },
             py::arg("x"), py::arg("y"), py::kw_only(), py::arg("undoable") = false,
@@ -1217,7 +1266,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
                 const qsizetype n = inGui([&] { return h.get().x.size(); });
                 auto [xl, xh] = toErrors(xerr, n, "xerr");
                 auto [yl, yh] = toErrors(yerr, n, "yerr");
-                inGui([&] { h.fig->model()->setDatasetErrors(h.id, xl, xh, yl, yh); });
+                inGui([&] { h.model()->setDatasetErrors(h.id, xl, xh, yl, yh); });
             },
             py::arg("xerr") = py::none(), py::arg("yerr") = py::none(),
             "Replace the error bars (None removes them).")
@@ -1252,13 +1301,13 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
                           }
                           h.setStyle([&](QString&, DatasetStyle& s) { s.fillColor = c; });
                       }, "Fill colour (None = no fill); True = translucent line colour")
-        .def("remove", [](Line& h) { inGui([&] { h.fig->editor()->removeDataset(h.id); }); })
+        .def("remove", [](Line& h) { inGui([&] { h.editor()->removeDataset(h.id); }); })
         .def_property_readonly("exists", [](Line& h) {
-            return h.fig->alive() && inGui([&] { return h.fig->model()->dataset(h.id) != nullptr; });
+            return h.fig->alive() && inGui([&] { return h.model()->dataset(h.id) != nullptr; });
         })
         .def("__repr__", [](Line& h) {
             return inGui([&]() -> std::string {
-                if (!h.fig->alive() || !h.fig->model()->dataset(h.id)) return "<Line (removed)>";
+                if (!h.fig->alive() || !h.model()->dataset(h.id)) return "<Line (removed)>";
                 const Dataset& d = h.get();
                 return "<Line '" + d.name.toStdString() + "' n=" + std::to_string(d.x.size()) + ">";
             });
@@ -1328,7 +1377,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         }, "All contour levels currently drawn, sorted ascending.")
         .def("scale_levels", [](Contour& h, double factor) {
             if (!(factor > 0)) throw py::value_error("factor must be > 0");
-            inGui([&] { h.get(); h.fig->editor()->scaleContourLevels({h.id}, factor); });
+            inGui([&] { h.get(); h.editor()->scaleContourLevels({h.id}, factor); });
         }, py::arg("factor"), "Multiply the base level (factor < 1 shows weaker features).")
         .def(
             "set_data",
@@ -1336,15 +1385,15 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
                 Matrix m = matrixFromNumpy(z, x, y);
                 inGui([&] {
                     h.get();
-                    h.fig->editor()->setMatrixData(h.id, m.nx, m.ny, m.z, m.x0, m.x1, m.y0, m.y1);
+                    h.editor()->setMatrixData(h.id, m.nx, m.ny, m.z, m.x0, m.x1, m.y0, m.y1);
                 });
             },
             py::arg("z"), py::arg("x") = py::none(), py::arg("y") = py::none(),
             "Replace the grid (keeps the contour settings).")
-        .def("remove", [](Contour& h) { inGui([&] { h.fig->editor()->removeMatrix(h.id); }); })
+        .def("remove", [](Contour& h) { inGui([&] { h.editor()->removeMatrix(h.id); }); })
         .def("__repr__", [](Contour& h) {
             return inGui([&]() -> std::string {
-                if (!h.fig->alive() || !h.fig->model()->matrix(h.id)) return "<Contour (removed)>";
+                if (!h.fig->alive() || !h.model()->matrix(h.id)) return "<Contour (removed)>";
                 const Matrix& m = h.get();
                 return "<Contour '" + m.name.toStdString() + "' " + std::to_string(m.nx) + "x" +
                        std::to_string(m.ny) + " base=" + QString::number(m.style.baseLevel, 'g', 4).toStdString() + ">";
@@ -1379,10 +1428,10 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         .def_property("width",
                       [](MarkerH& h) { return inGui([&] { return h.get().lineWidth; }); },
                       [](MarkerH& h, double v) { h.edit([&](Marker& m) { m.lineWidth = v; }); })
-        .def("remove", [](MarkerH& h) { inGui([&] { h.fig->editor()->removeMarker(h.id); }); })
+        .def("remove", [](MarkerH& h) { inGui([&] { h.editor()->removeMarker(h.id); }); })
         .def("__repr__", [](MarkerH& h) {
             return inGui([&]() -> std::string {
-                if (!h.fig->alive() || !h.fig->model()->marker(h.id)) return "<Marker (removed)>";
+                if (!h.fig->alive() || !h.model()->marker(h.id)) return "<Marker (removed)>";
                 const Marker m = h.get();
                 return "<Marker '" + m.label.toStdString() + "' " +
                        (m.orientation == Orientation::Vertical ? "x=" : "y=") +
@@ -1421,10 +1470,10 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
                       [](PeakH& h, std::pair<double, double> v) {
                           h.edit([&](Peak& p) { p.labelOffset = QPointF(v.first, v.second); }, "Move peak label");
                       }, "Label position relative to the peak, in pixels (x right, y down).")
-        .def("remove", [](PeakH& h) { inGui([&] { h.fig->editor()->removePeak(h.id); }); })
+        .def("remove", [](PeakH& h) { inGui([&] { h.editor()->removePeak(h.id); }); })
         .def("__repr__", [](PeakH& h) {
             return inGui([&]() -> std::string {
-                if (!h.fig->alive() || !h.fig->model()->peak(h.id)) return "<Peak (removed)>";
+                if (!h.fig->alive() || !h.model()->peak(h.id)) return "<Peak (removed)>";
                 const Peak p = h.get();
                 return "<Peak (" + QString::number(p.x, 'f', 4).toStdString() + ", " +
                        QString::number(p.y, 'f', 4).toStdString() + ")" +
@@ -1457,14 +1506,14 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
                       [](AnnotationH& h) {
                           return inGui([&] {
                               const double f = h.get().fontSize;
-                              return f > 0 ? f : h.fig->model()->style().annotationSize;
+                              return f > 0 ? f : h.model()->style().annotationSize;
                           });
                       },
                       [](AnnotationH& h, double v) { h.edit([&](Annotation& a) { a.fontSize = v; }); })
-        .def("remove", [](AnnotationH& h) { inGui([&] { h.fig->editor()->removeAnnotation(h.id); }); })
+        .def("remove", [](AnnotationH& h) { inGui([&] { h.editor()->removeAnnotation(h.id); }); })
         .def("__repr__", [](AnnotationH& h) {
             return inGui([&]() -> std::string {
-                if (!h.fig->alive() || !h.fig->model()->annotation(h.id)) return "<Annotation (removed)>";
+                if (!h.fig->alive() || !h.model()->annotation(h.id)) return "<Annotation (removed)>";
                 return "<Annotation '" + h.get().text.toStdString() + "'>";
             });
         });

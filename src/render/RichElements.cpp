@@ -74,9 +74,19 @@ void HeaderElement::setTexts(const QString& title, const QFont& titleFont, const
     m_sideColor = sideColor;
 }
 
+bool HeaderElement::stacked() const
+{
+    const double need = m_left.size().width() + m_right.size().width() + m_title.size().width() +
+                        (m_title.isEmpty() ? 16 : 40);
+    const int avail = m_axisRect->rect().width();
+    return avail > 0 && !m_right.isEmpty() && need > avail;
+}
+
 QSize HeaderElement::minimumOuterSizeHint() const
 {
-    const double h = std::max({m_title.size().height(), m_left.size().height(), m_right.size().height()});
+    double h = std::max({m_title.size().height(), m_left.size().height(), m_right.size().height()});
+    if (stacked())
+        h = std::max(m_title.size().height(), m_left.size().height()) + m_right.size().height() + 2;
     return QSize(int(std::ceil(m_title.size().width())) + mMargins.left() + mMargins.right(),
                  int(std::ceil(h)) + mMargins.top() + mMargins.bottom());
 }
@@ -92,16 +102,19 @@ void HeaderElement::draw(QCPPainter* painter)
     const double bottom = mRect.bottom();
     // Side labels sit on the frame (aligned to its left/right edges), the
     // title is centred over the frame.
+    const double leftLift = stacked() ? m_right.size().height() + 2 : 0;
     if (!m_left.isEmpty())
-        m_left.draw(painter, QPointF(ar.left(), bottom - m_left.size().height()), m_sideColor);
+        m_left.draw(painter, QPointF(ar.left(), bottom - leftLift - m_left.size().height()), m_sideColor);
     if (!m_right.isEmpty())
         m_right.draw(painter,
                      QPointF(ar.right() - m_right.size().width(), bottom - m_right.size().height()),
                      m_sideColor);
+    // When stacked, the left label and title move up one line.
+    const double lift = stacked() ? m_right.size().height() + 2 : 0;
     if (!m_title.isEmpty())
         m_title.draw(painter,
                      QPointF(ar.center().x() - m_title.size().width() / 2,
-                             bottom - m_title.size().height()),
+                             bottom - lift - m_title.size().height()),
                      m_titleColor);
 }
 

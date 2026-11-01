@@ -12,6 +12,8 @@
 #include <QObject>
 #include <QPoint>
 #include <QPointer>
+#include <utility>
+#include <vector>
 
 class QRubberBand;
 class QMouseEvent;
@@ -29,6 +31,16 @@ class InteractionController : public QObject {
     Q_OBJECT
 public:
     InteractionController(PlotRenderer* renderer, PlotEditor* editor, QObject* parent = nullptr);
+
+    // Multi-panel figures: every panel (axes) is a target; the one under the
+    // mouse becomes active on press / wheel. All editing goes to the active one.
+    void addTarget(PlotRenderer* renderer, PlotEditor* editor);
+    void removeTarget(PlotEditor* editor);
+    void setActiveTarget(int index);
+    int activeTarget() const;
+    int targetAt(const QPointF& px) const;
+    PlotRenderer* renderer() const { return m_renderer; }
+    PlotEditor* editor() const { return m_editor; }
 
     InteractionMode mode() const { return m_mode; }
     void setMode(InteractionMode mode);
@@ -55,6 +67,7 @@ signals:
     void modeChanged(gp::InteractionMode mode);
     void selectionChanged(gp::ObjectRef ref);
     void wheelAdjustsLevelsChanged(bool on);
+    void activeTargetChanged(int index);
     void cursorMoved(QPointF dataPos, bool insidePlot);
     // Emitted on double-click / "Edit…" context action for an object.
     void editRequested(gp::ObjectRef ref);
@@ -80,6 +93,7 @@ private:
     PlotEditor* m_editor;
     QCustomPlot* m_plot;
     QRubberBand* m_rubberBand = nullptr;
+    std::vector<std::pair<PlotRenderer*, PlotEditor*>> m_targets;
 
     InteractionMode m_mode = InteractionMode::Zoom;
     InteractionMode m_navMode = InteractionMode::Zoom;  // restored after one-shot modes

@@ -100,8 +100,20 @@ void padRange(double& lo, double& hi, double fraction)
 }  // namespace
 
 PlotRenderer::PlotRenderer(PlotModel* model, QCustomPlot* plot, QObject* parent)
-    : QObject(parent), m_model(model), m_plot(plot)
+    : PlotRenderer(model, plot, plot->axisRect(), true, parent)
 {
+}
+
+PlotRenderer::PlotRenderer(PlotModel* model, QCustomPlot* plot, QCPAxisRect* rect, bool primary,
+                           QObject* parent)
+    : QObject(parent), m_model(model), m_plot(plot), m_rect(rect), m_primary(primary)
+{
+    m_rect->setupFullAxesBox(true);  // closed frame: creates top/right axes if needed
+    m_x = m_rect->axis(QCPAxis::atBottom);
+    m_y = m_rect->axis(QCPAxis::atLeft);
+    m_x2 = m_rect->axis(QCPAxis::atTop);
+    m_y2 = m_rect->axis(QCPAxis::atRight);
+    m_legend = (rect == plot->axisRect() && plot->legend) ? plot->legend : new QCPLegend;
     setupAppearance();
 
     connect(m_model, &PlotModel::datasetAdded, this, &PlotRenderer::onDatasetAdded);
@@ -157,15 +169,25 @@ PlotRenderer::PlotRenderer(PlotModel* model, QCustomPlot* plot, QObject* parent)
         replot();
     });
 
-    connect(m_plot->xAxis, qOverload<const QCPRange&>(&QCPAxis::rangeChanged), this,
+    connect(m_x, qOverload<const QCPRange&>(&QCPAxis::rangeChanged), this,
             [this] { emit viewChanged(); });
-    connect(m_plot->yAxis, qOverload<const QCPRange&>(&QCPAxis::rangeChanged), this,
+    connect(m_y, qOverload<const QCPRange&>(&QCPAxis::rangeChanged), this,
             [this] { emit viewChanged(); });
 
     rebuildAll();
 }
 
 PlotRenderer::~PlotRenderer() = default;
+
+void PlotRenderer::bindItem(QCPAbstractItem* item)
+{
+    // Items default to the plot's first axes; tie them to this panel.
+    for (QCPItemPosition* pos : item->positions()) {
+        pos->setAxes(m_x, m_y);
+        pos->setAxisRect(m_rect);
+    }
+    item->setClipAxisRect(m_rect);
+}
 
 void PlotRenderer::setupAppearance()
 {
@@ -175,23 +197,30 @@ void PlotRenderer::setupAppearance()
     p->setNotAntialiasedElements(QCP::aeGrid);  // crisp 1-px grid lines
     p->setPlottingHints(QCP::phCacheLabels | QCP::phImmediateRefresh);
     p->setInteractions({});  // all interaction is handled by InteractionController
-    p->axisRect()->setupFullAxesBox(true);  // closed frame
-    for (QCPAxis* axis : p->axisRect()->axes()) {
+    p->setAutoAddPlottableToLegend(false);  // legends are built by syncLegend() per panel
+    for (QCPAxis* axis : m_rect->axes()) {
         auto ticker = QSharedPointer<StyledTicker>::create();
         axis->setTicker(ticker);
         axis->grid()->setZeroLinePen(Qt::NoPen);
     }
-    p->xAxis2->grid()->setVisible(false);
-    p->yAxis2->grid()->setVisible(false);
-    p->legend->setVisible(true);
-    p->legend->setIconSize(24, 10);
-    p->legend->setSelectableParts(QCPLegend::spNone);
+    m_x2->grid()->setVisible(false);
+    m_y2->grid()->setVisible(false);
+    if (m_legend->parent() == nullptr || !m_rect->insetLayout()->elements(false).contains(m_legend)) {
+        // QCustomPlot's default legend lives in the default axis rect; other
+        // panels get their own legend in their inset layout.
+        m_rect->insetLayout()->addElement(m_legend, Qt::AlignTop | Qt::AlignRight);
+        m_legend->setLayer("legend");
+    }
+    m_legend->setVisible(true);
+    m_legend->setIconSize(24, 10);
+    m_legend->setSelectableParts(QCPLegend::spNone);
 
     // Rich-text axis labels (drawn on the "axes" layer) and header row.
-    m_axisLabels = new RichAxisLabels(p, p->axisRect());
+    m_axisLabels = new RichAxisLabels(p, m_rect);
     m_axisLabels->setLayer("axes");
-    m_header = new HeaderElement(p, p->axisRect());
+    m_header = new HeaderElement(p, m_rect);
     m_insideLabel = new RichTextItem(p);
+    bindItem(m_insideLabel);
     m_insideLabel->setLayer("legend");
     m_insideLabel->setSelectable(false);
     m_insideLabel->position->setType(QCPItemPosition::ptAxisRectRatio);
@@ -200,10 +229,13 @@ void PlotRenderer::setupAppearance()
     // annotations above them. Both are buffered so that dragging an object
     // only repaints that layer, independent of how much data is plotted.
     // Colour-map images sit directly above the grid, below everything else.
-    p->addLayer("images", p->layer("grid"), QCustomPlot::limAbove);
+    // Layers are shared by all axes of a figure: create them only once.
+    if (!p->layer("images")) {
+        p->addLayer("images", p->layer("grid"), QCustomPlot::limAbove);
+        p->addLayer("regions", p->layer("images"), QCustomPlot::limAbove);
+        p->addLayer("objects", p->layer("main"), QCustomPlot::limAbove);
+    }
     m_imageLayer = p->layer("images");
-    p->addLayer("regions", m_imageLayer, QCustomPlot::limAbove);
-    p->addLayer("objects", p->layer("main"), QCustomPlot::limAbove);
     m_regionLayer = p->layer("regions");
     m_objectLayer = p->layer("objects");
     m_regionLayer->setMode(QCPLayer::lmBuffered);
@@ -212,6 +244,7 @@ void PlotRenderer::setupAppearance()
     // Region visual (hidden until a region is selected).
     auto makeRegionLine = [&]() {
         auto* l = new QCPItemStraightLine(p);
+        bindItem(l);
         l->setLayer(m_regionLayer);
         QPen pen(kRegionEdge, 1);
         pen.setCosmetic(true);
@@ -223,6 +256,7 @@ void PlotRenderer::setupAppearance()
         return l;
     };
     m_region.rect = new QCPItemRect(p);
+    bindItem(m_region.rect);
     m_region.rect->setLayer(m_regionLayer);
     m_region.rect->setPen(Qt::NoPen);
     m_region.rect->setBrush(kRegionFill);
@@ -230,11 +264,12 @@ void PlotRenderer::setupAppearance()
     m_region.rect->topLeft->setTypeY(QCPItemPosition::ptAxisRectRatio);
     m_region.rect->bottomRight->setTypeY(QCPItemPosition::ptAxisRectRatio);
     m_region.rect->setVisible(false);
-    m_peaks = new PeakOverlay(p, p->xAxis, p->yAxis, m_model);
+    m_peaks = new PeakOverlay(p, m_x, m_y, m_model);
     m_peaks->setLayer(m_objectLayer);
 
     // Diagonal y = x (plot coordinates on both axes), below the curves.
     m_diagonal = new QCPItemStraightLine(p);
+    bindItem(m_diagonal);
     m_diagonal->setLayer(m_regionLayer);
     m_diagonal->setSelectable(false);
     QPen diagPen(QColor(0x52, 0x51, 0x4e), 1, Qt::DashLine);
@@ -247,6 +282,7 @@ void PlotRenderer::setupAppearance()
     m_region.minEdge = makeRegionLine();
     m_region.maxEdge = makeRegionLine();
     m_region.label = new QCPItemText(p);
+    bindItem(m_region.label);
     m_region.label->setLayer(m_objectLayer);
     m_region.label->position->setTypeY(QCPItemPosition::ptAxisRectRatio);
     m_region.label->setPositionAlignment(Qt::AlignBottom | Qt::AlignHCenter);
@@ -274,18 +310,18 @@ void PlotRenderer::rebuildAll()
 
 ViewRange PlotRenderer::viewRange() const
 {
-    const QCPRange x = m_plot->xAxis->range();
-    const QCPRange y = m_plot->yAxis->range();
+    const QCPRange x = m_x->range();
+    const QCPRange y = m_y->range();
     return {x.lower, x.upper, y.lower, y.upper};
 }
 
 void PlotRenderer::setViewRange(const ViewRange& r)
 {
-    m_plot->xAxis->setRange(r.xmin, r.xmax);
-    m_plot->yAxis->setRange(r.ymin, r.ymax);
+    m_x->setRange(r.xmin, r.xmax);
+    m_y->setRange(r.ymin, r.ymax);
     // keep the mirrored frame axes in sync (tick positions)
-    m_plot->xAxis2->setRange(m_plot->xAxis->range());
-    m_plot->yAxis2->setRange(m_plot->yAxis->range());
+    m_x2->setRange(m_x->range());
+    m_y2->setRange(m_y->range());
     replot();
 }
 
@@ -333,17 +369,17 @@ void PlotRenderer::maybeCaptureHome()
 
 QPointF PlotRenderer::pixelToData(const QPointF& px) const
 {
-    return {m_plot->xAxis->pixelToCoord(px.x()), m_plot->yAxis->pixelToCoord(px.y())};
+    return {m_x->pixelToCoord(px.x()), m_y->pixelToCoord(px.y())};
 }
 
 QPointF PlotRenderer::dataToPixel(const QPointF& d) const
 {
-    return {m_plot->xAxis->coordToPixel(d.x()), m_plot->yAxis->coordToPixel(d.y())};
+    return {m_x->coordToPixel(d.x()), m_y->coordToPixel(d.y())};
 }
 
 bool PlotRenderer::isInsidePlotArea(const QPointF& px) const
 {
-    return m_plot->axisRect()->rect().contains(px.toPoint());
+    return m_rect->rect().contains(px.toPoint());
 }
 
 // ---- hit testing -------------------------------------------------------------
@@ -375,9 +411,9 @@ ObjectRef PlotRenderer::hitTestObject(const QPointF& px, double tol) const
         if (!v.line) continue;
         double d;
         if (it->orientation == Orientation::Vertical)
-            d = std::abs(px.x() - m_plot->xAxis->coordToPixel(it->position));
+            d = std::abs(px.x() - m_x->coordToPixel(it->position));
         else
-            d = std::abs(px.y() - m_plot->yAxis->coordToPixel(it->position));
+            d = std::abs(px.y() - m_y->coordToPixel(it->position));
         if (v.label && v.label->visible()) {
             const double dl = v.label->selectTest(px, false);
             if (dl >= 0 && dl <= textTol) d = std::min(d, std::min(dl, tol));
@@ -394,8 +430,8 @@ RegionHit PlotRenderer::hitTestRegion(const QPointF& px, double tol) const
 {
     const Region& r = m_model->region();
     if (!r.active || !isInsidePlotArea(px)) return RegionHit::None;
-    const double p0 = m_plot->xAxis->coordToPixel(r.xmin);
-    const double p1 = m_plot->xAxis->coordToPixel(r.xmax);
+    const double p0 = m_x->coordToPixel(r.xmin);
+    const double p1 = m_x->coordToPixel(r.xmax);
     const double lo = std::min(p0, p1), hi = std::max(p0, p1);
     // Edge nearest to the cursor wins (matters when the region is narrow).
     const double d0 = std::abs(px.x() - p0), d1 = std::abs(px.x() - p1);
@@ -480,8 +516,8 @@ void PlotRenderer::applyDatasetData(ObjectId id)
         p = nullptr;
     }
     if (!p) {
-        if (needGraph) p = new QCPGraph(m_plot->xAxis, m_plot->yAxis);
-        else p = new QCPCurve(m_plot->xAxis, m_plot->yAxis);
+        if (needGraph) p = new QCPGraph(m_x, m_y);
+        else p = new QCPCurve(m_x, m_y);
         p->setSelectable(QCP::stNone);
         m_plottables.insert(id, p);
         applyDatasetAppearance(id);
@@ -514,7 +550,7 @@ void PlotRenderer::updateErrorBars(ObjectId id)
             return;
         }
         if (!bars) {
-            bars = new QCPErrorBars(m_plot->xAxis, m_plot->yAxis);
+            bars = new QCPErrorBars(m_x, m_y);
             bars->setSelectable(QCP::stNone);
             bars->removeFromLegend();
         }
@@ -577,19 +613,19 @@ void PlotRenderer::syncLegend()
 {
     // Legend order follows dataset order in the model; hidden or unnamed
     // datasets are omitted.
-    m_plot->legend->clearItems();
+    m_legend->clearItems();
     for (const auto& d : m_model->datasets()) {
         QCPAbstractPlottable* p = m_plottables.value(d.id);
         if (p && d.style.visible && d.style.inLegend && !d.name.isEmpty())
-            m_plot->legend->addItem(new RichLegendItem(m_plot->legend, p, m_model->style().mathText));
+            m_legend->addItem(new RichLegendItem(m_legend, p, m_model->style().mathText));
     }
     for (const auto& m : m_model->matrices()) {
         const MatrixVisual v = m_matrices.value(m.id);
         if (v.contour && m.style.visible && !m.name.isEmpty())
-            m_plot->legend->addItem(new RichLegendItem(m_plot->legend, v.contour, m_model->style().mathText));
+            m_legend->addItem(new RichLegendItem(m_legend, v.contour, m_model->style().mathText));
     }
-    m_plot->legend->setVisible(m_model->axesInfo().legendVisible &&
-                               m_plot->legend->itemCount() > 0);
+    m_legend->setVisible(m_model->axesInfo().legendVisible &&
+                               m_legend->itemCount() > 0);
 }
 
 // ---- 2D data ---------------------------------------------------------------------------
@@ -625,7 +661,7 @@ void PlotRenderer::onMatrixAdded(ObjectId id)
 {
     if (!m_model->matrix(id) || m_matrices.contains(id)) return;
     MatrixVisual v;
-    v.contour = new ContourPlottable(m_plot->xAxis, m_plot->yAxis);
+    v.contour = new ContourPlottable(m_x, m_y);
     m_matrices.insert(id, v);
     applyMatrixData(id);
     applyMatrixAppearance(id);
@@ -675,7 +711,7 @@ void PlotRenderer::updateMatrixImage(ObjectId id)
         return;
     }
     if (!v.image) {
-        v.image = new QCPColorMap(m_plot->xAxis, m_plot->yAxis);
+        v.image = new QCPColorMap(m_x, m_y);
         v.image->setLayer(m_imageLayer);
         v.image->setSelectable(QCP::stNone);
         v.image->setInterpolate(true);
@@ -715,9 +751,11 @@ void PlotRenderer::onMarkerAdded(ObjectId id)
     if (m_markers.contains(id)) return;
     MarkerVisual v;
     v.line = new QCPItemStraightLine(m_plot);
+    bindItem(v.line);
     v.line->setLayer(m_objectLayer);
     v.line->setSelectable(false);
     v.label = new RichTextItem(m_plot);
+    bindItem(v.label);
     v.label->setLayer(m_objectLayer);
     v.label->setSelectable(false);
     v.label->setPadding(QMargins(4, 2, 4, 2));
@@ -794,6 +832,7 @@ void PlotRenderer::onAnnotationAdded(ObjectId id)
 {
     if (m_annotations.contains(id)) return;
     auto* t = new RichTextItem(m_plot);
+    bindItem(t);
     t->setLayer(m_objectLayer);
     t->setSelectable(false);
     t->position->setType(QCPItemPosition::ptPlotCoords);
@@ -870,11 +909,13 @@ void PlotRenderer::applyStyle()
 {
     const Style& st = m_model->style();
     QCustomPlot* p = m_plot;
-    p->setFont(font(st.fontSize));
-    p->setBackground(st.figureFace);
-    p->axisRect()->setBackground(st.axesFace);
-    const int pad = int(std::lround(st.figurePadding));
-    p->plotLayout()->setMargins(QMargins(pad, pad, pad, pad));
+    if (m_primary) {  // figure-level settings come from the first panel
+        p->setFont(font(st.fontSize));
+        p->setBackground(st.figureFace);
+        const int pad = int(std::lround(st.figurePadding));
+        p->plotLayout()->setMargins(QMargins(pad, pad, pad, pad));
+    }
+    m_rect->setBackground(st.axesFace);
 
     auto cosmetic = [](const QColor& c, double w, Qt::PenStyle style = Qt::SolidLine) {
         QPen pen(c, w, style, Qt::FlatCap);
@@ -882,10 +923,10 @@ void PlotRenderer::applyStyle()
         return pen;
     };
     const QString fmt = st.formatter == "sci" ? "gbc" : st.formatter == "plain" ? "g" : "gbd";
-    for (QCPAxis* axis : p->axisRect()->axes()) {
+    for (QCPAxis* axis : m_rect->axes()) {
         const bool isX = axis->orientation() == Qt::Horizontal;
         const TickStyle& ts = isX ? st.xtick : st.ytick;
-        const bool mirror = axis == p->xAxis2 || axis == p->yAxis2;
+        const bool mirror = axis == m_x2 || axis == m_y2;
         axis->setBasePen(cosmetic(st.axesEdge, st.axesLineWidth));
         axis->setTickPen(cosmetic(st.axesEdge, ts.width));
         axis->setSubTickPen(cosmetic(st.axesEdge, ts.width));
@@ -914,17 +955,17 @@ void PlotRenderer::applyStyle()
         axis->setPadding(0);
     }
     // Mirrored axes follow the primary tick ranges (setupFullAxesBox).
-    p->xAxis2->setTicker(p->xAxis->ticker());
-    p->yAxis2->setTicker(p->yAxis->ticker());
+    m_x2->setTicker(m_x->ticker());
+    m_y2->setTicker(m_y->ticker());
 
     // Legend
-    QCPLegend* lg = p->legend;
+    QCPLegend* lg = m_legend;
     lg->setFont(font(st.legendFontSize));
     lg->setTextColor(st.labelColor);
     lg->setBorderPen(st.legendFrame ? QPen(st.legendEdge) : QPen(Qt::NoPen));
     lg->setBrush(st.legendFrame ? QBrush(st.legendFace) : QBrush(Qt::NoBrush));
     lg->setRowSpacing(st.legendFrame ? 0 : 2);
-    p->axisRect()->insetLayout()->setInsetAlignment(0, locToAlignment(st.legendLoc));
+    m_rect->insetLayout()->setInsetAlignment(0, locToAlignment(st.legendLoc));
 
     // In-frame label (e.g. "**CMS** *Simulation*")
     const Qt::Alignment ia = locToAlignment(st.labelInsideLoc);
@@ -953,6 +994,7 @@ void PlotRenderer::applyStyle()
 
 void PlotRenderer::updateHeader()
 {
+    if (!m_primary) return;  // one header per figure
     const AxesInfo& info = m_model->axesInfo();
     const Style& st = m_model->style();
     m_header->setTexts(info.title, font(st.titleSize, st.titleBold), st.titleColor, st.labelTopLeft,
@@ -977,16 +1019,16 @@ void PlotRenderer::applyAxesInfo()
     const QFont lf = font(st.labelSize);
     m_axisLabels->setLabels(info.xLabel, info.yLabel, lf, st.labelColor, st.mathText);
     const double lineH = QFontMetricsF(lf).height();
-    m_plot->xAxis->setLabel(info.xLabel.isEmpty() ? QString() : QStringLiteral(" "));
-    m_plot->yAxis->setLabel(info.yLabel.isEmpty() ? QString() : QStringLiteral(" "));
-    m_plot->xAxis->setLabelPadding(int(std::lround(st.labelPad + std::max(0.0, m_axisLabels->xSize().height() - lineH))));
-    m_plot->yAxis->setLabelPadding(int(std::lround(st.labelPad + std::max(0.0, m_axisLabels->ySize().height() - lineH))));
-    m_plot->xAxis->grid()->setVisible(info.gridVisible);
-    m_plot->yAxis->grid()->setVisible(info.gridVisible);
-    m_plot->xAxis->setRangeReversed(info.xReversed);
-    m_plot->xAxis2->setRangeReversed(info.xReversed);
-    m_plot->yAxis->setRangeReversed(info.yReversed);
-    m_plot->yAxis2->setRangeReversed(info.yReversed);
+    m_x->setLabel(info.xLabel.isEmpty() ? QString() : QStringLiteral(" "));
+    m_y->setLabel(info.yLabel.isEmpty() ? QString() : QStringLiteral(" "));
+    m_x->setLabelPadding(int(std::lround(st.labelPad + std::max(0.0, m_axisLabels->xSize().height() - lineH))));
+    m_y->setLabelPadding(int(std::lround(st.labelPad + std::max(0.0, m_axisLabels->ySize().height() - lineH))));
+    m_x->grid()->setVisible(info.gridVisible);
+    m_y->grid()->setVisible(info.gridVisible);
+    m_x->setRangeReversed(info.xReversed);
+    m_x2->setRangeReversed(info.xReversed);
+    m_y->setRangeReversed(info.yReversed);
+    m_y2->setRangeReversed(info.yReversed);
     m_diagonal->setVisible(info.showDiagonal);
     PeakAppearance pa = m_peaks->appearance();
     pa.showLabels = info.showPeakLabels;

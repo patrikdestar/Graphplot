@@ -14,6 +14,11 @@ PlotEditor::PlotEditor(PlotModel* model, QObject* parent)
     m_stack->setUndoLimit(500);
 }
 
+PlotEditor::PlotEditor(PlotModel* model, QUndoStack* sharedStack, QObject* parent)
+    : QObject(parent), m_model(model), m_stack(sharedStack)
+{
+}
+
 ObjectId PlotEditor::addDataset(Dataset d)
 {
     if (d.id == kInvalidId) d.id = m_model->allocateId();

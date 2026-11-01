@@ -40,7 +40,7 @@ from ._plotter import _run_until_closed
 from . import style
 
 __all__ = [
-    "style", "figure", "show", "pause", "figures", "close_all",
+    "style", "figure", "Axes", "show", "pause", "figures", "close_all",
     "Figure", "Line", "Contour", "Marker", "Annotation", "Peak",
 ]
 
@@ -203,6 +203,102 @@ def _fill_between(self: Figure, x, y1, y2=0.0, *, label=None, color=None, alpha=
         self._end_macro()
 
 
+class Axes:
+    """One panel of a multi-panel figure (see Figure.subplots / Figure.ratio_panel).
+
+    It offers the same plotting methods and properties as Figure (plot, hist,
+    errorbar, contour, marker, annotate, pick_peaks, xlabel, set_xlim, ...),
+    applied to this panel. Handles returned by these methods stay bound to
+    the panel they were created in."""
+
+    _PROPERTIES = {"title", "xlabel", "ylabel", "x_reversed", "y_reversed", "diagonal",
+                   "peak_labels"}
+
+    def __init__(self, figure: Figure, index: int):
+        object.__setattr__(self, "figure", figure)
+        object.__setattr__(self, "index", index)
+
+    def _activate(self):
+        if self.figure._current() != self.index:
+            self.figure._set_current(self.index)
+
+    def __getattr__(self, name):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        if name in Axes._PROPERTIES:
+            self._activate()
+            return getattr(self.figure, name)
+        attr = getattr(self.figure, name)
+        if not callable(attr):
+            return attr
+
+        def call(*args, **kwargs):
+            self._activate()
+            return attr(*args, **kwargs)
+
+        call.__name__ = name
+        call.__doc__ = getattr(attr, "__doc__", None)
+        return call
+
+    def __setattr__(self, name, value):
+        self._activate()
+        setattr(self.figure, name, value)
+
+    def __repr__(self):
+        return f"<Axes {self.index} of {self.figure!r}>"
+
+    def __eq__(self, other):
+        return isinstance(other, Axes) and other.figure is self.figure and other.index == self.index
+
+    def __hash__(self):
+        return hash((id(self.figure), self.index))
+
+
+def _subplots(self: Figure, nrows: int = 1, ncols: int = 1, *, sharex: bool = False,
+              sharey: bool = False, height_ratios=None, width_ratios=None, hspace=None,
+              wspace=None, squeeze: bool = True):
+    """Arrange the figure as nrows x ncols panels and return their Axes.
+
+    Existing content stays in panel 0 (top-left). sharex/sharey link the axis
+    ranges and keep tick labels only on the outer panels. hspace/wspace are
+    the gaps in pixels (0 = frames touch, as in ratio plots).
+    Returns a list (one row or column, like matplotlib's squeeze) or a list of rows."""
+    self._subplots(int(nrows), int(ncols), bool(sharex), bool(sharey),
+                   list(height_ratios or []), list(width_ratios or []),
+                   -1 if hspace is None else int(hspace), -1 if wspace is None else int(wspace))
+    grid = [[Axes(self, r * ncols + c) for c in range(ncols)] for r in range(nrows)]
+    if squeeze and (nrows == 1 or ncols == 1):
+        return [a for row in grid for a in row]
+    return grid
+
+
+def _ratio_panel(self: Figure, ratio: float = 0.3, *, ylabel: str = "Ratio"):
+    """Main plot with a ratio/residual panel below (shared x, touching frames).
+
+    Returns (main, lower) Axes. `ratio` is the lower panel's height fraction."""
+    main, lower = _subplots(self, 2, 1, sharex=True, height_ratios=[1 - ratio, ratio], hspace=0)
+    lower.ylabel = ylabel
+    xlabel = main.xlabel
+    if xlabel:
+        lower.xlabel, main.xlabel = xlabel, ""
+    return main, lower
+
+
+def _axes_list(self: Figure):
+    return [Axes(self, i) for i in range(self._axes_count())]
+
+
+def _gca(self: Figure):
+    """The current panel (last created/used, or clicked in the window)."""
+    return Axes(self, self._current())
+
+
+Figure.subplots = _subplots
+Figure.ratio_panel = _ratio_panel
+Figure.axes = property(_axes_list)
+Figure.gca = _gca
+Figure.sca = lambda self, ax: self._set_current(ax.index if isinstance(ax, Axes) else int(ax))
+Figure.sca.__doc__ = "Make an Axes (or panel index) the current panel for Figure-level calls."
 Figure.errorbar = _errorbar
 Figure.hist = _hist
 Figure.fill_between = _fill_between

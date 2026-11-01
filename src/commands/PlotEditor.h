@@ -24,6 +24,8 @@ class PlotEditor : public QObject {
     Q_OBJECT
 public:
     explicit PlotEditor(PlotModel* model, QObject* parent = nullptr);
+    // Shares an existing undo stack (one history for all panels of a figure).
+    PlotEditor(PlotModel* model, QUndoStack* sharedStack, QObject* parent = nullptr);
 
     PlotModel* model() const { return m_model; }
     QUndoStack* undoStack() const { return m_stack; }

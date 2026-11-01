@@ -26,14 +26,18 @@ set_target_properties(_plotter PROPERTIES
   LIBRARY_OUTPUT_DIRECTORY_RELEASE "${PLOTTER_PKG_DIR}"
   LIBRARY_OUTPUT_DIRECTORY_DEBUG "${PLOTTER_PKG_DIR}")
 
-add_custom_command(TARGET _plotter POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different
-          "${PROJECT_SOURCE_DIR}/python/plotter/__init__.py"
-          "${PROJECT_SOURCE_DIR}/python/plotter/_ipython.py"
-          "${PROJECT_SOURCE_DIR}/python/plotter/style.py"
-          "${PLOTTER_PKG_DIR}/")
+# Pure-Python part of the package: copied (and re-copied when edited).
+set(PLOTTER_PY_FILES __init__.py _ipython.py style.py pyplot.py)
+set(_py_outputs)
+foreach(f ${PLOTTER_PY_FILES})
+  add_custom_command(OUTPUT "${PLOTTER_PKG_DIR}/${f}"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${PROJECT_SOURCE_DIR}/python/plotter/${f}" "${PLOTTER_PKG_DIR}/${f}"
+    DEPENDS "${PROJECT_SOURCE_DIR}/python/plotter/${f}")
+  list(APPEND _py_outputs "${PLOTTER_PKG_DIR}/${f}")
+endforeach()
+add_custom_target(plotter_python ALL DEPENDS ${_py_outputs})
 
 install(TARGETS _plotter LIBRARY DESTINATION plotter)
-install(FILES "${PROJECT_SOURCE_DIR}/python/plotter/__init__.py"
-              "${PROJECT_SOURCE_DIR}/python/plotter/_ipython.py"
-              "${PROJECT_SOURCE_DIR}/python/plotter/style.py" DESTINATION plotter)
+list(TRANSFORM PLOTTER_PY_FILES PREPEND "${PROJECT_SOURCE_DIR}/python/plotter/")
+install(FILES ${PLOTTER_PY_FILES} DESTINATION plotter)
