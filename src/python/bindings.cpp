@@ -1045,6 +1045,9 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
     fig.def(
         "wait_for_region",
         [](FigurePtr self, double timeout) -> py::object {
+            // Waiting forever on a window nobody can see would never return.
+            if (timeout < 0 && !inGui([&] { return self->w()->isVisible(); }))
+                throw std::runtime_error("the figure is not shown: call fig.show(block=False) first");
             const quint64 start = self->regionVersion;
             const bool ok = pyglue::runEventLoopUntil(
                 [self, start] { return self->regionVersion != start || self->closed; },

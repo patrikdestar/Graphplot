@@ -22,7 +22,8 @@ axhline, axvline, axhspan-free markers, text, annotate, xlabel, ylabel,
 title, xlim, ylim, xscale, yscale, legend, grid, tight_layout (no-op),
 and the matching Axes methods (set_xlabel, set_xlim, set_yscale, ...).
 Not supported: images (imshow), polar/3D axes, twin axes, colorbars.
-Differences: contour levels are geometric (base * factor**k) as in NMR
+Differences: legend position / font are figure-wide (last call wins);
+contour levels are geometric (base * factor**k) as in NMR
 software; figure sizes are converted at 100 pixels per inch.
 """
 from __future__ import annotations
@@ -47,6 +48,11 @@ def _parse_fmt(fmt: str):
     if fmt.lower() == "none":  # errorbar(fmt="none"): bars only
         return None, "none", None
     s = fmt
+    import re
+    m = re.search(r"C\d", s)  # cycle colours "C0".."C9"
+    if m:
+        color = m.group(0)
+        s = s.replace(color, "", 1)
     for ls in _FMT_LINES:
         if ls in s:
             linestyle = ls
@@ -64,8 +70,16 @@ def _parse_fmt(fmt: str):
     return color, linestyle, marker
 
 
+_TAB_COLORS = {  # matplotlib's "tab:" (Tableau 10) colours
+    "blue": "#1f77b4", "orange": "#ff7f0e", "green": "#2ca02c", "red": "#d62728",
+    "purple": "#9467bd", "brown": "#8c564b", "pink": "#e377c2", "gray": "#7f7f7f",
+    "grey": "#7f7f7f", "olive": "#bcbd22", "cyan": "#17becf"}
+
+
 def _mpl_color(c):
     """matplotlib colour forms that plotter does not parse itself."""
+    if isinstance(c, str) and c.startswith("tab:") and c[4:] in _TAB_COLORS:
+        return _TAB_COLORS[c[4:]]
     if isinstance(c, str):
         try:
             v = float(c)  # grayscale "0.5"
@@ -175,7 +189,8 @@ class PltAxes:
         kw.pop("capsize", None)  # cap size comes from the style ('errorbar.capsize')
         kw.pop("elinewidth", None)
         kw.pop("capthick", None)
-        color, ls, marker = _parse_fmt(fmt) if fmt else (None, "none", "o")
+        # Like matplotlib: without fmt the points are joined by a line.
+        color, ls, marker = _parse_fmt(fmt) if fmt else (None, "-", None)
         if color and "color" not in kw and "c" not in kw:
             kw["color"] = color
         opts = _common(kw, self._ax)
@@ -185,6 +200,31 @@ class PltAxes:
 
     def hist(self, x, bins=10, range=None, density=False, weights=None,  # noqa: A002
              histtype="step", **kw):
+        # Several datasets (a list of arrays or a 2-D array, one per column):
+        # one histogram each, with shared bins, like matplotlib.
+        many = (isinstance(x, (list, tuple)) and len(x) > 0 and _np.ndim(x[0]) > 0) or _np.ndim(x) == 2
+        if many:
+            data = list(_np.asarray(x).T) if _np.ndim(x) == 2 and not isinstance(x, (list, tuple)) else list(x)
+            if _np.ndim(bins) == 0:
+                finite = _np.concatenate([_np.asarray(d, dtype=float).ravel() for d in data])
+                finite = finite[_np.isfinite(finite)]
+                bins = _np.histogram_bin_edges(finite, bins=int(bins), range=range)
+            labels = kw.pop("label", None)
+            colors = kw.pop("color", None)
+            results = []
+            for i, d in enumerate(data):
+                k = dict(kw)
+                if isinstance(labels, (list, tuple)):
+                    k["label"] = labels[i] if i < len(labels) else None
+                elif labels is not None and i == 0:
+                    k["label"] = labels
+                if isinstance(colors, (list, tuple)) and not isinstance(colors[0], (int, float)):
+                    k["color"] = colors[i % len(colors)]
+                elif colors is not None:
+                    k["color"] = colors
+                w = None if weights is None else weights[i]
+                results.append(self.hist(d, bins, range, density=density, weights=w, histtype=histtype, **k))
+            return (_np.array([r[0] for r in results]), results[0][1], [r[2] for r in results])
         kw.pop("edgecolor", None)
         fill = kw.pop("facecolor", None)
         opts = _common(kw)
@@ -332,9 +372,27 @@ class PltAxes:
     def invert_yaxis(self):
         self._ax.y_reversed = not self._ax.y_reversed
 
-    def legend(self, *_, loc=None, frameon=None, fontsize=None, **__):
+    _LEGEND_CODES = {1: "upper right", 2: "upper left", 3: "lower left", 4: "lower right",
+                     5: "right", 6: "center left", 7: "center right", 8: "lower center",
+                     9: "upper center", 10: "center"}
+
+    def legend(self, *args, loc=None, frameon=None, fontsize=None, labels=None, **__):
+        """legend(), legend(labels), legend(handles, labels).
+
+        Note: the legend position and font are figure-wide style settings, so
+        the last call sets them for every panel."""
+        if len(args) == 2:
+            handles, labels = args
+            for h, lab in zip(handles, labels):
+                h.label = str(lab)
+        elif len(args) == 1 or labels is not None:
+            labels = labels if labels is not None else args[0]
+            for h, lab in zip(self._ax.lines(), labels):
+                h.label = str(lab)
         self._ax.legend(True)
         params = {}
+        if isinstance(loc, int):
+            loc = self._LEGEND_CODES.get(loc)  # 0 = "best": keep the current position
         if isinstance(loc, str) and loc != "best":
             params["legend.loc"] = loc
         if frameon is not None:
@@ -346,6 +404,14 @@ class PltAxes:
 
     def grid(self, visible=True, **_):
         self._ax.grid(bool(visible))
+
+    def set(self, **kw):
+        """ax.set(xlabel=..., ylabel=..., title=..., xlim=..., ylim=..., xscale=..., yscale=...)"""
+        for key, value in kw.items():
+            setter = getattr(self, "set_" + key, None)
+            if setter is None:
+                raise AttributeError(f"Axes.set() got an unsupported property {key!r}")
+            setter(*value) if key in ("xlim", "ylim") and isinstance(value, (tuple, list)) else setter(value)
 
     def autoscale(self, enable=True, axis="both", **_):
         if enable:
@@ -379,9 +445,43 @@ class _PltFigure:
     def gca(self):
         return next(a for a in self.axes if a.panel == self._fig.gca())
 
-    def savefig(self, fname, dpi=None, **_):
-        scale = (dpi or _DPI * 2) / _DPI
-        self._fig.savefig(str(fname), width=self._size[0], height=self._size[1], scale=scale)
+    def savefig(self, fname, dpi=None, format=None, **_):  # noqa: A002
+        """Save as png / svg / pdf. ``fname`` may be a path or a binary file object.
+
+        dpi defaults to 100 (the figure-size convention), as in matplotlib;
+        bbox_inches, transparent, facecolor, ... are accepted and ignored."""
+        scale = (dpi or _DPI) / _DPI
+        if hasattr(fname, "write"):  # file object: export to a temporary file, copy the bytes
+            import os
+            import tempfile
+            ext = (format or "png").lower()
+            fd, tmp = tempfile.mkstemp(suffix="." + ext)
+            os.close(fd)
+            try:
+                self._fig.savefig(tmp, width=self._size[0], height=self._size[1], scale=scale)
+                with open(tmp, "rb") as f:
+                    fname.write(f.read())
+            finally:
+                os.remove(tmp)
+            return
+        fname = str(fname)
+        if format and not fname.lower().endswith("." + format.lower()):
+            fname += "." + format.lower()
+        self._fig.savefig(fname, width=self._size[0], height=self._size[1], scale=scale)
+
+    def add_subplot(self, *args, **_):
+        """add_subplot(111), add_subplot(2, 1, 2), add_subplot((2, 1, 2))."""
+        if len(args) == 1 and isinstance(args[0], int) and 111 <= args[0] <= 999:
+            args = tuple(int(c) for c in str(args[0]))
+        elif len(args) == 1 and isinstance(args[0], tuple):
+            args = args[0]
+        rows, cols, index = (args + (1, 1, 1))[:3] if args else (1, 1, 1)
+        if rows * cols != len(self.axes):
+            grid = self._fig.subplots(rows, cols, squeeze=False)
+            self.axes = [PltAxes(self, a) for row in grid for a in row]
+        ax = self.axes[index - 1]
+        self._fig.sca(ax.panel)
+        return ax
 
     def suptitle(self, s, **_):
         self._fig.axes[0].title = str(s)

@@ -155,7 +155,7 @@ How panels work:
 | `set_selected_region(xmin, xmax)`, `clear_selection()` | change it (undoable) |
 | `region_mask(x)` | boolean mask of `x` inside the region (or `None`) |
 | `region_stats(xmin=None, xmax=None)` | statistics of every visible line in the region (or the given range): `{label: {n, mean, std, min, max, x_at_min, x_at_max, rms, integral}}`. `std` is the sample standard deviation, `integral` the trapezoid rule over |Δx| (so descending ppm axes give positive areas); NaN gaps are skipped. Raises `ValueError` if no range is given and nothing is selected. |
-| `wait_for_region(timeout=-1)` | keep the window interactive until the user finishes a selection; return it. Returns `None` on timeout or close. |
+| `wait_for_region(timeout=-1)` | keep the window interactive until the user finishes a selection; return it. Returns `None` on timeout or close; raises `RuntimeError` if the window is not shown and no timeout is given. |
 | `scale_contour_levels(factor)` | same as the mouse wheel / `*` `/` keys |
 | `on(event, callback)`, `off(event, callback)` | register / remove a callback (see below) |
 | `disconnect_all()` | remove callbacks |
@@ -259,10 +259,10 @@ import plotter.pyplot as plt
 
 | Supported | Not supported |
 |---|---|
-| `figure`, `subplots` (incl. `gridspec_kw` height ratios / hspace), `gcf`, `gca`, `sca`, `close`, `show`, `pause`, `savefig(dpi=)` | `imshow`, colour bars |
-| `plot` with format strings (`'r--o'`, several x/y/fmt groups), `scatter`, `errorbar(fmt=)`, `hist` (`step`, `stepfilled`/`bar`, `errorbar`), `stairs` | polar and 3D axes |
+| `figure`, `subplots` (incl. `gridspec_kw` height ratios / hspace), `fig.add_subplot`, `gcf`, `gca`, `sca`, `close` (figure, number, name or `'all'`), `show`, `pause`, `savefig(dpi=, format=)` to a path or a binary file object | `imshow`, colour bars |
+| `plot` with format strings (`'r--o'`, `'C1--'`, several x/y/fmt groups), `scatter`, `errorbar(fmt=)`, `hist` (one or several datasets; `step`, `stepfilled`/`bar`, `errorbar`), `stairs` | polar and 3D axes |
 | `fill_between`, `contour`/`contourf` (X, Y, Z), `axhline`, `axvline`, `text`, `annotate` | twin axes |
-| `xlabel`, `ylabel`, `title`, `xlim`, `ylim`, `xscale`, `yscale`, `legend(loc=, frameon=)`, `grid`, `plt.style.use` | `rcParams` (use `plotter.style.set`) |
+| `xlabel`, `ylabel`, `title`, `xlim`, `ylim`, `xscale`, `yscale`, `legend(labels, loc=name or code, frameon=)`, `ax.set(...)`, `grid`, `plt.style.use`; colours `'C0'`…, `'tab:blue'`…, `'0.5'` | `rcParams` (use `plotter.style.set`) |
 
 Axes methods use the matplotlib names (`set_xlabel`, `set_xlim`,
 `set_yscale`, `invert_xaxis`, …). `ax.panel` and `fig.native` give access to
@@ -270,7 +270,11 @@ the full plotter API (peaks, regions, undo, styles).
 
 Differences from matplotlib:
 
-- Figure sizes are converted at 100 px per inch.
+- Figure sizes are converted at 100 px per inch; exports (PNG metadata, SVG,
+  PDF) use the same scale, so `figsize=(8, 6)` is 8 × 6 inches in every format.
+- The legend position and font are figure-wide style settings: in a
+  multi-panel figure the last `legend(loc=...)` applies to all panels.
+- Masked arrays are drawn with gaps; NaT / NaN values are gaps too.
 - Contour levels are geometric (NMR convention).
 - `hspace` / `wspace` (fractions of the panel size in matplotlib) are converted
   to pixels as fraction × 100; 0 still makes the frames touch.
@@ -288,7 +292,7 @@ removed object raises `KeyError`. Setting a property is an undoable edit.
   `step`, `fill`.
 - `set_data(x, y, *, undoable=False)`: by default, streaming updates do not
   fill the undo history.
-- `set_errors(xerr=None, yerr=None)`: like `set_data`, not recorded in the undo history.
+- `set_errors(xerr=None, yerr=None)`: replace the error bars (undoable).
 - `remove()`.
 
 ### `Peak`

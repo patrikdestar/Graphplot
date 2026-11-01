@@ -619,6 +619,33 @@ class PlotterTests(unittest.TestCase):
         g.close()
         self.assertNotIn(g, plotter.figures())
 
+    def test_pyplot_compat_round2(self):
+        import io
+        import plotter.pyplot as plt
+        plt.figure()
+        x = np.linspace(0, 5, 20)
+        plt.plot(x, x, "C1--")
+        plt.plot(x, 2 * x, color="tab:green")
+        counts, _, lines = plt.hist([np.arange(50.0), np.arange(50.0) + 20], bins=5, label=["a", "b"])
+        self.assertEqual(counts.shape, (2, 5))
+        self.assertEqual([ln.label for ln in lines], ["a", "b"])
+        plt.legend(["one", "two"], loc=2)
+        buf = io.BytesIO()
+        plt.savefig(buf, format="png")
+        self.assertEqual(buf.getvalue()[:4], b"\x89PNG")
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        ax.set(xlabel="X", xlim=(0, 2))
+        self.assertEqual(ax.get_xlim(), (0.0, 2.0))
+        fig.add_subplot(2, 1, 2)
+        self.assertEqual(len(fig.axes), 2)
+        plt.figure(num=7)
+        plt.close(7)
+        self.assertTrue(plt.figure(num=7) is not None)
+        plt.close("all")
+        with self.assertRaises(RuntimeError):
+            plotter.figure().wait_for_region()  # never shown: would wait forever
+
     def test_audit_pyplot(self):
         import plotter.pyplot as plt
         fig, axs = plt.subplots(2, 2)
