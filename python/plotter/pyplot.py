@@ -633,8 +633,7 @@ class PltAxes:
         m.colorbar = True
         if label is not None:
             m.label = str(label)
-        elif _re.fullmatch(r"2D data \d+", m.label or ""):
-            m.label = ""  # an automatic name is not a useful colour-bar label (matplotlib: none)
+
         return m
 
     def hlines(self, y, xmin, xmax, colors=None, linestyles="-", label=None, **kw):
@@ -1589,6 +1588,24 @@ class _RcParams(dict):
             global _DEFAULT_FIGSIZE
             w, h = value
             _DEFAULT_FIGSIZE = (float(w), float(h))
+        elif key == "font.size":
+            # As in matplotlib, the other text sizes follow font.size (unless
+            # set explicitly here): scale them by the same factor.
+            new = float(self._convert(key, value))
+            try:
+                old = float(style.get("font.size"))
+            except (KeyError, ValueError):
+                old = 10.0
+            changes = {"font.size": new}
+            if old > 0:
+                for k in ("axes.labelsize", "axes.titlesize", "xtick.labelsize", "ytick.labelsize",
+                          "legend.fontsize"):
+                    if not dict.__contains__(self, k):
+                        changes[k] = round(float(style.get(k)) * new / old, 2)
+            style.set(changes)
+            if _current is not None and not _current.closed:
+                _current._fig.set_style(changes)
+            value = new
         elif key in self._MAP:
             original = value
             value = self._convert(key, value)

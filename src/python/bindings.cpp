@@ -1046,6 +1046,7 @@ Returns a Line handle.)doc");
             const double linewidth = linewidthObj.is_none() ? 0.0 : linewidthObj.cast<double>();
             Matrix m = matrixFromNumpy(z, x, y);
             if (!label.is_none()) m.name = QString::fromStdString(py::str(label).cast<std::string>());
+            m.style.labelled = !m.name.isEmpty();  // unlabelled: no legend entry, no colour-bar title
             if (!levelsObj.is_none() && !isSequence && (levels < 1 || levels > 1000))
                 throw py::value_error("levels must be between 1 and 1000");
             if (!factorObj.is_none() && !(factor > 1.0)) throw py::value_error("factor must be > 1");
@@ -2325,7 +2326,10 @@ Remove a callback with off(event, callback).)doc");
         .def_property("label",
                       [](Contour& h) { return inGui([&] { return h.get().name.toStdString(); }); },
                       [](Contour& h, const Text& v) {
-                          h.setStyle([&](QString& n, ContourStyle&) { n = QString::fromStdString(v); });
+                          h.setStyle([&](QString& n, ContourStyle& st) {
+                              n = QString::fromStdString(v);
+                              st.labelled = !n.isEmpty();
+                          });
                       })
         .def_property("base_level",
                       [](Contour& h) { return inGui([&] { return h.get().style.baseLevel; }); },

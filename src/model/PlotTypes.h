@@ -86,6 +86,7 @@ struct ContourStyle {
     bool smooth = true;        // image: interpolate between cells; false = blocky cells (imshow)
     bool filled = false;       // image in flat colour bands between the levels (contourf)
     bool negativeDashed = false;  // negative levels drawn dashed (single-colour contours)
+    bool labelled = true;  // false: an automatic name (no legend entry, no colour-bar title)
     bool operator==(const ContourStyle&) const = default;
 };
 

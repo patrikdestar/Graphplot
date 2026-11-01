@@ -154,6 +154,7 @@ QJsonObject matrixToJson(const Matrix& m)
             {"smooth", s.smooth},
             {"filled", s.filled},
             {"negativeDashed", s.negativeDashed},
+            {"labelled", s.labelled},
             {"levelValues", [&] {
                  QJsonArray a;
                  for (double l : s.levels) a << jnum(l);
@@ -187,6 +188,7 @@ bool matrixFromJson(const QJsonObject& o, Matrix* m)
     s.smooth = o["smooth"].toBool(true);
     s.filled = o["filled"].toBool();
     s.negativeDashed = o["negativeDashed"].toBool();
+    s.labelled = o["labelled"].toBool(true);
     for (const QJsonValue& l : o["levelValues"].toArray()) s.levels << jdbl(l);
     s.colorBar = o["colorBar"].toBool();
     const QJsonArray clim = o["clim"].toArray();

@@ -9,6 +9,7 @@
 
 #include "model/PlotModel.h"
 
+#include <QMargins>
 #include <QHash>
 #include <QObject>
 #include <QFont>
@@ -137,7 +138,9 @@ public:
     void startFresh();
     const QList<PlotRenderer*>& sharedX() const { return m_shareX; }
     const QList<PlotRenderer*>& sharedY() const { return m_shareY; }
-    void fitTickCounts();  // after clearing the panel: the next data is fitted again
+    void fitTickCounts();
+    void fitEndLabels();
+    QMargins m_endLabelMargins;  // after clearing the panel: the next data is fitted again
     // The view-fitting state (follow flags, home, current view), saved and
     // restored around an undoable clear.
     struct FitState {

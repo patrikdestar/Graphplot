@@ -1175,7 +1175,7 @@ void PlotRenderer::syncLegend()
         const MatrixVisual v = m_matrices.value(m.id);
         // Images without contours have no legend entry (as in matplotlib); the
         // colour bar carries their name.
-        if (v.contour && m.style.visible && m.style.showContours && !m.name.isEmpty())
+        if (v.contour && m.style.visible && m.style.showContours && m.style.labelled && !m.name.isEmpty())
             m_legend->addItem(new RichLegendItem(m_legend, v.contour, m_model->style().mathText));
     }
     // A twin whose lines the host lists shows no legend of its own (no duplicates).
@@ -1351,7 +1351,7 @@ void PlotRenderer::updateColorBar()
     }
     const Style st = displayStyle();
     const QCPColorMap* img = m_matrices.value(shown->id).image;
-    m_colorBar->set(img->gradient(), img->dataRange(), shown->name, font(st.ytick.labelSize), st.axesEdge,
+    m_colorBar->set(img->gradient(), img->dataRange(), shown->style.labelled ? shown->name : QString(), font(st.ytick.labelSize), st.axesEdge,
                     st.ytick.labelColor, st.mathText);
     m_colorBar->setVisible(m_panelVisible);
     m_colorBarWidth = m_colorBar->requiredWidth();  // room in the right margin
@@ -2104,6 +2104,40 @@ void PlotRenderer::fitTickCounts()
         apply(m_y, m_autoTicksY, styleCount, ar.height() / std::max(1, 2 * fm.height()));
     }
     if (changed) m_rect->update(QCPLayoutElement::upPreparation);
+    fitEndLabels();
+}
+
+void PlotRenderer::fitEndLabels()
+{
+    // QCustomPlot leaves out a tick label that would stick out of the widget,
+    // so the first / last label ("Monday", "recovered") could vanish. Reserve
+    // the room they need as minimum side margins and lay out again if needed.
+    if (m_twinHost || !m_x->visible() || !m_x->tickLabels()) return;
+    const QRect ar = m_rect->rect();
+    if (ar.width() < 20) return;
+    const QVector<double> ticks = m_x->tickVector();
+    const QVector<QString> labels = m_x->tickVectorLabels();
+    const QFontMetrics fm(m_x->tickLabelFont());
+    const double rot = -m_x->tickLabelRotation() * M_PI / 180.0;  // counter-clockwise, as set
+    int needL = 0, needR = 0;
+    for (int i = 0; i < ticks.size() && i < labels.size(); ++i) {
+        const double px = m_x->coordToPixel(ticks[i]);
+        if (px < ar.left() - 1 || px > ar.right() + 1) continue;
+        const double w = fm.horizontalAdvance(labels[i]);
+        // Rotated labels hang to the left of their tick (their end at the tick).
+        const double left = std::abs(rot) > 0.01 ? w * std::cos(rot) : w / 2;
+        const double right = std::abs(rot) > 0.01 ? fm.height() / 2.0 : w / 2;
+        needL = std::max(needL, int(std::ceil(left - (px - ar.left()))) + 3);
+        needR = std::max(needR, int(std::ceil(right - (ar.right() - px))) + 3);
+    }
+    const QMargins want(std::max(0, needL), 0, std::max(0, needR), 0);
+    if (want == m_endLabelMargins) return;
+    m_endLabelMargins = want;
+    m_rect->setMinimumMargins(want);
+    QCPLayoutGrid* layout = m_plot->plotLayout();
+    layout->update(QCPLayoutElement::upPreparation);
+    layout->update(QCPLayoutElement::upMargins);
+    layout->update(QCPLayoutElement::upLayout);
 }
 
 }  // namespace gp
