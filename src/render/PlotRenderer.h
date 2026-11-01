@@ -134,6 +134,11 @@ public:
     // such as timeline rows use fewer so labels do not overlap.
     // Takes effect in the current replot (it is called from afterLayout).
     void setMaxTicksY(int n);
+    // Fit the axes that still follow the data (limits set by the user stay).
+    void fitFollowing()
+    {
+        if (m_followX || m_followY) autoscale(m_followX, m_followY);
+    }
     void applyLegendLoc(const Style& st);
     void placeLegendBest();  // legend.loc 'best': the corner over the fewest data points
     // Draw the region also in exports (default: no, it is a selection aid).

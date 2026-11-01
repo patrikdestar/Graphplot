@@ -243,11 +243,9 @@ PlotRenderer::PlotRenderer(PlotModel* model, QCustomPlot* plot, QCPAxisRect* rec
         m_rect->setOuterRect(m_twinHost->m_rect->rect());
         m_rect->update(QCPLayoutElement::upPreparation);  // tick positions and labels
         m_rect->update(QCPLayoutElement::upLayout);       // its legend and axes
+        if (m_legendBest) placeLegendBest();              // after the host's legend
     });
     connect(m_plot, &QCustomPlot::beforeReplot, this, &PlotRenderer::updateTwinMargin);
-    connect(m_plot, &QCustomPlot::beforeReplot, this, [this] {
-        if (m_legendBest) placeLegendBest();
-    });
     applyStyle();
     applyAxesInfo();
 }
@@ -355,6 +353,12 @@ PlotRenderer::PlotRenderer(PlotModel* model, QCustomPlot* plot, QCPAxisRect* rec
     connect(m_y, qOverload<const QCPRange&>(&QCPAxis::rangeChanged), this, [this] {
         if (!m_autoscaling) m_followY = false;
         emit viewChanged();
+    });
+
+    // legend.loc 'best': placed after every layout pass, which also runs for
+    // exports at their own size (so the choice fits the exported geometry).
+    connect(m_plot, &QCustomPlot::afterLayout, this, [this] {
+        if (m_legendBest && !m_twinHost) placeLegendBest();
     });
 
     rebuildAll();
@@ -631,8 +635,9 @@ void PlotRenderer::maybeCaptureHome()
 {
     // New data: re-fit while the view still follows the data (nobody zoomed
     // or set limits), and remember the fitted view as "home".
+    // Limits the user set before any data (set_xlim, then plot) are kept.
     if (!m_autoHome || (!m_followX && !m_followY && m_hasHome)) return;
-    autoscale(m_followX || !m_hasHome, m_followY || !m_hasHome);
+    if (m_followX || m_followY) autoscale(m_followX, m_followY);
     captureHomeView();
 }
 
@@ -1592,22 +1597,54 @@ void PlotRenderer::placeLegendBest()
     const QRect box = m_rect->rect();
     const QSize size = m_legend->outerRect().size().isEmpty() ? m_legend->minimumOuterSizeHint()
                                                               : m_legend->outerRect().size();
-    if (box.width() < 10 || size.isEmpty()) return;
+    if (box.width() < 20 || box.height() < 20 || size.isEmpty()) return;
     // matplotlib's order of preference for ties.
     static const char* order[] = {"upper right", "upper left", "lower left", "lower right", "center right",
                                   "center left", "lower center", "upper center", "center"};
-    // Sample the visible data (at most ~2000 points per dataset).
-    QVector<QPointF> pts;
-    for (const auto& d : m_model->datasets()) {
-        if (!d.style.visible || d.x.isEmpty()) continue;
-        const qsizetype step = std::max<qsizetype>(1, d.x.size() / 2000);
-        for (qsizetype i = 0; i < d.x.size(); i += step)
-            if (std::isfinite(d.x[i]) && std::isfinite(d.y[i]))
-                pts << QPointF(m_x->coordToPixel(d.x[i]), m_y->coordToPixel(d.y[i]));
+    // Line pieces of the visible data in pixels (at most ~2000 per dataset):
+    // a candidate box is "covered" where pieces cross it, not only at vertices.
+    QVector<QLineF> segs;
+    auto collect = [&segs](const PlotRenderer* r) {
+        for (const auto& d : r->m_model->datasets()) {
+            if (!d.style.visible || d.x.isEmpty()) continue;
+            const qsizetype step = std::max<qsizetype>(1, d.x.size() / 2000);
+            QPointF prev;
+            bool havePrev = false;
+            for (qsizetype i = 0; i < d.x.size(); i += step) {
+                if (!std::isfinite(d.x[i]) || !std::isfinite(d.y[i])) {
+                    havePrev = false;
+                    continue;
+                }
+                const QPointF p(r->m_x->coordToPixel(d.x[i]), r->m_y->coordToPixel(d.y[i]));
+                const bool joined = d.style.lineStyle != LineStyle::None || d.style.fillColor.isValid();
+                segs << QLineF(havePrev && joined ? prev : p, p);
+                prev = p;
+                havePrev = true;
+            }
+        }
+    };
+    collect(this);
+    if (m_twin) {  // the twin's lines are drawn in the same box (its frame follows this pass's layout)
+        m_twin->m_rect->setOuterRect(m_rect->rect());
+        m_twin->m_rect->update(QCPLayoutElement::upLayout);
+        collect(m_twin);
     }
+    if (m_twinHost) collect(m_twinHost);                                  // stay off the host's data too
+    // A twin keeps clear of its host's legend (both may be 'best').
+    QRectF taken;
+    if (m_twinHost && m_twinHost->m_legend->visible()) taken = m_twinHost->m_legend->outerRect();
+    auto crosses = [](const QRectF& r, const QLineF& l) {
+        if (r.contains(l.p1()) || r.contains(l.p2())) return true;
+        if (l.p1() == l.p2()) return false;
+        const QLineF edges[4] = {{r.topLeft(), r.topRight()}, {r.topRight(), r.bottomRight()},
+                                 {r.bottomRight(), r.bottomLeft()}, {r.bottomLeft(), r.topLeft()}};
+        for (const QLineF& e : edges)
+            if (l.intersects(e, nullptr) == QLineF::BoundedIntersection) return true;
+        return false;
+    };
     const int margin = 10;
     Qt::Alignment best = Qt::AlignTop | Qt::AlignRight;
-    int bestCount = std::numeric_limits<int>::max();
+    qint64 bestCount = std::numeric_limits<qint64>::max();
     for (const char* name : order) {
         const Qt::Alignment a = locToAlignment(QString::fromLatin1(name));
         const int x = (a & Qt::AlignLeft) ? box.left() + margin
@@ -1617,15 +1654,19 @@ void PlotRenderer::placeLegendBest()
                       : (a & Qt::AlignBottom) ? box.bottom() - margin - size.height()
                                                : box.center().y() - size.height() / 2;
         const QRectF r(x, y, size.width(), size.height());
-        int count = 0;
-        for (const QPointF& p : pts) count += r.contains(p);
+        qint64 count = 0;
+        for (const QLineF& l : segs) count += crosses(r, l);
+        if (!taken.isEmpty() && taken.intersects(r)) count += 1000000;
         if (count < bestCount) {
             bestCount = count;
             best = a;
         }
         if (count == 0) break;
     }
-    m_rect->insetLayout()->setInsetAlignment(0, best);
+    if (m_rect->insetLayout()->insetAlignment(0) != best) {
+        m_rect->insetLayout()->setInsetAlignment(0, best);
+        m_rect->insetLayout()->update(QCPLayoutElement::upLayout);  // move it in this pass
+    }
 }
 
 void PlotRenderer::applyAxesInfo()
@@ -1673,8 +1714,14 @@ void PlotRenderer::applyAxesInfo()
         mirror->setTicker(a->ticker());
     };
     if (!m_linTickerX) m_linTickerX = m_x->ticker(), m_linTickerY = m_y->ticker();
+    const bool xLogChanged = (m_x->scaleType() == QCPAxis::stLogarithmic) != info.xLog;
+    const bool yLogChanged = (m_y->scaleType() == QCPAxis::stLogarithmic) != info.yLog;
     setScale(m_x, m_x2, info.xLog, m_linTickerX);
     setScale(m_y, m_y2, info.yLog, m_linTickerY);
+    // A linear range (often starting at 0) means little on a log axis: re-fit
+    // an axis that switched scale, if there is data to fit.
+    if ((xLogChanged || yLogChanged) && (!m_model->datasets().empty() || !m_model->matrices().empty()))
+        autoscale(xLogChanged, yLogChanged);
     // Custom ticks replace the axis' ticker (and are taken away again when
     // switched off, restoring whatever ticker the axis had, e.g. clock time).
     const bool unicodeMinus = st.unicodeMinus;

@@ -1236,6 +1236,57 @@ class PlotterTests(unittest.TestCase):
         self.assertEqual(plt.cm.viridis, "viridis")
         plt.close("all")
 
+    def test_round11_fixes(self):
+        import io
+        import plotter.pyplot as plt
+        # Limits set before the data, and on a shared partner, are kept.
+        fig, ax = plt.subplots()
+        ax.set_xlim(0, 3)
+        ax.set_ylim(-1, 2)
+        ax.plot([0, 10], [0, 1])
+        self.assertEqual(ax.get_xlim(), (0.0, 3.0))
+        self.assertEqual(ax.get_ylim(), (-1.0, 2.0))
+        fig, (a, b) = plt.subplots(2, 1, sharex=True)
+        a.plot([0, 10], [0, 1])
+        a.set_xlim(0, 3)
+        b.plot([0, 5], [1, 0])
+        self.assertEqual(a.get_xlim(), (0.0, 3.0))
+        f = plotter.figure()
+        x = np.linspace(1, 10, 50)
+        f.plot(x, x ** 2)
+        f.y_log = True
+        self.assertGreater(f.ylim()[0], 0.5)  # re-fitted for the log scale
+        f.xlabel = None
+        f.title = 3.5
+        self.assertEqual(f.title, "3.5")
+        plt.tick_params(axis="x", rotation=45)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "out.dat")
+            plt.savefig(path, format="pdf")
+            self.assertTrue(os.path.exists(path))
+        with self.assertRaises(ValueError):
+            plt.pcolormesh([0, 1, 10], [0, 1, 2], [[1, 2], [3, 4]])
+        self.assertEqual(plt.cm.viridis([0.0, 1.0]).shape, (2, 4))
+        # Bar results still work as handles / lines.
+        fig, ax = plt.subplots()
+        bars = ax.bar([1, 2, 3], [1, 2, 3], label="b")
+        line, = ax.plot([1, 3], [3, 1], label="l")
+        ax.legend(handles=[bars, line])
+        bars[1].set_color("red")
+        self.assertEqual([l.label for l in ax._ax.lines() if l.in_legend], ["l", "b"])
+        bars.remove()
+        self.assertEqual(len(ax._ax.lines()), 1)
+        hb = ax.barh(["a", "b"], [1, 2])
+        ax.bar_label(hb)
+        # legend(handles=) from another subplot twice: no duplicates.
+        fig, (a1, a2) = plt.subplots(1, 2)
+        l1, = a1.plot([0, 1], [0, 1])
+        l2, = a2.plot([0, 1], [1, 0])
+        a1.legend(handles=[l1, l2], labels=["one", "two"])
+        a1.legend(handles=[l1, l2], labels=["one", "two"])
+        self.assertEqual(len(a1._ax.lines()), 2)
+        plt.close("all")
+
     def test_round6_correctness(self):
         import plotter.pyplot as plt
         f = self.fig

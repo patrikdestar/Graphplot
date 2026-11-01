@@ -971,7 +971,7 @@ PYBIND11_MODULE(_plotter, mod)
                 const ObjectId nid = ed->addDataset(d);
                 if (switchTime) ed->undoStack()->endMacro();
                 if (first) {
-                    self->renderer()->autoscale();
+                    self->renderer()->fitFollowing();
                     self->renderer()->captureHomeView();
                 }
                 return nid;
@@ -1040,7 +1040,7 @@ Returns a Line handle.)doc");
                 const bool first = self->model()->datasets().empty() && self->model()->matrices().empty();
                 const ObjectId nid = self->editor()->addMatrix(m);
                 if (first) {
-                    self->renderer()->autoscale();
+                    self->renderer()->fitFollowing();
                     self->renderer()->captureHomeView();
                 }
                 return nid;
@@ -1535,6 +1535,8 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         [](FigurePtr self, bool x, bool y) { inGui([&] { self->renderer()->autoscale(x, y); }); },
         py::arg("x") = true, py::arg("y") = true);
     fig.def("reset_view", [](FigurePtr self) { inGui([&] { self->renderer()->resetView(); }); });
+    fig.def("fit_following", [](FigurePtr self) { inGui([&] { self->renderer()->fitFollowing(); }); },
+            "Fit the axes that still follow the data (not zoomed, no limits set; shared axes included).");
     fig.def("set_home_view", [](FigurePtr self) {
         inGui([&] { self->renderer()->captureHomeView(); });
     }, "Make the current view the one restored by reset_view() / the Home key.");
@@ -1545,7 +1547,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
             [field](FigurePtr self) {
                 return inGui([&] { return (self->model()->axesInfo().*field).toStdString(); });
             },
-            [field](FigurePtr self, const std::string& v) {
+            [field](FigurePtr self, const Text& v) {  // None / any object, as documented
                 inGui([&] {
                     AxesInfo a = self->model()->axesInfo();
                     a.*field = QString::fromStdString(v);
@@ -2064,6 +2066,9 @@ Remove a callback with off(event, callback).)doc");
             return std::hash<const void*>()(h.fig.get()) ^ (std::hash<qint64>()(qint64(h.id)) * 31) ^ size_t(h.ax);
         })
         .def_property_readonly("_panel", [](const Line& h) { return h.ax; })
+        .def_property_readonly("in_legend", [](Line& h) {
+            return inGui([&] { const Dataset& d = h.get(); return d.style.inLegend && !d.name.isEmpty(); });
+        }, "Whether the line is listed in the legend (it has a label).")
         .def_property_readonly("x", [](Line& h) { return toNumpy(inGui([&] { return h.get().x; })); })
         .def_property_readonly("y", [](Line& h) { return toNumpy(inGui([&] { return h.get().y; })); })
         .def_property("label",

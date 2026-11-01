@@ -431,7 +431,7 @@ class PltAxes:
                  for i, c in enumerate(_np.asarray(counts, dtype=float))]
         if kw_edge is not None and kw_edge != "none":
             line.color = _mpl_color(kw_edge)  # the outline
-        return counts, edges, _RectGroup(self, line, rects, None)
+        return counts, edges, _RectGroup(self, line, rects, None, label=_legend_label(opts.get("label")))
 
     def stairs(self, values, edges=None, fill=False, **kw):
         values = _np.asarray(values, dtype=float)
@@ -533,6 +533,11 @@ class PltAxes:
         """Cell-centre (start, stop) from n+1 edges or n centres (1-D or 2-D grids)."""
         a = _np.asarray(edges_or_centres, dtype=float)
         if a.size == n + 1:
+            if n >= 2:  # uneven edges (e.g. [0, 1, 10]) cannot be drawn as an even grid
+                step = _np.diff(a)
+                if not _np.allclose(step, step[0], rtol=1e-3, atol=0):
+                    raise ValueError("plotter draws images on evenly spaced grids only; "
+                                     "these coordinates are not evenly spaced (resample the data first)")
             a = 0.5 * (a[:-1] + a[1:])
         if a.size != n:
             raise ValueError(f"grid coordinates: expected {n} centres or {n + 1} edges, got {a.size}")
@@ -819,7 +824,8 @@ class PltAxes:
         if tick_label is not None:
             self._ax.set_xticks(list(x), [str(t) for t in _np.atleast_1d(tick_label)])
         return _RectGroup(self, line, [(float(l0), float(b0), float(w0), float(h0))
-                                       for l0, b0, w0, h0 in zip(_np.atleast_1d(left), b, w, h)], out)
+                                       for l0, b0, w0, h0 in zip(_np.atleast_1d(left), b, w, h)], out,
+                          label=_legend_label(label))
 
     def barh(self, y, width, height=0.8, left=0.0, color=None, label=None, tick_label=None, xerr=None,
              align="center", edgecolor=None, capsize=None, **kw):
@@ -851,7 +857,8 @@ class PltAxes:
         if tick_label is not None:
             self._ax.set_yticks(list(y), [str(t) for t in _np.atleast_1d(tick_label)])
         return _RectGroup(self, line, [(float(l0), float(b0), float(w0), float(h0))
-                                       for l0, b0, w0, h0 in zip(lf, bottom, wd, ht)], out)
+                                       for l0, b0, w0, h0 in zip(lf, bottom, wd, ht)], out,
+                          label=_legend_label(label), horizontal=True)
 
     def step(self, x, y, *args, where="pre", **kw):
         """Step plot (where: 'pre', 'post', 'mid')."""
@@ -1045,7 +1052,16 @@ class PltAxes:
               and not isinstance(_np.atleast_1d(_np.asarray(args[0], dtype=object))[0], str)):
             handles = args[0]
         if handles is not None:
-            handles = [h[0] if isinstance(h, (list, tuple)) else h for h in handles]
+            def unwrap(h):
+                if isinstance(h, _RectGroup):
+                    return h._line
+                if isinstance(h, _Rect):
+                    return h._group._line
+                return h[0] if isinstance(h, (list, tuple)) else h
+            handles = [unwrap(h) for h in handles]
+            for old in getattr(self, "_legend_standins", []):  # from an earlier legend() call
+                old.remove()
+            self._legend_standins = []
             labels = list(labels) if labels is not None else [h.label for h in handles]
             host = getattr(self, "_twin_of", None)
             if host is not None and any(hasattr(h, "_panel") and h in host._ax.lines() for h in handles):
@@ -1061,8 +1077,9 @@ class PltAxes:
                         self._ax.legend_with_twin = True
                     else:
                         # A line of another panel: an entry with the same look here.
-                        self._ax.plot([], [], label=str(lab), color=h.color, style=h.style, width=h.width,
-                                      marker=None if h.marker == "none" else h.marker)
+                        self._legend_standins.append(
+                            self._ax.plot([], [], label=str(lab), color=h.color, style=h.style, width=h.width,
+                                          marker=None if h.marker == "none" else h.marker))
         elif len(args) == 1 or labels is not None:
             labels = labels if labels is not None else args[0]
             for h, lab in zip(self._ax.lines(), labels):
@@ -1106,7 +1123,9 @@ class PltAxes:
         self._ax.autoscale(x=bool(scalex), y=bool(scaley))
 
     def get_legend_handles_labels(self):
-        lines = [l for l in self._ax.lines() if l.label and not l.label.startswith("_")]
+        standins = getattr(self, "_legend_standins", [])
+        lines = [l for l in self._ax.lines()
+                 if l.in_legend and not l.label.startswith("_") and l not in standins]
         return lines, [l.label for l in lines]
 
     def get_xticklabels(self, *_, **__):
@@ -1126,13 +1145,17 @@ class PltAxes:
     def bar_label(self, container, labels=None, fmt="%g", padding=0, **kw):
         """Value labels at the end of each bar of a bar() result."""
         out = []
+        horizontal = getattr(container, "_horizontal", False)
+        style = {k: v for k, v in kw.items() if k in ("fontsize", "color")}
         for i, r in enumerate(container):
-            h = r.get_height()
-            text = labels[i] if labels is not None else (fmt % h if "%" in fmt else fmt.format(h))
-            x = r.get_x() + r.get_width() / 2
-            y = r.get_y() + h
-            out.append(self.text(x, y, text, ha="center", va="bottom" if h >= 0 else "top",
-                                 **{k: v for k, v in kw.items() if k in ("fontsize", "color")}))
+            v = r.get_width() if horizontal else r.get_height()
+            text = labels[i] if labels is not None else (fmt % v if "%" in fmt else fmt.format(v))
+            if horizontal:  # at the end of the bar, vertically centred
+                out.append(self.text(r.get_x() + v, r.get_y() + r.get_height() / 2, " " + text if v >= 0 else text + " ",
+                                     ha="left" if v >= 0 else "right", va="center", **style))
+            else:
+                out.append(self.text(r.get_x() + r.get_width() / 2, r.get_y() + v, text, ha="center",
+                                     va="bottom" if v >= 0 else "top", **style))
         return out
 
     def tick_params(self, axis="both", **kw):
@@ -1191,8 +1214,13 @@ class _PltFigure:
             return
         fname = str(fname)
         if format and not fname.lower().endswith("." + format.lower()):
-            fname += "." + format.lower()
-        elif not _os.path.splitext(fname)[1]:
+            # Exactly this path, in the given format (as matplotlib): export
+            # with the format's extension, then move into place.
+            tmp = fname + "." + format.lower()
+            self._fig.savefig(tmp, width=self._size[0], height=self._size[1], scale=scale)
+            _os.replace(tmp, fname)
+            return
+        if not _os.path.splitext(fname)[1]:
             fname += ".png"
         self._fig.savefig(fname, width=self._size[0], height=self._size[1], scale=scale)
 
@@ -1422,9 +1450,8 @@ def _refits(method):
     @functools.wraps(method)
     def wrapper(self, *args, **kw):
         result = method(self, *args, **kw)
-        fit_x, fit_y = "x" not in self._fixed_limits, "y" not in self._fixed_limits
-        if fit_x or fit_y:
-            self._ax.autoscale(x=fit_x, y=fit_y)
+        # Axes with limits set by the script (here or on a shared partner) stay.
+        self._ax.fit_following()
         return result
 
     return wrapper
@@ -1819,6 +1846,14 @@ class _Rect:
     def get_height(self):
         return self._group._rects[self._i][3]
 
+    @property
+    def label(self):
+        return self._group._line.label
+
+    @label.setter
+    def label(self, s):
+        self._group._line.label = s
+
     def get_xy(self):
         return (self.get_x(), self.get_y())
 
@@ -1849,28 +1884,49 @@ class _Rect:
 
 class _RectGroup(list):
     """bar() / hist() result: one _Rect per bar (iterate, index, get_height ...).
-    All bars are one filled shape until a single bar is restyled; then each bar
-    becomes its own shape. Other attributes go to the drawn Line."""
+    All bars are one shape until a single bar is restyled; then each bar
+    becomes its own shape. Other attributes (label, color, remove, ...) act
+    on the drawn shape(s), so it can also be used like the Line it was."""
 
-    def __init__(self, ax, line, rects, lines=None):
+    _own = ("_ax", "_line", "_rects", "_lines", "_label", "_horizontal")
+
+    def __init__(self, ax, line, rects, lines=None, label=None, horizontal=False):
         super().__init__(_Rect(self, i) for i in range(len(rects)))
-        self._ax, self._line, self._rects, self._lines = ax, line, rects, lines
+        object.__setattr__(self, "_ax", ax)
+        object.__setattr__(self, "_line", line)
+        object.__setattr__(self, "_rects", rects)
+        object.__setattr__(self, "_lines", lines)
+        object.__setattr__(self, "_label", label)
+        object.__setattr__(self, "_horizontal", horizontal)
 
     def _line_of(self, i):
         return self._lines[i] if self._lines else self._line
 
     def _separate(self, i):
         if self._lines is None:
-            fill = self._line.fill or self._line.color
-            label = self._line.label
-            self._line.remove()
-            self._lines = []
+            src = self._line
+            fill, color, style, width = src.fill, src.color, src.style, src.width
+            src.remove()
+            lines = []
             for k, (x0, y0, w, h) in enumerate(self._rects):
                 xs, ys = PltAxes._bar_outline([x0], [w], [h], [y0], True)
-                self._lines.append(self._ax._ax.plot(xs, ys, fill=fill, color=fill, style="none",
-                                                     label=label if k == 0 and label else None))
-            self._line = self._lines[0]
+                # Only a label the user gave goes to the legend (once).
+                lab = self._label if k == 0 and self._label else None
+                lines.append(self._ax._ax.plot(xs, ys, fill=fill, color=color, style=style, width=width,
+                                               label=lab))
+            object.__setattr__(self, "_lines", lines)
+            object.__setattr__(self, "_line", lines[0])
         return self._lines[i]
+
+    def _all_lines(self):
+        return list(self._lines) if self._lines else [self._line]
+
+    def remove(self, *args):
+        """remove(): take the bars off the plot (list.remove(x) with an argument)."""
+        if args:
+            return list.remove(self, *args)
+        for line in self._all_lines():
+            line.remove()
 
     @property
     def patches(self):
@@ -1878,6 +1934,15 @@ class _RectGroup(list):
 
     def __getattr__(self, name):
         return getattr(self._line, name)
+
+    def __setattr__(self, name, value):
+        if name in self._own:
+            object.__setattr__(self, name, value)
+        elif name == "label":
+            self._line.label = value
+        else:
+            for line in self._all_lines():
+                setattr(line, name, value)
 
 
 class _TickLabel:
@@ -1901,17 +1966,39 @@ class _TickLabel:
         pass
 
 
+class _Colormap(str):
+    """A colour map: its name (plotter takes names everywhere) and, as in
+    matplotlib, callable on values in 0..1 -> RGBA rows."""
+
+    def __call__(self, x, alpha=None):
+        cols = _plotter._plotter._colormap_colors(str(self), 256)
+        v = _np.asarray(x, dtype=float)
+        if v.dtype.kind == "f" and not _np.issubdtype(_np.asarray(x).dtype, _np.integer):
+            idx = _np.clip((v * 255).round(), 0, 255).astype(int)
+        else:
+            idx = _np.clip(v, 0, 255).astype(int)
+        rgba = _np.array([[int(c[1:3], 16) / 255, int(c[3:5], 16) / 255, int(c[5:7], 16) / 255, 1.0]
+                          for c in cols])[idx]
+        if alpha is not None:
+            rgba[..., 3] = alpha
+        return tuple(rgba) if rgba.ndim == 1 else rgba
+
+
 class _ColormapNames:
-    """plt.cm.viridis etc.: the colour map name (plotter takes names everywhere)."""
+    """plt.cm.viridis etc."""
 
     def __getattr__(self, name):
         if name.startswith("_"):
             raise AttributeError(name)
-        return name
+        return _Colormap(name)
 
 
 cm = _ColormapNames()
 
 
 def get_cmap(name=None, lut=None):
-    return name or "viridis"
+    return _Colormap(name or "viridis")
+
+
+def tick_params(axis="both", **kw):
+    gca().tick_params(axis=axis, **kw)
