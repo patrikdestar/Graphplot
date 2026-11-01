@@ -227,6 +227,8 @@ is released, not during a drag.
 | `autoscale(x=True, y=True)` | fit the data |
 | `reset_view()`, `set_home_view()` | home view (also the `Home` key) |
 | `title`, `xlabel`, `ylabel` | read/write properties |
+| `set_xticks(ticks, labels=None)`, `set_yticks(...)` | custom tick positions and optional text labels; `[]` hides the ticks, `None` restores automatic ticks (saved in figure files) |
+| `get_xticks()`, `get_yticks()` | `(positions, labels)` of custom ticks, or `None` |
 | `legend(visible=True)`, `grid(visible=True)` | toggles |
 | `undo()`, `redo()` | the same history as Ctrl+Z / Ctrl+Shift+Z in the window |
 | `save(filename)` | save everything (all panels' data, peaks with labels and comments, markers, annotations, region, styles, panel grid and views, timeline) as `.gpfig`; reopen with `plotter.load()` |
@@ -319,7 +321,7 @@ import plotter.pyplot as plt
 | `figure`, `subplots` (incl. `gridspec_kw` height ratios / hspace), `fig.add_subplot`, `gcf`, `gca`, `sca`, `close` (figure, number, name or `'all'`), `show`, `pause`, `savefig(dpi=, format=)` to a path or a binary file object | non-uniform `pcolormesh` grids |
 | `plot` with format strings (`'r--o'`, `'C1--'`, several x/y/fmt groups), `scatter`, `errorbar(fmt=)`, `hist` (one or several datasets; `step`, `stepfilled`/`bar`, `errorbar`), `stairs` | polar and 3D axes |
 | `fill_between` (incl. `where=`), `contour`/`contourf` (X, Y, Z), `imshow` (origin, extent, cmap, vmin/vmax), `pcolormesh` (uniform grids, edges or centres), `colorbar(mappable, label=)`, `axhline`, `axvline`, `text` (incl. `transform=ax.transAxes`), `annotate` | twin axes, RGB images |
-| `xlabel`, `ylabel`, `title`, `xlim`, `ylim`, `xscale`, `yscale`, `legend(labels, loc=name or code, frameon=)`, `ax.set(...)`, `grid`, `plt.style.use`; colours `'C0'`…, `'tab:blue'`…, `'0.5'` | `rcParams` (use `plotter.style.set`) |
+| `xlabel`, `ylabel`, `title`, `xlim`, `ylim`, `xscale`, `yscale`, `legend(labels, loc=name or code, frameon=)`, `ax.set(...)`, `xticks`/`yticks`, `ax.set_xticks`/`set_xticklabels`, `grid`, `plt.style.use`; colours `'C0'`…, `'tab:blue'`…, `'0.5'` | `rcParams` (use `plotter.style.set`) |
 
 Axes methods use the matplotlib names (`set_xlabel`, `set_xlim`,
 `set_yscale`, `invert_xaxis`, `get_xlim`, `autoscale`, …). `suptitle` sets the

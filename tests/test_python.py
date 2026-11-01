@@ -839,6 +839,24 @@ class PlotterTests(unittest.TestCase):
             plt.savefig(os.path.join(d, "img.png"))
             plt.close("all")
 
+    def test_custom_ticks(self):
+        import plotter.pyplot as plt
+        f = self.fig
+        f.plot([1, 2, 3], [1, 2, 3])
+        f.set_xticks([1, 2, 3], ["a", "b", "c"])
+        self.assertEqual(f.get_xticks()[1], ["a", "b", "c"])
+        f.set_yticks([])
+        self.assertEqual(len(f.get_yticks()[0]), 0)
+        with self.assertRaises(ValueError):
+            f.set_xticks([1, 2], ["only one"])
+        f.set_xticks(None)
+        self.assertIsNone(f.get_xticks())
+        plt.figure()
+        plt.plot([0, 1], [0, 1])
+        plt.xticks([0, 0.5, 1], ["lo", "mid", "hi"])
+        self.assertEqual(plt.xticks()[1], ["lo", "mid", "hi"])
+        plt.close("all")
+
     def test_pyplot_compat_round2(self):
         import io
         import plotter.pyplot as plt

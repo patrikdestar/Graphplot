@@ -7,6 +7,7 @@
 #include <QColor>
 #include <QPointF>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 #include <QtGlobal>
 
@@ -148,6 +149,11 @@ struct AxesInfo {
     bool showPeakLabels = true;
     bool xLog = false;          // logarithmic axes
     bool yLog = false;
+    // Custom ticks: positions (and optional text labels; empty = the numbers).
+    // customXTicks = false: automatic ticks; true with no positions: no ticks.
+    bool customXTicks = false, customYTicks = false;
+    QVector<double> xTicks, yTicks;
+    QStringList xTickLabels, yTickLabels;
     bool operator==(const AxesInfo&) const = default;
 };
 

@@ -221,12 +221,32 @@ Peak peakFromJson(const QJsonObject& o)
     return p;
 }
 
+QJsonValue ticksToJson(bool custom, const QVector<double>& pos, const QStringList& labels);
+
 QJsonObject axesToJson(const AxesInfo& a)
 {
-    return {{"title", a.title},       {"xLabel", a.xLabel},       {"yLabel", a.yLabel},
+    return {{"xTicks", ticksToJson(a.customXTicks, a.xTicks, a.xTickLabels)},
+            {"yTicks", ticksToJson(a.customYTicks, a.yTicks, a.yTickLabels)},{"title", a.title},       {"xLabel", a.xLabel},       {"yLabel", a.yLabel},
             {"legend", a.legendVisible}, {"grid", a.gridVisible},  {"xReversed", a.xReversed},
             {"yReversed", a.yReversed}, {"diagonal", a.showDiagonal}, {"peakLabels", a.showPeakLabels},
             {"xLog", a.xLog},         {"yLog", a.yLog}};
+}
+
+QJsonValue ticksToJson(bool custom, const QVector<double>& pos, const QStringList& labels)
+{
+    if (!custom) return QJsonValue();
+    QJsonArray p, l;
+    for (double v : pos) p << v;
+    for (const QString& t : labels) l << t;
+    return QJsonObject{{"positions", p}, {"labels", l}};
+}
+
+void ticksFromJson(const QJsonValue& v, bool* custom, QVector<double>* pos, QStringList* labels)
+{
+    *custom = v.isObject();
+    if (!*custom) return;
+    for (const QJsonValue& p : v["positions"].toArray()) *pos << p.toDouble();
+    for (const QJsonValue& l : v["labels"].toArray()) *labels << l.toString();
 }
 
 AxesInfo axesFromJson(const QJsonObject& o)
@@ -243,6 +263,8 @@ AxesInfo axesFromJson(const QJsonObject& o)
     a.showPeakLabels = o["peakLabels"].toBool(true);
     a.xLog = o["xLog"].toBool();
     a.yLog = o["yLog"].toBool();
+    ticksFromJson(o["xTicks"], &a.customXTicks, &a.xTicks, &a.xTickLabels);
+    ticksFromJson(o["yTicks"], &a.customYTicks, &a.yTicks, &a.yTickLabels);
     return a;
 }
 

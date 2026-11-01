@@ -1200,6 +1200,28 @@ void PlotRenderer::applyAxesInfo()
     if (!m_linTickerX) m_linTickerX = m_x->ticker(), m_linTickerY = m_y->ticker();
     setScale(m_x, m_x2, info.xLog, m_linTickerX);
     setScale(m_y, m_y2, info.yLog, m_linTickerY);
+    // Custom ticks replace the axis' ticker (and are taken away again when
+    // switched off, restoring whatever ticker the axis had, e.g. clock time).
+    auto setCustomTicks = [](QCPAxis* a, QCPAxis* mirror, bool on, const QVector<double>& pos,
+                             const QStringList& labels, QSharedPointer<QCPAxisTicker>& saved) {
+        if (on) {
+            if (!saved) saved = a->ticker();
+            auto t = QSharedPointer<QCPAxisTickerText>::create();
+            for (qsizetype i = 0; i < pos.size(); ++i) {
+                QString text = i < labels.size() ? labels[i] : QString::number(pos[i], 'g', 6);
+                t->addTick(pos[i], text.replace('-', QChar(0x2212)));
+            }
+            t->setSubTickCount(0);
+            a->setTicker(t);
+            mirror->setTicker(t);
+        } else if (saved) {
+            a->setTicker(saved);
+            mirror->setTicker(saved);
+            saved.reset();
+        }
+    };
+    setCustomTicks(m_x, m_x2, info.customXTicks, info.xTicks, info.xTickLabels, m_tickerBeforeCustomX);
+    setCustomTicks(m_y, m_y2, info.customYTicks, info.yTicks, info.yTickLabels, m_tickerBeforeCustomY);
     // An axis switched back from log to linear gets the style's format again.
     for (QCPAxis* a : {m_x, m_y}) applyNumberFormat(a, st);
     m_x->setRangeReversed(info.xReversed);

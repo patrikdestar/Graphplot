@@ -188,6 +188,7 @@ private:
     QCPAxis* m_y2 = nullptr;
     QCPLegend* m_legend = nullptr;
     QSharedPointer<QCPAxisTicker> m_linTickerX, m_linTickerY;  // kept while an axis is logarithmic
+    QSharedPointer<QCPAxisTicker> m_tickerBeforeCustomX, m_tickerBeforeCustomY;  // while custom ticks are shown
     QCPLayer* m_imageLayer = nullptr;
     QCPLayer* m_regionLayer = nullptr;
     QCPLayer* m_objectLayer = nullptr;

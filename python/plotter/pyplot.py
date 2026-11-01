@@ -436,6 +436,33 @@ class PltAxes:
     def get_ylim(self):
         return self._get_lim("y")
 
+    # ---- ticks ----------------------------------------------------------------------
+    def set_xticks(self, ticks, labels=None, **_):
+        self._ax.set_xticks(None if ticks is None else list(ticks), labels)
+
+    def set_yticks(self, ticks, labels=None, **_):
+        self._ax.set_yticks(None if ticks is None else list(ticks), labels)
+
+    def set_xticklabels(self, labels, **_):
+        current = self._ax.get_xticks()
+        if current is None:
+            raise RuntimeError("set_xticklabels: set the tick positions first (set_xticks)")
+        self._ax.set_xticks(list(current[0]), [str(t) for t in labels])
+
+    def set_yticklabels(self, labels, **_):
+        current = self._ax.get_yticks()
+        if current is None:
+            raise RuntimeError("set_yticklabels: set the tick positions first (set_yticks)")
+        self._ax.set_yticks(list(current[0]), [str(t) for t in labels])
+
+    def get_xticks(self):
+        t = self._ax.get_xticks()
+        return _np.asarray([]) if t is None else t[0]
+
+    def get_yticks(self):
+        t = self._ax.get_yticks()
+        return _np.asarray([]) if t is None else t[0]
+
     def set_xscale(self, scale):
         self._ax.x_log = scale == "log"
 
@@ -697,6 +724,24 @@ def ylim(*args, bottom=None, top=None):
         gca().set_ylim(*args, **({"bottom": bottom} if bottom is not None else {}),
                        **({"top": top} if top is not None else {}))
     return gca().get_ylim()
+
+
+def xticks(ticks=None, labels=None, **kw):
+    """xticks() -> (positions, labels); xticks(ticks, labels=None) sets them."""
+    ax = gca()
+    if ticks is not None or labels is not None:
+        ax.set_xticks(ticks if ticks is not None else ax.get_xticks(), labels)
+    t = ax.panel.get_xticks()
+    return (ax.get_xticks(), [] if t is None else t[1])
+
+
+def yticks(ticks=None, labels=None, **kw):
+    """yticks() -> (positions, labels); yticks(ticks, labels=None) sets them."""
+    ax = gca()
+    if ticks is not None or labels is not None:
+        ax.set_yticks(ticks if ticks is not None else ax.get_yticks(), labels)
+    t = ax.panel.get_yticks()
+    return (ax.get_yticks(), [] if t is None else t[1])
 
 
 def xscale(s):

@@ -1405,6 +1405,42 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
     auto [yg, ys] = axesProp(&AxesInfo::yLabel);
     fig.def_property("title", tg, ts);
     fig.def_property("xlabel", xg, xs);
+    // Custom ticks: positions and optional labels; None = automatic ticks.
+    for (const bool isX : {true, false}) {
+        fig.def(
+            isX ? "set_xticks" : "set_yticks",
+            [isX](FigurePtr self, const py::object& ticks, const py::object& labels) {
+                bool custom = !ticks.is_none();
+                QVector<double> pos;
+                QStringList text;
+                if (custom) {
+                    pos = toVector(ticks, "ticks");
+                    for (double v : pos)
+                        if (!std::isfinite(v)) throw py::value_error("tick positions must be finite");
+                    if (!labels.is_none()) {
+                        for (const py::handle& l : labels) text << QString::fromStdString(py::str(l).cast<std::string>());
+                        if (text.size() != pos.size())
+                            throw py::value_error("give one label per tick position");
+                    }
+                }
+                inGui([&] {
+                    AxesInfo a = self->model()->axesInfo();
+                    (isX ? a.customXTicks : a.customYTicks) = custom;
+                    (isX ? a.xTicks : a.yTicks) = pos;
+                    (isX ? a.xTickLabels : a.yTickLabels) = text;
+                    self->editor()->setAxesInfo(a);
+                });
+            },
+            py::arg("ticks"), py::arg("labels") = py::none(),
+            "Tick positions (and optional text labels); [] hides the ticks, None restores automatic ticks.");
+        fig.def(isX ? "get_xticks" : "get_yticks", [isX](FigurePtr self) -> py::object {
+            const AxesInfo a = inGui([&] { return self->model()->axesInfo(); });
+            if (!(isX ? a.customXTicks : a.customYTicks)) return py::none();
+            std::vector<std::string> labels;
+            for (const QString& t : isX ? a.xTickLabels : a.yTickLabels) labels.push_back(t.toStdString());
+            return py::make_tuple(toNumpy(isX ? a.xTicks : a.yTicks), labels);
+        }, "(positions, labels) of custom ticks, or None for automatic ticks.");
+    }
     fig.def_property("ylabel", yg, ys);
     fig.def(
         "legend",
