@@ -85,7 +85,10 @@ public:
     // undo step. threshold <= 0 uses the dataset's lowest contour level (so
     // "what you see is what gets picked"). Peaks closer than minDistance grid
     // points to an existing peak are skipped, so picking twice adds nothing.
+    // With several 2D datasets everything is one undo step (none if nothing
+    // new was found).
     QList<ObjectId> pickPeaks(ObjectId matrixId, PeakPickOptions opt);
+    QList<ObjectId> pickPeaks(const QList<ObjectId>& matrixIds, const PeakPickOptions& opt);
 
     // ---- region ----------------------------------------------------------
     void setRegion(const Region& after, std::optional<Region> before = std::nullopt);
@@ -103,6 +106,8 @@ public:
     void redo();
 
 private:
+    // Peaks picked on one 2D dataset that don't duplicate its existing peaks.
+    std::vector<Peak> newPeaks(ObjectId matrixId, PeakPickOptions opt) const;
     PlotModel* m_model;
     QUndoStack* m_stack;
 };

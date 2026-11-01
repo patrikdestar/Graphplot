@@ -327,10 +327,7 @@ void PeakTable::pickNow()
         QMessageBox::information(this, "Pick peaks", "Peak picking needs 2D data (a contour plot).");
         return;
     }
-    m_editor->undoStack()->beginMacro("Pick peaks");
-    int n = 0;
-    for (ObjectId id : targets) n += int(m_editor->pickPeaks(id, o).size());
-    m_editor->undoStack()->endMacro();
+    const int n = int(m_editor->pickPeaks(targets, o).size());
     m_count->setText(QString("%1 peaks (%2 new)").arg(m_model->peaks().size()).arg(n));
 }
 

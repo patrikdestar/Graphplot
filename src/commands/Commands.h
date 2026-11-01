@@ -24,6 +24,7 @@ enum CommandId {
     CmdSetRegion,
     CmdEditMatrix,
     CmdEditPeak,
+    CmdScaleLevels,
 };
 
 // ---- Traits -----------------------------------------------------------------
@@ -170,6 +171,45 @@ private:
     typename Traits::Type m_before;
     typename Traits::Type m_after;
     bool m_mergeable;
+    QElapsedTimer m_lastEdit;
+};
+
+// Scales the contour levels of one or more 2D datasets as one undo step.
+// A continuous wheel scroll over the same datasets merges into one step,
+// however many datasets are scaled.
+class ScaleLevelsCommand : public QUndoCommand {
+public:
+    struct Change {
+        Matrix before, after;  // id, name and style only
+    };
+    ScaleLevelsCommand(PlotModel* model, std::vector<Change> changes)
+        : QUndoCommand("Scale contour levels"), m_model(model), m_changes(std::move(changes))
+    {
+        m_lastEdit.start();
+    }
+    void redo() override
+    {
+        for (const Change& c : m_changes) MatrixTraits::update(*m_model, c.after);
+    }
+    void undo() override
+    {
+        for (const Change& c : m_changes) MatrixTraits::update(*m_model, c.before);
+    }
+    int id() const override { return CmdScaleLevels; }
+    bool mergeWith(const QUndoCommand* other) override
+    {
+        auto* o = static_cast<const ScaleLevelsCommand*>(other);
+        if (o->m_changes.size() != m_changes.size() || m_lastEdit.elapsed() > kMergeWindowMs) return false;
+        for (size_t i = 0; i < m_changes.size(); ++i)
+            if (o->m_changes[i].after.id != m_changes[i].after.id) return false;
+        for (size_t i = 0; i < m_changes.size(); ++i) m_changes[i].after = o->m_changes[i].after;
+        m_lastEdit.restart();
+        return true;
+    }
+
+private:
+    PlotModel* m_model;
+    std::vector<Change> m_changes;
     QElapsedTimer m_lastEdit;
 };
 

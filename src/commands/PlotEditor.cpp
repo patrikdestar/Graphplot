@@ -91,7 +91,15 @@ ObjectId PlotEditor::addMatrix(Matrix m)
 
 void PlotEditor::removeMatrix(ObjectId id)
 {
-    if (m_model->matrix(id)) m_stack->push(new RemoveMatrixCommand(m_model, id));
+    if (!m_model->matrix(id)) return;
+    // Its peaks go with it, in the same undo step (undo restores both).
+    QList<ObjectId> peaks;
+    for (const Peak& p : m_model->peaks())
+        if (p.matrixId == id) peaks << p.id;
+    m_stack->beginMacro("Remove 2D dataset");
+    for (ObjectId p : peaks) m_stack->push(new RemovePeakCommand(m_model, p));
+    m_stack->push(new RemoveMatrixCommand(m_model, id));
+    m_stack->endMacro();
 }
 
 void PlotEditor::setMatrixAppearance(ObjectId id, const QString& name, const ContourStyle& style,
@@ -119,26 +127,21 @@ void PlotEditor::setMatrixData(ObjectId id, int nx, int ny, QVector<double> z, d
 
 void PlotEditor::scaleContourLevels(const QList<ObjectId>& ids, double factor)
 {
-    if (!(factor > 0) || ids.isEmpty()) return;
-    const bool macro = ids.size() > 1;
-    if (macro) m_stack->beginMacro("Scale contour levels");
+    if (!(factor > 0)) return;
+    std::vector<ScaleLevelsCommand::Change> changes;
     for (ObjectId id : ids) {
         const Matrix* cur = m_model->matrix(id);
         if (!cur) continue;
-        ContourStyle s = cur->style;
+        ScaleLevelsCommand::Change c;
+        c.before.id = id;
+        c.before.name = cur->name;
+        c.before.style = cur->style;
+        c.after = c.before;
         // Clamp: a level of exactly 0 (underflow) could never be scaled back.
-        s.baseLevel = std::clamp(s.baseLevel * factor, 1e-300, 1e300);
-        Matrix before;
-        before.id = id;
-        before.name = cur->name;
-        before.style = cur->style;
-        Matrix after = before;
-        after.style = s;
-        // Mergeable, so a continuous wheel scroll becomes one undo step.
-        m_stack->push(new EditMatrixCommand(m_model, before, after, "Scale contour levels",
-                                            !macro));
+        c.after.style.baseLevel = std::clamp(cur->style.baseLevel * factor, 1e-300, 1e300);
+        changes.push_back(std::move(c));
     }
-    if (macro) m_stack->endMacro();
+    if (!changes.empty()) m_stack->push(new ScaleLevelsCommand(m_model, std::move(changes)));
 }
 
 ObjectId PlotEditor::addPeak(Peak p)
@@ -161,6 +164,21 @@ QList<ObjectId> PlotEditor::addPeaks(std::vector<Peak> peaks, const QString& tex
 
 QList<ObjectId> PlotEditor::pickPeaks(ObjectId matrixId, PeakPickOptions opt)
 {
+    return pickPeaks(QList<ObjectId>{matrixId}, opt);
+}
+
+QList<ObjectId> PlotEditor::pickPeaks(const QList<ObjectId>& matrixIds, const PeakPickOptions& opt)
+{
+    std::vector<Peak> fresh;
+    for (ObjectId id : matrixIds) {
+        std::vector<Peak> p = newPeaks(id, opt);
+        std::move(p.begin(), p.end(), std::back_inserter(fresh));
+    }
+    return addPeaks(std::move(fresh), "Pick peaks");
+}
+
+std::vector<Peak> PlotEditor::newPeaks(ObjectId matrixId, PeakPickOptions opt) const
+{
     const Matrix* m = m_model->matrix(matrixId);
     if (!m) return {};
     if (!(opt.threshold > 0)) {
@@ -178,7 +196,10 @@ QList<ObjectId> PlotEditor::pickPeaks(ObjectId matrixId, PeakPickOptions opt)
     auto key = [](qint64 i, qint64 j) { return (i << 32) ^ (j & 0xffffffff); };
     QHash<qint64, QVector<QPointF>> buckets;
     for (const Peak& e : m_model->peaks())
-        buckets[key(qint64(std::floor(e.x / bx)), qint64(std::floor(e.y / by)))] << QPointF(e.x, e.y);
+        // Only peaks of this spectrum (or imported ones without one) count:
+        // overlaid spectra may have peaks at the same position.
+        if (e.matrixId == matrixId || e.matrixId == kInvalidId)
+            buckets[key(qint64(std::floor(e.x / bx)), qint64(std::floor(e.y / by)))] << QPointF(e.x, e.y);
     std::vector<Peak> fresh;
     for (Peak& p : found) {
         const qint64 i = qint64(std::floor(p.x / bx)), j = qint64(std::floor(p.y / by));
@@ -192,7 +213,7 @@ QList<ObjectId> PlotEditor::pickPeaks(ObjectId matrixId, PeakPickOptions opt)
                     }
         if (!dup) fresh.push_back(std::move(p));
     }
-    return addPeaks(std::move(fresh), "Pick peaks");
+    return fresh;
 }
 
 void PlotEditor::removePeak(ObjectId id)

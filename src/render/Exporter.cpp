@@ -5,11 +5,44 @@
 #include "qcustomplot.h"
 
 #include <QFileInfo>
+#include <QPageSize>
+#include <QPdfWriter>
 #include <QSvgGenerator>
 
 namespace gp {
 
 namespace {
+
+// One physical scale for every format: 100 figure pixels per inch (the
+// pyplot convention), so an 800 px wide figure is 8 inches as PNG
+// (metadata), SVG and PDF alike.
+constexpr int kDpi = 100;
+
+void prepareVectorPainter(QCPPainter& painter)
+{
+    // Vectorized mode: no pixmap caching, no cosmetic-pen tricks that only
+    // make sense on screen, so every line stays a true vector path.
+    painter.setMode(QCPPainter::pmVectorized);
+    painter.setMode(QCPPainter::pmNoCaching);
+    painter.setMode(QCPPainter::pmNonCosmetic);
+}
+
+bool exportPdf(QCustomPlot* plot, const QString& fileName, int w, int h)
+{
+    QPdfWriter pdf(fileName);
+    pdf.setCreator("Graphplot");
+    pdf.setTitle(plot->window() ? plot->window()->windowTitle() : QString());
+    pdf.setResolution(kDpi);  // one device pixel = one figure pixel
+    pdf.setPageMargins(QMarginsF(0, 0, 0, 0));
+    pdf.setPageSize(QPageSize(QSizeF(w * 72.0 / kDpi, h * 72.0 / kDpi), QPageSize::Point, QString(),
+                              QPageSize::ExactMatch));
+    QCPPainter painter;
+    if (!painter.begin(&pdf)) return false;
+    prepareVectorPainter(painter);
+    plot->toPainter(&painter, w, h);
+    painter.end();
+    return true;
+}
 
 bool exportSvg(QCustomPlot* plot, const QString& fileName, int w, int h)
 {
@@ -17,15 +50,12 @@ bool exportSvg(QCustomPlot* plot, const QString& fileName, int w, int h)
     gen.setFileName(fileName);
     gen.setSize(QSize(w, h));
     gen.setViewBox(QRect(0, 0, w, h));
-    gen.setResolution(96);
+    gen.setResolution(kDpi);
     gen.setTitle(plot->window() ? plot->window()->windowTitle() : QString());
     gen.setDescription("Created with Graphplot");
     QCPPainter painter;
     if (!painter.begin(&gen)) return false;
-    // Vectorized mode: no pixmap caching, no cosmetic-pen tricks that only
-    // make sense on screen, so every line stays a true vector path.
-    painter.setMode(QCPPainter::pmVectorized);
-    painter.setMode(QCPPainter::pmNoCaching);
+    prepareVectorPainter(painter);
     plot->toPainter(&painter, w, h);
     painter.end();
     return true;
@@ -46,9 +76,9 @@ bool exportFigure(PlotRenderer* renderer, const QString& fileName, const ExportO
     bool ok = false;
     if (ext == "png") {
         ok = plot->savePng(fileName, w, h, opts.scale > 0 ? opts.scale : 1.0, -1,
-                           int(96 * (opts.scale > 0 ? opts.scale : 1.0)), QCP::ruDotsPerInch);
+                           int(kDpi * (opts.scale > 0 ? opts.scale : 1.0)), QCP::ruDotsPerInch);
     } else if (ext == "pdf") {
-        ok = plot->savePdf(fileName, w, h, QCP::epNoCosmetic, "Graphplot");
+        ok = exportPdf(plot, fileName, w, h);
     } else if (ext == "svg") {
         ok = exportSvg(plot, fileName, w, h);
     } else {

@@ -1372,6 +1372,52 @@ private slots:
         delete mime;
     }
 
+    void auditRound2()
+    {
+        // Overlaid spectra each get their own peaks; one undo step; removing
+        // a spectrum removes its peaks and undo restores both.
+        auto w = makeWindow();
+        PlotEditor* ed = w->editor();
+        const ObjectId m1 = ed->addMatrix(peaks(41));
+        const ObjectId m2 = ed->addMatrix(peaks(41));
+        PeakPickOptions o;
+        o.threshold = 0.5;
+        const int steps = w->undoStack()->count();
+        const auto ids = ed->pickPeaks(QList<ObjectId>{m1, m2}, o);
+        QCOMPARE(ids.size(), 2);
+        QCOMPARE(w->undoStack()->count(), steps + 1);
+        QVERIFY(ed->pickPeaks(QList<ObjectId>{m1, m2}, o).isEmpty());
+        QCOMPARE(w->undoStack()->count(), steps + 1);  // nothing new: no empty step
+        ed->removeMatrix(m1);
+        QCOMPARE(int(w->model()->peaks().size()), 1);
+        w->undoStack()->undo();
+        QCOMPARE(int(w->model()->peaks().size()), 2);
+        // Scrolling levels of two spectra merges into one step.
+        const int before = w->undoStack()->index();
+        const double level = w->model()->matrix(m2)->style.baseLevel;
+        for (int i = 0; i < 5; ++i) ed->scaleContourLevels({m1, m2}, 1.2);
+        QCOMPARE(w->undoStack()->index(), before + 1);
+        w->undoStack()->undo();
+        QCOMPARE(w->model()->matrix(m2)->style.baseLevel, level);
+
+        // Shrinking a grid hides the panels that no longer fit.
+        GridSpec g;
+        g.rows = g.cols = 2;
+        w->setGrid(g);
+        g.rows = g.cols = 1;
+        w->setGrid(g);
+        QVERIFY(!w->axes(3).renderer->axisRect()->visible());
+        QVERIFY(w->axes(0).renderer->axisRect()->visible());
+
+        // PDF pages use 100 figure pixels per inch, like PNG and SVG.
+        QTemporaryDir dir;
+        QString err;
+        QVERIFY2(w->exportTo(dir.filePath("f.pdf"), 800, 500, 2.0, &err), qPrintable(err));
+        QFile pdf(dir.filePath("f.pdf"));
+        QVERIFY(pdf.open(QIODevice::ReadOnly));
+        QVERIFY(pdf.readAll().contains("MediaBox [0 0 576"));
+    }
+
     // ---- data loading -----------------------------------------------------------------------
     void loaderEdgeCases()
     {

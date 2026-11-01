@@ -858,11 +858,7 @@ with the nuclei; the diagonal is shown for homonuclear spectra. Returns a Contou
                         if (m.style.visible) targets << m.id;
                 }
                 if (targets.isEmpty()) throw py::value_error("peak picking needs 2D data (fig.contour / open_bruker)");
-                QList<ObjectId> all;
-                self->editor()->undoStack()->beginMacro("Pick peaks");
-                for (ObjectId t : targets) all += self->editor()->pickPeaks(t, o);
-                self->editor()->undoStack()->endMacro();
-                return all;
+                return self->editor()->pickPeaks(targets, o);
             });
             std::vector<PeakH> out;
             for (ObjectId id : ids) out.push_back(PeakH{{self, id}});
