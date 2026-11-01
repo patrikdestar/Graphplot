@@ -18,6 +18,16 @@ struct LoadResult {
 
 LoadResult loadColumnFile(const QString& fileName);
 
+// ---- helpers shared by the text loaders --------------------------------------
+// Field separator of a delimited line: tab, then ';' (files with decimal
+// commas use it), then ','; otherwise runs of whitespace (returned as ' ').
+QChar detectSeparator(const QString& line);
+// Splits on `sep` keeping empty fields (",," is a missing value); quotes are
+// stripped. With ' ' runs of whitespace separate fields.
+QStringList splitFields(const QString& line, QChar sep);
+// Number or NaN for empty / "nan" cells; sets *ok = false for other text.
+double parseCell(const QString& cell, bool* ok);
+
 struct MatrixLoadResult {
     Matrix matrix;   // id unassigned
     QString error;

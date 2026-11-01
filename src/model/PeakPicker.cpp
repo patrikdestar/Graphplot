@@ -100,17 +100,16 @@ std::vector<Peak> pickPeaks(const Matrix& m, const PeakPickOptions& opt)
         }
     std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.mag > b.mag; });
 
-    std::vector<Cand> accepted;
+    // Non-maximum suppression with an occupancy grid: every accepted peak
+    // blocks the cells within dmin - 1 of it, so each candidate is a single
+    // lookup (instead of comparing against all accepted peaks).
     const int dmin = std::max(0, opt.minDistance);
+    std::vector<char> blocked(size_t(m.nx) * size_t(m.ny), 0);
     for (const Cand& c : cands) {
-        bool close = false;
-        for (const Cand& a : accepted)
-            if (std::max(std::abs(a.ix - c.ix), std::abs(a.iy - c.iy)) < dmin) {
-                close = true;
-                break;
-            }
-        if (close) continue;
-        accepted.push_back(c);
+        if (blocked[size_t(c.iy) * size_t(m.nx) + size_t(c.ix)]) continue;
+        for (int y = std::max(0, c.iy - dmin + 1); y <= std::min(m.ny - 1, c.iy + dmin - 1); ++y)
+            for (int x = std::max(0, c.ix - dmin + 1); x <= std::min(m.nx - 1, c.ix + dmin - 1); ++x)
+                blocked[size_t(y) * size_t(m.nx) + size_t(x)] = 1;
         Peak p = makePeak(g, c.ix, c.iy);
         if (opt.restrictToRect &&
             (p.x < std::min(opt.xmin, opt.xmax) || p.x > std::max(opt.xmin, opt.xmax) ||
@@ -147,7 +146,8 @@ double sampleMatrix(const Matrix& m, double x, double y)
     if (m.nx < 2 || m.ny < 2) return std::nan("");
     const Grid g(m);
     const double fx = g.ixOf(x), fy = g.iyOf(y);
-    if (fx < 0 || fy < 0 || fx > m.nx - 1 || fy > m.ny - 1) return std::nan("");
+    // Written so that NaN coordinates fail the test too.
+    if (!(fx >= 0 && fy >= 0 && fx <= m.nx - 1 && fy <= m.ny - 1)) return std::nan("");
     const int ix = std::min(int(fx), m.nx - 2), iy = std::min(int(fy), m.ny - 2);
     const double tx = fx - ix, ty = fy - iy;
     return (1 - ty) * ((1 - tx) * g.z(ix, iy) + tx * g.z(ix + 1, iy)) +

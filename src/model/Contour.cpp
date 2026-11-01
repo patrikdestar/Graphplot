@@ -54,8 +54,13 @@ void ContourGrid::setMatrix(const Matrix& m)
             double lo = std::min(std::min(a, b), std::min(c, d));
             double hi = std::max(std::max(a, b), std::max(c, d));
             if (!std::isfinite(lo) || !std::isfinite(hi)) lo = hi = std::nan("");  // skipped
-            m_cellMin[qsizetype(iy) * (m_nx - 1) + ix] = float(lo);
-            m_cellMax[qsizetype(iy) * (m_nx - 1) + ix] = float(hi);
+            // Stored as float to halve memory; round outwards so no level that
+            // really crosses the cell is skipped by the fast reject.
+            float flo = float(lo), fhi = float(hi);
+            if (double(flo) > lo) flo = std::nextafter(flo, -INFINITY);
+            if (double(fhi) < hi) fhi = std::nextafter(fhi, INFINITY);
+            m_cellMin[qsizetype(iy) * (m_nx - 1) + ix] = flo;
+            m_cellMax[qsizetype(iy) * (m_nx - 1) + ix] = fhi;
         }
     }
 }

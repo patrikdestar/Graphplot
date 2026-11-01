@@ -8,6 +8,33 @@
 
 namespace gp {
 
+QChar detectSeparator(const QString& line)
+{
+    for (QChar c : {QChar('\t'), QChar(';'), QChar(',')})
+        if (line.contains(c)) return c;
+    return ' ';
+}
+
+QStringList splitFields(const QString& line, QChar sep)
+{
+    static const QRegularExpression whitespace(R"(\s+)");
+    if (sep == ' ') return line.split(whitespace, Qt::SkipEmptyParts);
+    QStringList parts = line.split(sep);
+    for (QString& p : parts) {
+        p = p.trimmed();
+        if (p.size() >= 2 && p.startsWith('"') && p.endsWith('"')) p = p.mid(1, p.size() - 2);
+    }
+    return parts;
+}
+
+double parseCell(const QString& cell, bool* ok)
+{
+    *ok = true;
+    if (cell.isEmpty() || cell.compare("nan", Qt::CaseInsensitive) == 0)
+        return std::numeric_limits<double>::quiet_NaN();
+    return cell.toDouble(ok);
+}
+
 LoadResult loadColumnFile(const QString& fileName)
 {
     LoadResult result;
@@ -16,8 +43,8 @@ LoadResult loadColumnFile(const QString& fileName)
         result.error = QString("Cannot open '%1': %2").arg(fileName, f.errorString());
         return result;
     }
-    static const QRegularExpression sep(R"([,;\t ]+)");
     QTextStream in(&f);
+    QChar sep;  // detected from the first non-comment line
     QStringList header;
     std::vector<QVector<double>> columns;
     int lineNo = 0;
@@ -25,23 +52,21 @@ LoadResult loadColumnFile(const QString& fileName)
         const QString line = in.readLine().trimmed();
         ++lineNo;
         if (line.isEmpty() || line.startsWith('#') || line.startsWith('%')) continue;
-        const QStringList parts = line.split(sep, Qt::SkipEmptyParts);
+        if (sep.isNull()) sep = detectSeparator(line);
+        const QStringList parts = splitFields(line, sep);
         QVector<double> values;
         values.reserve(parts.size());
         bool numeric = true;
         for (const QString& p : parts) {
             bool ok = false;
-            const double v = p.toDouble(&ok);
+            values.push_back(parseCell(p, &ok));
             if (!ok) {
-                const QString l = p.toLower();
-                if (l == "nan") values.push_back(std::numeric_limits<double>::quiet_NaN());
-                else { numeric = false; break; }
-            } else {
-                values.push_back(v);
+                numeric = false;
+                break;
             }
         }
         if (!numeric) {
-            if (columns.empty() && header.isEmpty()) {
+            if (columns.empty() && header.isEmpty()) {  // the first text line is the header
                 header = parts;
                 continue;
             }
@@ -56,7 +81,7 @@ LoadResult loadColumnFile(const QString& fileName)
                                .arg(columns.size());
             return result;
         }
-        for (size_t c = 0; c < columns.size(); ++c) columns[c].push_back(values[c]);
+        for (size_t c = 0; c < columns.size(); ++c) columns[c].push_back(values[qsizetype(c)]);
     }
     if (columns.empty()) {
         result.error = "The file contains no numeric data";

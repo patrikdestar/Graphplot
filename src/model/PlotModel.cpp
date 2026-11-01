@@ -141,7 +141,10 @@ ObjectId PlotModel::insertMatrix(Matrix m, int index)
 {
     if (m.id == kInvalidId) m.id = newId();
     else m_lastId = std::max(m_lastId, m.id);
-    if (m.z.size() != qsizetype(m.nx) * m.ny) {
+    // Invalid grids (wrong size, negative dims, non-finite extent) become empty.
+    const bool finiteExtent = std::isfinite(m.x0) && std::isfinite(m.x1) && std::isfinite(m.y0) &&
+                              std::isfinite(m.y1);
+    if (m.nx < 0 || m.ny < 0 || m.z.size() != qsizetype(m.nx) * m.ny || !finiteExtent) {
         m.nx = m.ny = 0;
         m.z.clear();
     }
@@ -175,6 +178,7 @@ bool PlotModel::setMatrixData(ObjectId id, int nx, int ny, QVector<double> z, do
 {
     const int i = matrixIndex(id);
     if (i < 0 || nx < 0 || ny < 0 || z.size() != qsizetype(nx) * ny) return false;
+    if (!std::isfinite(x0) || !std::isfinite(x1) || !std::isfinite(y0) || !std::isfinite(y1)) return false;
     Matrix& m = m_matrices[i];
     m.nx = nx;
     m.ny = ny;
@@ -320,6 +324,7 @@ bool PlotModel::dataBounds(double& xmin, double& xmax, double& ymin, double& yma
         auto err = [](const QVector<double>& v, qsizetype i) {
             return i < v.size() && std::isfinite(v[i]) ? std::abs(v[i]) : 0.0;
         };
+        bool thisAny = false;  // this dataset contributed points
         for (qsizetype i = 0; i < d.x.size(); ++i) {
             const double x = d.x[i], y = d.y[i];
             if (!std::isfinite(x) || !std::isfinite(y)) continue;
@@ -330,34 +335,29 @@ bool PlotModel::dataBounds(double& xmin, double& xmax, double& ymin, double& yma
             xmax = std::max(xmax, x + err(d.xErrHigh, i));
             ymin = std::min(ymin, yPositive && yl <= 0 ? y : yl);
             ymax = std::max(ymax, y + err(d.yErrHigh, i));
-            any = true;
+            any = thisAny = true;
         }
         // Areas filled to zero (histograms) include the baseline.
-        if (any && !yPositive && d.style.fillColor.isValid() && d.style.fillTo == kInvalidId) {
+        if (thisAny && !yPositive && d.style.fillColor.isValid() && d.style.fillTo == kInvalidId) {
             ymin = std::min(ymin, 0.0);
             ymax = std::max(ymax, 0.0);
         }
     }
     for (const auto& m : m_matrices) {
         if ((visibleOnly && !m.style.visible) || m.nx < 1 || m.ny < 1) continue;
-        xmin = std::min({xmin, m.x0, m.x1});
-        xmax = std::max({xmax, m.x0, m.x1});
-        ymin = std::min({ymin, m.y0, m.y1});
-        ymax = std::max({ymax, m.y0, m.y1});
+        double x0 = std::min(m.x0, m.x1), x1 = std::max(m.x0, m.x1);
+        double y0 = std::min(m.y0, m.y1), y1 = std::max(m.y0, m.y1);
+        // On logarithmic axes only the positive part of the extent counts.
+        if (xPositive) x0 = std::max(x0, x1 * 1e-6);
+        if (yPositive) y0 = std::max(y0, y1 * 1e-6);
+        if ((xPositive && !(x1 > 0)) || (yPositive && !(y1 > 0))) continue;
+        xmin = std::min(xmin, x0);
+        xmax = std::max(xmax, x1);
+        ymin = std::min(ymin, y0);
+        ymax = std::max(ymax, y1);
         any = true;
     }
     return any;
-}
-
-void PlotModel::clear()
-{
-    while (!m_peaks.empty()) takePeak(m_peaks.back().id);
-    while (!m_annotations.empty()) takeAnnotation(m_annotations.back().id);
-    while (!m_markers.empty()) takeMarker(m_markers.back().id);
-    while (!m_datasets.empty()) takeDataset(m_datasets.back().id);
-    while (!m_matrices.empty()) takeMatrix(m_matrices.back().id);
-    setRegion(Region{});
-    m_colorCounter = 0;
 }
 
 }  // namespace gp

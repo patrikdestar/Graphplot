@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 #include "TimeSeriesLoader.h"
 
+#include "DataLoader.h"  // detectSeparator / splitFields
+
 #include <QDateTime>
 #include <QFile>
 #include <QFileInfo>
@@ -17,28 +19,11 @@ namespace {
 
 constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 
-QStringList splitLine(const QString& line, QChar sep)
-{
-    if (sep == ' ') return line.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
-    QStringList parts = line.split(sep);
-    for (QString& p : parts) {
-        p = p.trimmed();
-        if (p.size() >= 2 && p.startsWith('"') && p.endsWith('"')) p = p.mid(1, p.size() - 2);
-    }
-    return parts;
-}
-
-QChar detectSeparator(const QString& line)
-{
-    for (QChar c : {QChar(','), QChar(';'), QChar('\t')})
-        if (line.contains(c)) return c;
-    return ' ';
-}
-
 bool isTimeHeader(QString h)
 {
     h = h.toLower();
-    h.remove(QRegularExpression(R"([\[\(].*[\]\)])"));
+    static const QRegularExpression units(R"([\[\(].*[\]\)])");
+    h.remove(units);
     h = h.trimmed();
     static const QStringList names = {"time", "t", "timestamp", "stamp", "datetime", "date_time",
                                       "sec", "secs", "seconds", "time_s", "timestamp_s", "ts"};
@@ -99,7 +84,7 @@ TimeSeriesTable loadTimeSeriesCsv(const QString& fileName)
         const QString line = in.readLine().trimmed();
         if (line.isEmpty() || line.startsWith('#') || line.startsWith('%')) continue;
         if (sep.isNull()) sep = detectSeparator(line);
-        const QStringList parts = splitLine(line, sep);
+        const QStringList parts = splitFields(line, sep);
         if (header.isEmpty() && rows.empty()) {
             // A header line has at least one cell that is neither a number nor a time.
             bool anyText = false;

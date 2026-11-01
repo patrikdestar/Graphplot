@@ -169,7 +169,13 @@ RichLegendItem::RichLegendItem(QCPLegend* legend, QCPAbstractPlottable* plottabl
 
 void RichLegendItem::layoutText() const
 {
-    m_block.set(mPlottable ? mPlottable->name() : QString(), getFont(), m_math);
+    // Re-layout only when name or font changed (called on every repaint).
+    const QString name = mPlottable ? mPlottable->name() : QString();
+    const QFont font = getFont();
+    if (name == m_laidOutName && font == m_laidOutFont && !m_block.isEmpty()) return;
+    m_laidOutName = name;
+    m_laidOutFont = font;
+    m_block.set(name, font, m_math);
 }
 
 QSize RichLegendItem::minimumOuterSizeHint() const

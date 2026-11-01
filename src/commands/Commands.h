@@ -94,7 +94,7 @@ public:
                QUndoCommand* parent = nullptr)
         : QUndoCommand(parent), m_model(model), m_obj(std::move(obj)), m_index(index)
     {
-        setText(QString("Add %1").arg(Traits::kName).toLower());
+        setText(QString("Add %1").arg(QString(Traits::kName).toLower()));
     }
     void redo() override { Traits::insert(*m_model, m_obj, m_index); }
     void undo() override
@@ -114,7 +114,7 @@ public:
     RemoveCommand(PlotModel* model, ObjectId id, QUndoCommand* parent = nullptr)
         : QUndoCommand(parent), m_model(model), m_id(id)
     {
-        setText(QString("Remove %1").arg(Traits::kName).toLower());
+        setText(QString("Remove %1").arg(QString(Traits::kName).toLower()));
     }
     void redo() override
     {
@@ -122,7 +122,10 @@ public:
         if (auto o = Traits::take(*m_model, m_id)) m_obj = std::move(*o);
         else setObsolete(true);
     }
-    void undo() override { Traits::insert(*m_model, m_obj, m_index); }
+    void undo() override
+    {
+        if (m_obj.id != kInvalidId) Traits::insert(*m_model, m_obj, m_index);  // nothing was removed otherwise
+    }
 
 private:
     PlotModel* m_model;
@@ -198,6 +201,8 @@ private:
     PlotModel* m_model;
     ObjectId m_id;
     QVector<double> m_newX, m_newY, m_oldX, m_oldY;
+    // Changing the length drops error bars; keep them so undo restores them.
+    QVector<double> m_oldXErrLow, m_oldXErrHigh, m_oldYErrLow, m_oldYErrHigh;
 };
 
 class SetRegionCommand : public QUndoCommand {

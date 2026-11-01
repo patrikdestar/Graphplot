@@ -3,6 +3,7 @@
 #include "PlotTypes.h"
 
 #include <QDir>
+#include <cmath>
 #include <QFile>
 #include <QFileInfo>
 #include <QStandardPaths>
@@ -31,12 +32,14 @@ bool toColor(const QString& v, QColor* out, QString* err)
     return true;
 }
 
-bool toDouble(const QString& v, double* out, QString* err, double lo = -1e300)
+// Finite numbers in [lo, hi] only: style values end up in int conversions
+// and allocations (e.g. contour levels), so "inf" or 1e20 must be rejected.
+bool toDouble(const QString& v, double* out, QString* err, double lo = -1e6, double hi = 1e6)
 {
     bool ok = false;
     const double d = v.trimmed().toDouble(&ok);
-    if (!ok || d < lo) {
-        if (err) *err = QString("'%1' is not a valid number").arg(v);
+    if (!ok || !std::isfinite(d) || d < lo || d > hi) {
+        if (err) *err = QString("'%1' is not a number in [%2, %3]").arg(v).arg(lo).arg(hi);
         return false;
     }
     *out = d;
@@ -75,7 +78,7 @@ struct Entry {
 
 // Builders for common field types (member pointers keep this table compact).
 template <typename T>
-Entry dbl(const char* key, const char* desc, T Style::*f, double lo = -1e300)
+Entry dbl(const char* key, const char* desc, T Style::*f, double lo = -1e6)
 {
     return {key, desc, [f](const Style& s) { return n(s.*f); },
             [f, lo](Style& s, const QString& v, QString* e) {
@@ -143,7 +146,7 @@ void tickEntries(QList<Entry>& t, const QString& axis, TickStyle Style::*ts, con
        [ts](const Style& s) { return QString::number((s.*ts).count); },
        [ts](Style& s, const QString& v, QString* e) {
            double d;
-           if (!toDouble(v, &d, e, 1)) return false;
+           if (!toDouble(v, &d, e, 1, 50)) return false;
            (s.*ts).count = int(d);
            return true;
        });
@@ -223,7 +226,7 @@ const QList<Entry>& table()
                    [](const Style& s) { return QString::number(s.contourLevels); },
                    [](Style& s, const QString& v, QString* e) {
                        double d;
-                       if (!toDouble(v, &d, e, 1)) return false;
+                       if (!toDouble(v, &d, e, 1, 200)) return false;
                        s.contourLevels = int(d);
                        return true;
                    }}
@@ -454,6 +457,17 @@ bool builtinStyle(const QString& name, Style* out)
 bool loadStyle(const QString& nameOrPath, Style* out, QStringList* errors)
 {
     if (builtinStyle(nameOrPath, out)) return true;
+    // 'inherit:' chains are followed recursively; a file that (indirectly)
+    // inherits itself would recurse forever and crash at start-up.
+    static thread_local int depth = 0;
+    if (depth >= 8) {
+        if (errors) *errors << QString("'%1': inherit chain too deep (cycle?)").arg(nameOrPath);
+        return false;
+    }
+    struct DepthGuard {
+        DepthGuard() { ++depth; }
+        ~DepthGuard() { --depth; }
+    } guard;
     QFile f(nameOrPath);
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
         if (errors) *errors << QString("cannot open style '%1'").arg(nameOrPath);

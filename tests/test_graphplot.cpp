@@ -525,6 +525,8 @@ private slots:
         // stay interactive.
         Matrix m = peaks(1024);
         ContourStyle s;
+        s.levelCount = 12;  // explicit: 0 would mean "style default"
+        s.factor = 1.4;
         s.baseLevel = defaultBaseLevel(m, s.factor, s.levelCount);
         ContourGrid g;
         g.setMatrix(m);
@@ -532,6 +534,7 @@ private slots:
         t.start();
         const auto lines = g.compute(contourLevels(s));
         const qint64 ms = t.elapsed();
+        QCOMPARE(int(lines.size()), 24);
         qInfo("1024x1024 grid, %d levels: %lld ms", int(lines.size()), ms);
         QVERIFY(ms < 250);
     }
@@ -809,6 +812,93 @@ private slots:
         QCOMPARE(w->axes(1).model->style().xtick.direction, QString("in"));
         QTemporaryDir dir;
         QVERIFY(w->exportTo(dir.filePath("two.pdf")));
+    }
+
+    // ---- audit regressions (core) ----------------------------------------------------------
+    void auditRegressionsCore()
+    {
+        QTemporaryDir dir;
+        // Style: a file inheriting itself must not recurse forever.
+        QFile loop(dir.filePath("loop.gpstyle"));
+        QVERIFY(loop.open(QIODevice::WriteOnly));
+        loop.write("inherit: loop.gpstyle\nfont.size: 12\n");
+        loop.close();
+        Style st;
+        QStringList errors;
+        QVERIFY(loadStyle(loop.fileName(), &st, &errors));
+        QVERIFY(errors.join(" ").contains("too deep"));
+        // Style: absurd numbers are rejected instead of hanging the app.
+        QString err;
+        QVERIFY(!st.set("contour.levels", "100000000", &err));
+        QVERIFY(!st.set("figure.padding", "inf", &err));
+        QVERIFY(!st.set("xtick.count", "1e20", &err));
+        QVERIFY(st.set("contour.levels", "40", &err));
+
+        // Undo of a data update restores the error bars.
+        PlotModel model;
+        PlotEditor ed(&model);
+        Dataset d;
+        d.x = {1, 2, 3};
+        d.y = {1, 2, 3};
+        d.yErrLow = d.yErrHigh = {0.1, 0.2, 0.3};
+        const ObjectId id = ed.addDataset(d);
+        ed.setDatasetData(id, {1, 2}, {5, 6});
+        QVERIFY(model.dataset(id)->yErrLow.isEmpty());
+        ed.undo();
+        QCOMPARE(model.dataset(id)->yErrHigh, (QVector<double>{0.1, 0.2, 0.3}));
+        // Undo texts are capitalised normally.
+        Marker mk;
+        ed.addMarker(mk);
+        QCOMPARE(ed.undoStack()->undoText(), QString("Add marker"));
+        // Contour levels cannot be scaled to exactly 0 (that would be final).
+        const ObjectId mid = ed.addMatrix(peaks(20));
+        for (int i = 0; i < 400; ++i) ed.scaleContourLevels({mid}, 1e-10);
+        QVERIFY(model.matrix(mid)->style.baseLevel > 0);
+
+        // Column files: header names with spaces/brackets, empty cells = gaps.
+        QFile csv(dir.filePath("cols.csv"));
+        QVERIFY(csv.open(QIODevice::WriteOnly));
+        csv.write("Time (s),Voltage A,Current B\n0,1,\n1,,4\n2,3,5\n");
+        csv.close();
+        const LoadResult r = loadColumnFile(csv.fileName());
+        QVERIFY2(r.error.isEmpty(), qPrintable(r.error));
+        QCOMPARE(r.datasets.size(), size_t(2));
+        QCOMPARE(r.datasets[0].name, QString("Voltage A"));
+        QVERIFY(std::isnan(r.datasets[0].y[1]));
+        QCOMPARE(r.datasets[1].y[2], 5.0);
+        // European style: ';' separated, decimal commas are not split on ','.
+        QCOMPARE(detectSeparator("0,5;1,2"), QChar(';'));
+
+        // Bruker writer validates its input.
+        Matrix bad = peaks(10);
+        QVERIFY(!writeBruker2D(dir.filePath("bad"), bad, "1H", "1H", 600, 600, 3, 3, &err));
+        QVERIFY(!writeBruker2D(dir.filePath("bad"), bad, "1H", "1H", 600, 600, 0, 5, &err));
+
+        // NaN coordinates never index outside the grid.
+        QVERIFY(std::isnan(sampleMatrix(peaks(10), std::nan(""), 0.0)));
+    }
+
+    void auditPeakPickingScales()
+    {
+        // 1000 x 1000 noisy grid with a low threshold: many candidates.
+        Matrix m;
+        m.nx = m.ny = 1000;
+        m.x1 = m.y1 = 10;
+        m.z.resize(1000 * 1000);
+        quint32 seed = 1;
+        for (double& v : m.z) {
+            seed = seed * 1664525u + 1013904223u;
+            v = (seed >> 8) / double(1 << 24);
+        }
+        PeakPickOptions o;
+        o.threshold = 0.5;
+        o.minDistance = 2;
+        QElapsedTimer t;
+        t.start();
+        const auto found = pickPeaks(m, o);
+        qInfo("1000x1000 noise: %zu peaks in %lld ms", found.size(), t.elapsed());
+        QVERIFY(found.size() > 10000);
+        QVERIFY(t.elapsed() < 3000);
     }
 
     // ---- styles & rich text ----------------------------------------------------------------

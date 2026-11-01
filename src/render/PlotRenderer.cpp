@@ -73,10 +73,13 @@ Qt::Alignment locToAlignment(const QString& loc)
     return a;
 }
 
+// QCPGraph needs increasing, finite x; anything else is drawn as a QCPCurve.
 bool isSorted(const QVector<double>& v)
 {
-    for (qsizetype i = 1; i < v.size(); ++i)
-        if (v[i] < v[i - 1]) return false;
+    for (qsizetype i = 0; i < v.size(); ++i) {
+        if (!std::isfinite(v[i])) return false;
+        if (i > 0 && v[i] < v[i - 1]) return false;
+    }
     return true;
 }
 
@@ -552,6 +555,9 @@ void PlotRenderer::applyDatasetData(ObjectId id)
         p->setSelectable(QCP::stNone);
         m_plottables.insert(id, p);
         applyDatasetAppearance(id);
+        // Bands filled towards this dataset point at the old plottable: relink.
+        for (const auto& o : m_model->datasets())
+            if (o.style.fillTo == id) applyDatasetAppearance(o.id);
         syncLegend();
     }
     if (auto* g = qobject_cast<QCPGraph*>(p)) g->setData(d->x, d->y, true);
@@ -728,7 +734,10 @@ void PlotRenderer::applyMatrixAppearance(ObjectId id)
     v.contour->setContourStyle(m->style);  // recomputes only if the levels changed
     v.contour->setName(m->name);
     v.contour->setVisible(m->style.visible);
-    updateMatrixImage(id);
+    // The colour map only has to be rebuilt when it is switched on (the data
+    // path rebuilds it too); level scrolling must not redo nx*ny cells.
+    if (m->style.showImage != (v.image != nullptr)) updateMatrixImage(id);
+    else if (v.image) v.image->setVisible(m->style.visible);
 }
 
 void PlotRenderer::updateMatrixImage(ObjectId id)

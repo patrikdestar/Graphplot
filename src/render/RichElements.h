@@ -102,6 +102,8 @@ protected:
 private:
     void layoutText() const;
     mutable RichTextBlock m_block;
+    mutable QString m_laidOutName;
+    mutable QFont m_laidOutFont;
     bool m_math;
 };
 

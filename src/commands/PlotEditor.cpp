@@ -3,7 +3,10 @@
 #include "Commands.h"
 #include "model/Contour.h"
 
+#include <QHash>
+#include <QPointF>
 #include <QUndoStack>
+#include <algorithm>
 #include <cmath>
 
 namespace gp {
@@ -27,9 +30,7 @@ ObjectId PlotEditor::addDataset(Dataset d)
     if (!(d.style.scatterSize > 0)) d.style.scatterSize = m_model->style().markerSize;
     if (d.name.isEmpty()) d.name = QString("Dataset %1").arg(m_model->datasets().size() + 1);
     const ObjectId id = d.id;
-    auto* cmd = new AddDatasetCommand(m_model, std::move(d));
-    cmd->setText(QString("Add dataset"));
-    m_stack->push(cmd);
+    m_stack->push(new AddDatasetCommand(m_model, std::move(d)));
     return id;
 }
 
@@ -116,7 +117,8 @@ void PlotEditor::scaleContourLevels(const QList<ObjectId>& ids, double factor)
         const Matrix* cur = m_model->matrix(id);
         if (!cur) continue;
         ContourStyle s = cur->style;
-        s.baseLevel *= factor;
+        // Clamp: a level of exactly 0 (underflow) could never be scaled back.
+        s.baseLevel = std::clamp(s.baseLevel * factor, 1e-300, 1e300);
         Matrix before;
         before.id = id;
         before.name = cur->name;
@@ -161,14 +163,24 @@ QList<ObjectId> PlotEditor::pickPeaks(ObjectId matrixId, PeakPickOptions opt)
     const double dx = std::abs(m->x1 - m->x0) / std::max(1, m->nx - 1);
     const double dy = std::abs(m->y1 - m->y0) / std::max(1, m->ny - 1);
     const double r = std::max(1, opt.minDistance);
+    // Existing peaks in buckets of r x r grid points: a candidate only needs
+    // to be compared with the peaks in its own and the 8 neighbouring buckets.
+    const double bx = std::max(r * dx, 1e-300), by = std::max(r * dy, 1e-300);
+    auto key = [](qint64 i, qint64 j) { return (i << 32) ^ (j & 0xffffffff); };
+    QHash<qint64, QVector<QPointF>> buckets;
+    for (const Peak& e : m_model->peaks())
+        buckets[key(qint64(std::floor(e.x / bx)), qint64(std::floor(e.y / by)))] << QPointF(e.x, e.y);
     std::vector<Peak> fresh;
     for (Peak& p : found) {
+        const qint64 i = qint64(std::floor(p.x / bx)), j = qint64(std::floor(p.y / by));
         bool dup = false;
-        for (const Peak& e : m_model->peaks())
-            if (std::abs(e.x - p.x) < r * dx && std::abs(e.y - p.y) < r * dy) {
-                dup = true;
-                break;
-            }
+        for (qint64 di = -1; di <= 1 && !dup; ++di)
+            for (qint64 dj = -1; dj <= 1 && !dup; ++dj)
+                for (const QPointF& e : buckets.value(key(i + di, j + dj)))
+                    if (std::abs(e.x() - p.x) < r * dx && std::abs(e.y() - p.y) < r * dy) {
+                        dup = true;
+                        break;
+                    }
         if (!dup) fresh.push_back(std::move(p));
     }
     return addPeaks(std::move(fresh), "Pick peaks");

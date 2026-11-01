@@ -71,7 +71,13 @@ BrukerSpectrum readBruker2D(const QString& path)
         return out;
     }
     bool ok = true;
-    const int si2 = int(num(p2, "SI", &ok)), si1 = int(num(p1, "SI", &ok));
+    // Sizes are bounded before converting to int (a corrupt SI must not overflow).
+    const double si2d = num(p2, "SI", &ok), si1d = num(p1, "SI", &ok);
+    if (!(si2d >= 2 && si2d <= 1 << 20 && si1d >= 2 && si1d <= 1 << 20)) {
+        out.error = "SI out of range in procs / proc2s";
+        return out;
+    }
+    const int si2 = int(si2d), si1 = int(si1d);
     int xd2 = int(num(p2, "XDIM", nullptr)), xd1 = int(num(p1, "XDIM", nullptr));
     const double sw2 = num(p2, "SW_p", &ok), sw1 = num(p1, "SW_p", &ok);
     const double sf2 = num(p2, "SF", &ok), sf1 = num(p1, "SF", &ok);
@@ -149,11 +155,18 @@ bool writeBruker2D(const QString& pdataDir, const Matrix& m, const QString& nucF
                    const QString& nucF1, double sfF2, double sfF1, int xdimF2, int xdimF1,
                    QString* error)
 {
+    // Validate first: tiles must divide the grid exactly, axes need >= 2 points.
+    if (m.nx < 2 || m.ny < 2 || m.z.size() != qsizetype(m.nx) * m.ny || xdimF2 <= 0 || xdimF1 <= 0 ||
+        m.nx % xdimF2 != 0 || m.ny % xdimF1 != 0 || !(sfF2 > 0) || !(sfF1 > 0)) {
+        if (error) *error = "invalid grid, submatrix size or spectrometer frequency";
+        return false;
+    }
     QDir().mkpath(pdataDir);
     QDir d(pdataDir);
     // Store as int32 with a scale such that max |z| ~ 2^28.
     double maxAbs = 0;
-    for (double v : m.z) maxAbs = std::max(maxAbs, std::abs(v));
+    for (double v : m.z)
+        if (std::isfinite(v)) maxAbs = std::max(maxAbs, std::abs(v));
     const int nc = maxAbs > 0 ? int(std::floor(std::log2(maxAbs))) - 28 : 0;
     auto writeProcs = [&](const QString& name, int si, int xdim, double sf, double first,
                           double last, const QString& nuc) {
@@ -190,11 +203,15 @@ bool writeBruker2D(const QString& pdataDir, const Matrix& m, const QString& nucF
         for (int tx = 0; tx < m.nx / xdimF2; ++tx)
             for (int r = 0; r < xdimF1; ++r)
                 for (int c = 0; c < xdimF2; ++c, ++k) {
-                    const double v = m.z[qsizetype(ty * xdimF1 + r) * m.nx + tx * xdimF2 + c];
+                    double v = m.z[qsizetype(ty * xdimF1 + r) * m.nx + tx * xdimF2 + c];
+                    if (!std::isfinite(v)) v = 0;  // int32 has no NaN
                     const qint32 i = qToLittleEndian(qint32(std::lround(v * scale)));
                     std::memcpy(raw.data() + k * 4, &i, 4);
                 }
-    f.write(raw);
+    if (f.write(raw) != raw.size()) {
+        if (error) *error = "cannot write 2rr (disk full?)";
+        return false;
+    }
     return true;
 }
 

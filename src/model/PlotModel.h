@@ -92,8 +92,6 @@ public:
     bool dataBounds(double& xmin, double& xmax, double& ymin, double& ymax,
                     bool visibleOnly = true, bool xPositive = false, bool yPositive = false) const;
 
-    void clear();
-
     // Reserves a fresh object id (used by commands so that an object keeps
     // the same id across undo/redo).
     ObjectId allocateId() { return newId(); }

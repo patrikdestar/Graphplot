@@ -50,7 +50,7 @@ QString esc(const QString& s)
 // Recursive-descent converter for the math subset.
 class MathParser {
 public:
-    explicit MathParser(const QString& s) : m_s(s) {}
+    explicit MathParser(QString s) : m_s(std::move(s)) {}
     QString parse(bool italic = true) { return parseUntil(QChar(), italic); }
 
 private:
@@ -152,7 +152,7 @@ private:
         return esc(name);  // unknown command: show its name
     }
 
-    const QString& m_s;
+    const QString m_s;  // by value: callers pass temporaries (text.mid(...))
     qsizetype m_i = 0;
 };
 
@@ -175,7 +175,9 @@ QString richTextToHtml(const QString& text, bool enabled)
             continue;
         }
         if (c == '$') {
-            const qsizetype end = text.indexOf('$', i + 1);
+            // Closing '$' that is not escaped as "\$".
+            qsizetype end = text.indexOf('$', i + 1);
+            while (end > 0 && text[end - 1] == '\\') end = text.indexOf('$', end + 1);
             if (end < 0) {
                 plain += c;
                 continue;
