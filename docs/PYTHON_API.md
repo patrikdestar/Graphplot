@@ -184,6 +184,66 @@ is released, not during a drag.
 | `screenshot(filename)` | image of the whole window |
 | `show(block=None)`, `close()`, `is_open` | window control |
 
+## Timeline (sensor logs)
+
+```python
+tl = plotter.timeline(title=None, size=(1200, 800))
+```
+
+What a timeline is:
+
+- Stacked rows share one time axis.
+- A navigator strip with the visible window sits at the bottom.
+- A cursor line through all rows shows the values at the cursor.
+- Time markers (pins) are drawn through all rows.
+- Times are seconds since `time_origin` (Unix epoch seconds) when the data
+  has absolute timestamps.
+- Anything not listed below is forwarded to the underlying `Figure`
+  (`show`, `savefig`, `use_style`, `set_style`, `undo`, `on`, …).
+
+| Member | Description |
+|---|---|
+| `load_csv(*files, row_per_column=False)` | CSV logs: time column + signal columns; one row per file (or per column) |
+| `add_row(name)` | new `TimelineRow` |
+| `add_signals(row_name, t, {"ax": ax, ...})` | row with several signals |
+| `rows`, `set_row_order(rows)`, `remove_row(row)` | display order (top to bottom) |
+| `move_signal(line, row)` | move a signal to another row (one undo step); returns the new `Line` |
+| `window` | `(t0, t1)`, read/write |
+| `full_range`, `show_all()` | |
+| `cursor_time` | time under the cursor line, or `None` |
+| `values_at(t)` | `{(row name, signal): value}`, linearly interpolated (NaN in gaps) |
+| `navigator` | signal shown in the bottom strip: a name (`"speed"` or `"gps / speed"`) or a `Line` |
+| `auto_fit_y` | each row fits Y to the data in the window |
+| `clock_time` | clock-time axis labels (needs absolute timestamps) |
+| `time_origin` | Unix epoch seconds of t = 0 (`None` for relative data) |
+| `pin(t, label="", color=None)` | add a time marker; returns a `TimePin` |
+| `pins()` | all `TimePin`s |
+| `format_time(t)` | time as displayed |
+
+`TimelineRow` members:
+
+- `plot(t, y, label="", color=None)`: `t` must be sorted.
+- `lines()`.
+- `name`, `visible`, `height` (relative).
+- `axes`: the full panel API.
+
+`TimePin` members:
+
+- `t`, `label`: read/write and undoable.
+- `color`.
+- `jump()`.
+- `remove()`.
+
+Events for `tl.on(...)`:
+
+| Event | Callback signature |
+|---|---|
+| `'cursor_moved'` | `cb(t or None)` |
+| `'window_changed'` | `cb(t0, t1)` |
+| `'pins_changed'` | `cb()` |
+
+Epoch times stored as double-precision seconds resolve to about 0.24 µs.
+
 ## matplotlib compatibility: `plotter.pyplot`
 
 ```python

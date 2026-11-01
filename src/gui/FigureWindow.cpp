@@ -4,6 +4,8 @@
 #include "PeakTable.h"
 #include "PropertiesPanel.h"
 #include "StyleEditor.h"
+#include "Timeline.h"
+#include "TimelinePanel.h"
 #include "commands/PlotEditor.h"
 #include "model/BrukerReader.h"
 #include "model/DataLoader.h"
@@ -144,33 +146,9 @@ int FigureWindow::currentAxes() const
 void FigureWindow::setGrid(const GridSpec& spec)
 {
     const int rows = std::max(1, spec.rows), cols = std::max(1, spec.cols);
-    QCPLayoutGrid* outer = m_plot->plotLayout();
-    if (!m_grid) {
-        // Replace the single default axis rect by a grid holding all panels.
-        QCPAxisRect* first = m_axes.front().renderer->axisRect();
-        int row = 0, col = 0;
-        for (int r = 0; r < outer->rowCount(); ++r)
-            for (int c = 0; c < outer->columnCount(); ++c)
-                if (outer->element(r, c) == first) row = r, col = c;
-        outer->take(first);
-        m_grid = new QCPLayoutGrid;
-        outer->addElement(row, col, m_grid);
-        m_grid->addElement(0, 0, first);
-    }
+    ensureGrid();
     // Create the missing panels (existing ones keep their content).
-    while (int(m_axes.size()) < rows * cols) {
-        auto* rect = new QCPAxisRect(m_plot, true);
-        auto* model = new PlotModel(this);
-        model->setStyle(m_axes.front().model->style());
-        AxesInfo info = model->axesInfo();
-        info.gridVisible = m_axes.front().model->axesInfo().gridVisible;
-        model->setAxesInfo(info);
-        auto* editor = new PlotEditor(model, m_stack, this);
-        auto* renderer = new PlotRenderer(model, m_plot, rect, false, this);
-        m_axes.push_back({model, editor, renderer});
-        m_controller->addTarget(renderer, editor);
-        wireAxes(m_axes.back());
-    }
+    while (int(m_axes.size()) < rows * cols) createPanel();
     // Place panels row-major.
     for (const Axes& ax : m_axes)
         if (m_grid->elements(false).contains(ax.renderer->axisRect())) m_grid->take(ax.renderer->axisRect());
@@ -234,6 +212,103 @@ void FigureWindow::setGrid(const GridSpec& spec)
     m_plot->replot();
 }
 
+Timeline* FigureWindow::timeline()
+{
+    if (m_timeline) return m_timeline;
+    m_timeline = new Timeline(this);
+    auto* panel = new TimelinePanel(m_timeline);
+    auto* dock = new QDockWidget("Timeline", this);
+    dock->setObjectName("timelineDock");
+    dock->setWidget(panel);
+    addDockWidget(Qt::RightDockWidgetArea, dock);
+    tabifyDockWidget(m_dock, dock);
+    dock->show();
+    dock->raise();
+
+    QMenu* menu = menuBar()->addMenu("T&imeline");
+    QAction* pin = menu->addAction("Add time marker at cursor", this, [this] {
+        const auto [a, b] = m_timeline->window();
+        m_timeline->addPin(m_timeline->cursorTime().value_or(0.5 * (a + b)));
+    });
+    pin->setShortcut(QKeySequence("M"));
+    addAction(pin);
+    QAction* all = menu->addAction("Show whole recording", m_timeline, &Timeline::showAll);
+    all->setShortcut(QKeySequence("Shift+Home"));
+    QAction* fit = menu->addAction("Auto-fit Y to window");
+    fit->setCheckable(true);
+    fit->setChecked(m_timeline->autoFitY());
+    connect(fit, &QAction::toggled, m_timeline, &Timeline::setAutoFitY);
+    QAction* clock = menu->addAction("Clock time");
+    clock->setCheckable(true);
+    connect(clock, &QAction::toggled, m_timeline, &Timeline::setClockTime);
+    clock->setEnabled(m_timeline->hasAbsoluteTime());
+    connect(m_timeline, &Timeline::optionsChanged, this, [this, clock, fit] {
+        const QSignalBlocker b1(clock), b2(fit);
+        clock->setEnabled(m_timeline->hasAbsoluteTime());
+        clock->setChecked(m_timeline->clockTime());
+        fit->setChecked(m_timeline->autoFitY());
+    });
+    connect(m_timeline, &Timeline::cursorChanged, this, [this](std::optional<double> t) {
+        if (!t) return;
+        const auto [a, b] = m_timeline->window();
+        m_cursorLabel->setText("t = " + m_timeline->formatTime(*t, (b - a) / 1000.0));
+    });
+    return m_timeline;
+}
+
+void FigureWindow::onOpenTimeSeries()
+{
+    const QStringList files = QFileDialog::getOpenFileNames(
+        this, "Open time series (one or more CSV logs)", m_lastDir,
+        "Data files (*.csv *.txt *.tsv *.dat);;All files (*)");
+    if (files.isEmpty()) return;
+    m_lastDir = QFileInfo(files.front()).absolutePath();
+    // A figure that already holds other plots opens the logs in a new window.
+    FigureWindow* target = this;
+    const bool empty = m_axes.size() == 1 && m_model->datasets().empty() && m_model->matrices().empty();
+    if (!m_timeline && !empty) {
+        target = new FigureWindow;
+        target->setAttribute(Qt::WA_DeleteOnClose);
+        target->show();
+    }
+    QString err;
+    if (!target->timeline()->loadCsv(files, false, &err))
+        QMessageBox::warning(target, "Open time series", err);
+}
+
+void FigureWindow::ensureGrid()
+{
+    if (m_grid) return;
+    // Replace the single default axis rect by a grid holding all panels.
+    QCPLayoutGrid* outer = m_plot->plotLayout();
+    QCPAxisRect* first = m_axes.front().renderer->axisRect();
+    int row = 0, col = 0;
+    for (int r = 0; r < outer->rowCount(); ++r)
+        for (int c = 0; c < outer->columnCount(); ++c)
+            if (outer->element(r, c) == first) row = r, col = c;
+    outer->take(first);
+    m_grid = new QCPLayoutGrid;
+    outer->addElement(row, col, m_grid);
+    m_grid->addElement(0, 0, first);
+}
+
+int FigureWindow::createPanel()
+{
+    auto* rect = new QCPAxisRect(m_plot, true);
+    auto* model = new PlotModel(this);
+    model->setStyle(m_axes.front().model->style());
+    AxesInfo info = model->axesInfo();
+    info.gridVisible = m_axes.front().model->axesInfo().gridVisible;
+    model->setAxesInfo(info);
+    auto* editor = new PlotEditor(model, m_stack, this);
+    auto* renderer = new PlotRenderer(model, m_plot, rect, false, this);
+    m_axes.push_back({model, editor, renderer});
+    m_controller->addTarget(renderer, editor);
+    wireAxes(m_axes.back());
+    emit panelCreated(int(m_axes.size()) - 1);
+    return int(m_axes.size()) - 1;
+}
+
 PlotRenderer* FigureWindow::axesRenderer(int i) const
 {
     return i >= 0 && i < int(m_axes.size()) ? m_axes[size_t(i)].renderer : nullptr;
@@ -254,6 +329,8 @@ void FigureWindow::buildActions()
     QAction* open = file->addAction("&Open data…", this, &FigureWindow::onOpen);
     open->setShortcut(QKeySequence::Open);
     file->addAction("Open &2D matrix…", this, &FigureWindow::onOpenMatrix);
+    QAction* openTs = file->addAction("Open &time series (CSV)…", this, &FigureWindow::onOpenTimeSeries);
+    openTs->setShortcut(QKeySequence("Ctrl+T"));
     QAction* bruker = file->addAction("Open &Bruker 2D spectrum…", this, &FigureWindow::onOpenBruker);
     bruker->setShortcut(QKeySequence("Ctrl+B"));
     QAction* exportAct = file->addAction(icons::make(icons::Kind::Export), "&Export…", this,
@@ -433,6 +510,10 @@ void FigureWindow::buildActions()
     m_zoomAxes->setFocusPolicy(Qt::NoFocus);
     connect(m_zoomAxes, &QComboBox::currentIndexChanged, this, [this](int i) {
         m_controller->setZoomAxes(ZoomAxes(m_zoomAxes->itemData(i).toInt()));
+    });
+    connect(m_controller, &InteractionController::zoomAxesChanged, this, [this](ZoomAxes a) {
+        const QSignalBlocker b(m_zoomAxes);
+        m_zoomAxes->setCurrentIndex(m_zoomAxes->findData(int(a)));
     });
     tb->addWidget(m_zoomAxes);
     tb->addSeparator();

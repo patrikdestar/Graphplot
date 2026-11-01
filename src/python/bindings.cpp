@@ -17,6 +17,7 @@
 #include "commands/PlotEditor.h"
 #include "gui/FigureWindow.h"
 #include "gui/PeakTable.h"
+#include "gui/Timeline.h"
 #include "model/Contour.h"
 #include "model/PeakPicker.h"
 #include "model/Style.h"
@@ -35,6 +36,7 @@
 #include <QUndoStack>
 #include <cmath>
 #include <memory>
+#include <set>
 
 namespace py = pybind11;
 using namespace gp;
@@ -161,12 +163,17 @@ public:
     // mouse-move during a drag), coalesced per event loop iteration.
     void connectCallbacks();  // also picks up panels created later
     void connectAxes(int ax);
+    void connectTimeline();  // timeline events -> Python callbacks
+    bool timelineConnected = false;
     void addCallback(const std::string& event, py::function fn)
     {
-        if (event != "region_changed" && event != "marker_changed" && event != "levels_changed" &&
-            event != "closed")
+        static const std::set<std::string> known = {"region_changed", "marker_changed", "levels_changed",
+                                                    "closed", "cursor_moved", "window_changed",
+                                                    "pins_changed"};
+        if (!known.count(event))
             throw py::value_error("unknown event '" + event +
-                                  "' (region_changed, marker_changed, levels_changed, closed)");
+                                  "' (region_changed, marker_changed, levels_changed, closed, "
+                                  "cursor_moved, window_changed, pins_changed)");
         m_callbacks.emplace_back(event, std::move(fn));
     }
     void clearCallbacks() { m_callbacks.clear(); }
@@ -340,6 +347,28 @@ void Figure::connectCallbacks()
             f->closed = true;
             f->fire("closed", []() -> py::tuple { return py::make_tuple(); });
         }
+    });
+}
+
+void Figure::connectTimeline()
+{
+    if (timelineConnected) return;
+    timelineConnected = true;
+    Timeline* tl = w()->timeline();
+    std::weak_ptr<Figure> weak = weak_from_this();
+    // Cursor and window events are delivered immediately (they are continuous).
+    QObject::connect(tl, &Timeline::cursorChanged, tl, [weak](std::optional<double> t) {
+        if (auto f = weak.lock())
+            f->fire("cursor_moved", [t]() -> py::tuple {
+                if (t) return py::make_tuple(*t);
+                return py::make_tuple(py::none());
+            });
+    });
+    QObject::connect(tl, &Timeline::windowChanged, tl, [weak](double a, double b) {
+        if (auto f = weak.lock()) f->fire("window_changed", [a, b]() -> py::tuple { return py::make_tuple(a, b); });
+    });
+    QObject::connect(tl, &Timeline::pinsChanged, tl, [weak] {
+        if (auto f = weak.lock()) f->fire("pins_changed", []() -> py::tuple { return py::make_tuple(); });
     });
 }
 
@@ -1184,6 +1213,151 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
                 self->connectCallbacks();
             });
         });
+    // ---- timeline (wrapped by plotter.Timeline) ----------------------------------------
+    auto tl = [](FigurePtr& self) {
+        Timeline* t = self->w()->timeline();
+        self->connectTimeline();
+        return t;
+    };
+    fig.def("_tl_enable", [tl](FigurePtr self) { inGui([&] { tl(self); }); });
+    fig.def("_tl_add_row", [tl](FigurePtr self, const std::string& name) {
+        return inGui([&] {
+            const int row = tl(self)->addRow(QString::fromStdString(name));
+            self->connectCallbacks();
+            return row;
+        });
+    });
+    fig.def(
+        "_tl_add_signal",
+        [tl](FigurePtr self, int row, const std::string& name, const py::object& t, const py::object& y,
+             const py::object& color) {
+            QVector<double> tv = toVector(t, "t"), yv = toVector(y, "y");
+            if (tv.size() != yv.size()) throw py::value_error("t and y must have the same length");
+            for (qsizetype i = 1; i < tv.size(); ++i)
+                if (tv[i] < tv[i - 1]) throw py::value_error("t must be sorted (increasing)");
+            const QColor c = toColor(color);
+            const ObjectId id = inGui([&] {
+                if (!tl(self)->rows().contains(row)) throw py::index_error("no such row");
+                return tl(self)->addSignal(row, QString::fromStdString(name), tv, yv, c);
+            });
+            return Line{{self, id, row}};
+        },
+        py::arg("row"), py::arg("name"), py::arg("t"), py::arg("y"), py::arg("color") = py::none());
+    fig.def("_tl_rows", [tl](FigurePtr self) {
+        return inGui([&] {
+            const QList<int> rows = tl(self)->rows();  // one copy: begin/end from the same list
+            return std::vector<int>(rows.begin(), rows.end());
+        });
+    });
+    fig.def("_tl_set_order", [tl](FigurePtr self, const std::vector<int>& order) {
+        inGui([&] { tl(self)->setRowOrder(QList<int>(order.begin(), order.end())); });
+    });
+    fig.def("_tl_row_visible", [tl](FigurePtr self, int row) { return inGui([&] { return tl(self)->rowVisible(row); }); });
+    fig.def("_tl_set_row_visible", [tl](FigurePtr self, int row, bool v) { inGui([&] { tl(self)->setRowVisible(row, v); }); });
+    fig.def("_tl_row_height", [tl](FigurePtr self, int row) { return inGui([&] { return tl(self)->rowHeight(row); }); });
+    fig.def("_tl_set_row_height", [tl](FigurePtr self, int row, double h) { inGui([&] { tl(self)->setRowHeight(row, h); }); });
+    fig.def("_tl_row_name", [tl](FigurePtr self, int row) { return inGui([&] { return tl(self)->rowName(row).toStdString(); }); });
+    fig.def("_tl_set_row_name", [tl](FigurePtr self, int row, const std::string& n) {
+        inGui([&] { tl(self)->setRowName(row, QString::fromStdString(n)); });
+    });
+    fig.def("_tl_remove_row", [tl](FigurePtr self, int row) { return inGui([&] { return tl(self)->removeRowIfEmpty(row); }); });
+    fig.def("_tl_move_signal", [tl](FigurePtr self, const Line& line, int toRow) {
+        const ObjectId id = inGui([&] { return tl(self)->moveSignal({line.ax, line.id}, toRow); });
+        if (id == kInvalidId) throw py::value_error("cannot move this signal to that row");
+        return Line{{self, id, toRow}};
+    });
+    fig.def("_tl_load_csv", [tl](FigurePtr self, const std::vector<std::string>& files, bool perColumn) {
+        QStringList l;
+        for (const auto& f : files) l << QString::fromStdString(f);
+        QString err;
+        const bool ok = inGui([&] {
+            const bool r = tl(self)->loadCsv(l, perColumn, &err);
+            self->connectCallbacks();
+            return r;
+        });
+        if (!ok) throw std::runtime_error(err.toStdString());
+    });
+    fig.def("_tl_window", [tl](FigurePtr self) {
+        const auto w = inGui([&] { return tl(self)->window(); });
+        return py::make_tuple(w.first, w.second);
+    });
+    fig.def("_tl_set_window", [tl](FigurePtr self, double a, double b) { inGui([&] { tl(self)->setWindow(a, b); }); });
+    fig.def("_tl_full_range", [tl](FigurePtr self) {
+        const auto w = inGui([&] { return tl(self)->fullRange(); });
+        return py::make_tuple(w.first, w.second);
+    });
+    fig.def("_tl_show_all", [tl](FigurePtr self) { inGui([&] { tl(self)->showAll(); }); });
+    fig.def("_tl_cursor", [tl](FigurePtr self) -> py::object {
+        const auto c = inGui([&] { return tl(self)->cursorTime(); });
+        return c ? py::object(py::float_(*c)) : py::object(py::none());
+    });
+    fig.def("_tl_set_cursor", [tl](FigurePtr self, const py::object& t) {
+        const std::optional<double> v = t.is_none() ? std::nullopt : std::optional<double>(t.cast<double>());
+        inGui([&] { tl(self)->setCursorTime(v); });
+    });
+    fig.def("_tl_values_at", [tl](FigurePtr self, double t) {
+        const auto r = inGui([&] { return tl(self)->valuesAt(t); });
+        std::vector<std::tuple<int, std::string, double>> out;
+        for (const auto& x : r) out.emplace_back(x.row, x.name.toStdString(), x.value);
+        return out;
+    });
+    fig.def("_tl_signals", [tl](FigurePtr self) {
+        return inGui([&] {
+            std::vector<std::tuple<int, ObjectId, std::string>> out;
+            for (const SignalRef& s : tl(self)->signalList())
+                out.emplace_back(s.row, s.id, tl(self)->signalName(s).toStdString());
+            return out;
+        });
+    });
+    fig.def("_tl_nav", [tl](FigurePtr self) {
+        const SignalRef s = inGui([&] { return tl(self)->navigatorSignal(); });
+        return py::make_tuple(s.row, s.id);
+    });
+    fig.def("_tl_set_nav", [tl](FigurePtr self, int row, ObjectId id) { inGui([&] { tl(self)->setNavigatorSignal({row, id}); }); });
+    fig.def("_tl_autofit", [tl](FigurePtr self) { return inGui([&] { return tl(self)->autoFitY(); }); });
+    fig.def("_tl_set_autofit", [tl](FigurePtr self, bool on) { inGui([&] { tl(self)->setAutoFitY(on); }); });
+    fig.def("_tl_clock", [tl](FigurePtr self) { return inGui([&] { return tl(self)->clockTime(); }); });
+    fig.def("_tl_set_clock", [tl](FigurePtr self, bool on) {
+        const bool ok = inGui([&] {
+            tl(self)->setClockTime(on);
+            return tl(self)->clockTime() == on;
+        });
+        if (!ok) throw py::value_error("clock time needs absolute timestamps (set time_origin)");
+    });
+    fig.def("_tl_origin", [tl](FigurePtr self) -> py::object {
+        const auto o = inGui([&] { return std::make_pair(tl(self)->hasAbsoluteTime(), tl(self)->timeOrigin()); });
+        return o.first ? py::object(py::float_(o.second)) : py::object(py::none());
+    });
+    fig.def("_tl_set_origin", [tl](FigurePtr self, double o) { inGui([&] { tl(self)->setTimeOrigin(o); }); });
+    fig.def("_tl_format_time", [tl](FigurePtr self, double t) { return inGui([&] { return tl(self)->formatTime(t).toStdString(); }); });
+    fig.def("_tl_pins", [tl](FigurePtr self) {
+        return inGui([&] {
+            std::vector<std::tuple<ObjectId, double, std::string, std::string>> out;
+            for (const TimePin& p : tl(self)->pins())
+                out.emplace_back(p.id, p.t, p.label.toStdString(), colorName(p.color));
+            return out;
+        });
+    });
+    fig.def("_tl_add_pin", [tl](FigurePtr self, double t, const std::string& label, const py::object& color) {
+        const QColor c = toColor(color);
+        return inGui([&] { return tl(self)->addPin(t, QString::fromStdString(label), c); });
+    });
+    fig.def("_tl_update_pin", [tl](FigurePtr self, ObjectId id, double t, const std::string& label) {
+        inGui([&] {
+            for (const TimePin& p : tl(self)->pins())
+                if (p.id == id) {
+                    TimePin q = p;
+                    q.t = t;
+                    q.label = QString::fromStdString(label);
+                    tl(self)->updatePin(q);
+                    return;
+                }
+            throw py::key_error("this time marker no longer exists");
+        });
+    });
+    fig.def("_tl_remove_pin", [tl](FigurePtr self, ObjectId id) { inGui([&] { tl(self)->removePin(id); }); });
+    fig.def("_tl_jump_to_pin", [tl](FigurePtr self, ObjectId id) { inGui([&] { tl(self)->jumpToPin(id); }); });
+
     fig.def("_take_color", [](FigurePtr self) {
         return colorName(inGui([&] { return self->model()->takeNextDatasetColor(); }));
     });
@@ -1314,6 +1488,8 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
                           h.setStyle([&](QString&, DatasetStyle& s) { s.fillColor = c; });
                       }, "Fill colour (None = no fill); True = translucent line colour")
         .def("remove", [](Line& h) { inGui([&] { h.editor()->removeDataset(h.id); }); })
+        .def_property_readonly("_id", [](Line& h) { return h.id; })
+        .def_property_readonly("_panel", [](Line& h) { return h.ax; })
         .def_property_readonly("exists", [](Line& h) {
             return h.fig->alive() && inGui([&] { return h.model()->dataset(h.id) != nullptr; });
         })

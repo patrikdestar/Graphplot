@@ -18,6 +18,12 @@ void RichTextItem::setText(const QString& text, const QFont& font, bool math)
     m_block.set(text, font, math);
 }
 
+void RichTextItem::setHtml(const QString& html, const QFont& font)
+{
+    m_text = html;
+    m_block.setHtml(html, font);
+}
+
 QRectF RichTextItem::boxRect() const
 {
     const QSizeF s = m_block.size();

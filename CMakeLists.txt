@@ -39,6 +39,7 @@ add_library(graphplot_model STATIC
   src/model/BrukerReader.h src/model/BrukerReader.cpp
   src/model/PeakPicker.h src/model/PeakPicker.cpp
   src/model/Style.h src/model/Style.cpp
+  src/model/TimeSeriesLoader.h src/model/TimeSeriesLoader.cpp
   src/commands/Commands.h src/commands/Commands.cpp
   src/commands/PlotEditor.h src/commands/PlotEditor.cpp)
 target_include_directories(graphplot_model PUBLIC src)
@@ -58,6 +59,8 @@ add_library(graphplot_ui STATIC
   src/gui/PropertiesPanel.h src/gui/PropertiesPanel.cpp
   src/gui/PeakTable.h src/gui/PeakTable.cpp
   src/gui/StyleEditor.h src/gui/StyleEditor.cpp
+  src/gui/Timeline.h src/gui/Timeline.cpp
+  src/gui/TimelinePanel.h src/gui/TimelinePanel.cpp
   src/gui/FigureWindow.h src/gui/FigureWindow.cpp)
 target_link_libraries(graphplot_ui PUBLIC graphplot_model qcustomplot Qt6::Widgets Qt6::Svg)
 

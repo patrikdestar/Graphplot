@@ -13,6 +13,8 @@ annotate, read the results back, process, and re-plot.
 |---|---|
 | ![NMR](docs/images/nmr_cross_peaks.png) | ![HEP style](docs/images/hep_style.png) |
 
+![Timeline of vehicle sensor logs](docs/images/timeline.png)
+
 ## Features
 
 **Plotting**
@@ -36,6 +38,20 @@ annotate, read the results back, process, and re-plot.
   and a longer comment that is kept off the plot.
 - Labels can be dragged away from crowded peaks; a leader line is then drawn.
 - A peak table with sorting and editing, plus CSV export/import.
+
+**Sensor logs (timeline)**
+- IMU, GPS, CAN or any other CSV logs appear as stacked rows on **one time
+  axis**.
+- **Navigator strip:** at the bottom, with a movable and resizable window
+  that all rows follow.
+- **Cursor line:** a vertical line through all rows follows the mouse and
+  shows **every signal's value** at that moment.
+- **Time markers:** draw one through all rows with Ctrl+click or `M`.
+- **Rows:** drag to reorder them, move signals between rows, hide them or
+  resize them.
+- **Y axes:** each row automatically fits Y to the visible window.
+- **Time formats:** epoch s, ms, µs or ns and ISO date-times are aligned on
+  one clock. The axis shows seconds or clock time.
 
 **Interaction**
 - Wheel and rectangle zoom, pan, autoscale, and reset to the home view.
@@ -169,6 +185,54 @@ cross[0].comment = "dd, J = 7.2 / 1.5 Hz; check HMBC"   # kept off the plot
 fig.export_peaks("peaks.csv")
 fig.show()
 ```
+
+### Sensor logs: timeline
+
+```bash
+./build/graphplot --timeline imu.csv gps.csv wheels.csv
+```
+
+In the app, *File → Open time series (CSV)…* (Ctrl+T) does the same. From
+Python:
+
+```python
+import plotter
+
+tl = plotter.timeline("Test drive")
+tl.load_csv("imu.csv", "gps.csv", "wheels.csv")    # one row per file
+tl.clock_time = True                               # 14:03:27.250 instead of seconds
+tl.window = (40, 50)                               # visible time window (s)
+print(tl.values_at(42.0))                          # every signal at t = 42 s
+tl.pin(42.0, "hard braking")                       # time marker through all rows
+row = tl.add_row("jerk")                           # computed signals in new rows
+row.plot(t, jerk, label="jerk")
+tl.show()
+```
+
+CSV format:
+
+- One time column. It is named `time`, `t`, `timestamp`, `datetime`, …, or
+  it is the first column.
+- One or more signal columns.
+- Separators: `,`, `;`, tab or spaces.
+- Time values:
+  - seconds;
+  - Unix epoch in s, ms, µs or ns (detected automatically);
+  - ISO date-times.
+- Files with different sampling rates are aligned on one clock.
+
+`examples/make_sample_vehicle.py` writes synthetic logs to try this, and
+`examples/vehicle_timeline.py` loads them. It then detects braking events in
+NumPy, pins them, and adds a derived jerk signal.
+
+| Timeline action | How |
+|---|---|
+| Read values at a moment | move the mouse over the rows: the cursor line shows every signal's value |
+| Move the time window | drag the shaded band in the navigator; drag its edges to resize; wheel to zoom; click to jump; double-click for everything |
+| Zoom / pan time | wheel or drag in any row (zooms time only; Shift+wheel zooms that row's Y) |
+| Time marker | Ctrl+click in a row, or `M` at the cursor; drag to move; right-click to rename/delete; double-click a marker in the Timeline tab to jump to it |
+| Rearrange | Timeline tab: drag rows; drag a signal onto another row; tick to hide; edit names and heights; *New row* |
+| Options | Timeline tab / menu: navigator signal, auto-fit Y, clock time |
 
 ### Publication style and matplotlib scripts
 

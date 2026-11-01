@@ -419,6 +419,88 @@ class PlotterTests(unittest.TestCase):
             plt.plot([1, 2], [1, 2], bogus=3)
         plt.close("all")
 
+    def test_timeline(self):
+        t = np.arange(0, 100, 0.01)
+        ax = np.where((t > 40) & (t < 45), -3.0, 0.0)
+        speed = 20 - np.clip(t - 40, 0, 10) * 0.8
+        tl = plotter.timeline("drive")
+        tl._show()
+        imu = tl.add_signals("IMU", t, {"ax": ax, "ay": 0 * t})
+        gps = tl.add_row("GPS")
+        sp = gps.plot(t, speed, label="speed")
+        self.assertEqual([r.name for r in tl.rows], ["IMU", "GPS"])
+        self.assertEqual(tl.full_range, (0.0, t[-1]))
+        events = []
+        tl.on("window_changed", lambda a, b: events.append(("w", a, b)))
+        tl.on("pins_changed", lambda: events.append(("p",)))
+        tl.window = (30, 50)
+        self.assertEqual(tl.window, (30.0, 50.0))
+        plotter.pause(0.05)
+        self.assertIn(("w", 30.0, 50.0), events)
+        v = tl.values_at(42.5)
+        self.assertEqual(v[("IMU", "ax")], -3.0)
+        self.assertAlmostEqual(v[("GPS", "speed")], 18.0)
+        tl.cursor_time = 42.5
+        self.assertEqual(tl.cursor_time, 42.5)
+        p = tl.pin(41.0, "brake")
+        self.assertEqual([x.label for x in tl.pins()], ["brake"])
+        p.t = 40.5
+        self.assertEqual(tl.pins()[0].t, 40.5)
+        tl.undo()
+        self.assertEqual(tl.pins()[0].t, 41.0)
+        p.jump()
+        self.assertAlmostEqual(sum(tl.window) / 2, 41.0)
+        self.assertIn(("p",), events)
+        tl.navigator = "speed"
+        self.assertEqual(tl.navigator, "GPS / speed")
+        moved = tl.move_signal(sp, imu)
+        self.assertEqual(len(imu.lines()), 3)
+        self.assertEqual(moved.label, "speed")
+        self.assertTrue(tl.remove_row(gps))
+        self.assertEqual(len(tl.rows), 1)
+        r2 = tl.add_row("extra")
+        tl.set_row_order([r2, imu])
+        self.assertEqual(tl.rows[0], r2)
+        r2.height = 0.5
+        r2.visible = False
+        self.assertFalse(r2.visible)
+        tl.auto_fit_y = False
+        self.assertFalse(tl.auto_fit_y)
+        with self.assertRaises(ValueError):
+            tl.clock_time = True  # no absolute timestamps
+        tl.time_origin = 1714658600.0
+        tl.clock_time = True
+        self.assertTrue(tl.format_time(1.25).endswith(".250"))
+        with tempfile.TemporaryDirectory() as d:
+            tl.savefig(os.path.join(d, "tl.png"))
+        tl.close()
+
+    def test_timeline_csv(self):
+        import importlib.util
+        here = os.path.dirname(os.path.abspath(__file__))
+        spec = importlib.util.spec_from_file_location(
+            "make_sample_vehicle", os.path.join(here, "..", "examples", "make_sample_vehicle.py"))
+        gen = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gen)
+        with tempfile.TemporaryDirectory() as d:
+            import contextlib
+            import io
+            with contextlib.redirect_stdout(io.StringIO()):
+                gen.main(d)
+            tl = plotter.timeline()
+            tl.load_csv(*(os.path.join(d, f) for f in ("imu.csv", "gps.csv", "wheels.csv")))
+            self.assertEqual([r.name for r in tl.rows], ["imu", "gps", "wheels"])
+            self.assertAlmostEqual(tl.time_origin, gen.T0)
+            lo, hi = tl.full_range
+            self.assertAlmostEqual(lo, 0.0, places=3)
+            self.assertGreater(hi, 119.9)
+            # Epoch s, epoch ms and ISO times line up: speed from GPS and wheels agree.
+            v = tl.values_at(30.0)
+            self.assertAlmostEqual(v[("gps", "speed [m/s]")], v[("wheels", "wheel_FR [m/s]")], delta=0.5)
+            with self.assertRaises(RuntimeError):
+                tl.load_csv(os.path.join(d, "missing.csv"))
+            tl.close()
+
     def test_savefig(self):
         self.fig.plot(self.x, np.sin(self.x), label="s")
         self.fig.marker(50, label="M")

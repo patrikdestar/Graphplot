@@ -109,6 +109,9 @@ PlotRenderer::PlotRenderer(PlotModel* model, QCustomPlot* plot, QCPAxisRect* rec
     : QObject(parent), m_model(model), m_plot(plot), m_rect(rect), m_primary(primary)
 {
     m_rect->setupFullAxesBox(true);  // closed frame: creates top/right axes if needed
+    // QCustomPlot puts only its default axis rect on the "background" layer;
+    // others would paint their background over the grid / image / region layers.
+    m_rect->setLayer(QLatin1String("background"));
     m_x = m_rect->axis(QCPAxis::atBottom);
     m_y = m_rect->axis(QCPAxis::atLeft);
     m_x2 = m_rect->axis(QCPAxis::atTop);
@@ -187,6 +190,25 @@ void PlotRenderer::bindItem(QCPAbstractItem* item)
         pos->setAxisRect(m_rect);
     }
     item->setClipAxisRect(m_rect);
+}
+
+void PlotRenderer::setPanelVisible(bool visible)
+{
+    if (visible == m_panelVisible) return;
+    m_panelVisible = visible;
+    // Axes, plottables and the inset legend follow the axis rect's visibility.
+    m_rect->setVisible(visible);
+    m_axisLabels->setVisible(visible);
+    m_peaks->setVisible(visible);
+    for (int i = 0; i < m_plot->itemCount(); ++i) {
+        QCPAbstractItem* it = m_plot->item(i);
+        if (it->clipAxisRect() == m_rect) it->setVisible(visible);
+    }
+    if (visible) {
+        // Re-apply per-object visibility rules (empty labels, inactive region, ...).
+        applyStyle();
+        applyRegion();
+    }
 }
 
 void PlotRenderer::setupAppearance()
@@ -830,7 +852,8 @@ void PlotRenderer::applyMarker(ObjectId id)
     const Style& st = m_model->style();
     v.label->setText(text, font(st.xtick.labelSize), st.mathText);
     v.label->setColor(st.labelColor);
-    v.label->setVisible(!text.isEmpty());
+    v.label->setVisible(!text.isEmpty() && m_panelVisible);
+    v.line->setVisible(m_panelVisible);
     QPen border(m->color, hl ? 1.5 : 1.0);
     v.label->setPen(border);
 }
@@ -879,11 +902,11 @@ void PlotRenderer::applyAnnotation(ObjectId id)
 void PlotRenderer::applyRegion()
 {
     const Region& r = m_model->region();
-    const bool on = r.active;
+    const bool on = r.active && m_panelVisible;
     m_region.rect->setVisible(on);
     m_region.minEdge->setVisible(on);
     m_region.maxEdge->setVisible(on);
-    m_region.label->setVisible(on);
+    m_region.label->setVisible(on && m_regionLabelOn);
     if (!on) return;
     m_region.rect->topLeft->setCoords(r.xmin, 0.0);
     m_region.rect->bottomRight->setCoords(r.xmax, 1.0);
@@ -986,7 +1009,7 @@ void PlotRenderer::applyStyle()
     m_insideLabel->setColor(st.labelColor);
     m_insideLabel->setPositionAlignment(ia);
     m_insideLabel->position->setCoords(ia & Qt::AlignLeft ? 0.03 : 0.97, ia & Qt::AlignTop ? 0.03 : 0.97);
-    m_insideLabel->setVisible(m_primary && !st.labelInside.isEmpty());  // first panel only
+    m_insideLabel->setVisible(m_primary && m_panelVisible && !st.labelInside.isEmpty());  // first panel only
 
     // Peaks
     PeakAppearance pa = m_peaks->appearance();
@@ -1072,7 +1095,7 @@ void PlotRenderer::applyAxesInfo()
     m_x2->setRangeReversed(info.xReversed);
     m_y->setRangeReversed(info.yReversed);
     m_y2->setRangeReversed(info.yReversed);
-    m_diagonal->setVisible(info.showDiagonal);
+    m_diagonal->setVisible(info.showDiagonal && m_panelVisible);
     PeakAppearance pa = m_peaks->appearance();
     pa.showLabels = info.showPeakLabels;
     m_peaks->setAppearance(pa);

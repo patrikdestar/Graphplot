@@ -17,6 +17,7 @@ public:
     QCPItemPosition* const position;
 
     void setText(const QString& text, const QFont& font, bool math);
+    void setHtml(const QString& html, const QFont& font);
     QString text() const { return m_text; }
     void setColor(const QColor& c) { m_color = c; }
     void setPositionAlignment(Qt::Alignment a) { m_align = a; }

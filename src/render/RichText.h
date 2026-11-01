@@ -36,6 +36,8 @@ public:
 
     void set(const QString& text, const QFont& font, bool math = true,
              Qt::Alignment align = Qt::AlignLeft);
+    // Sets ready-made Qt rich-text HTML (e.g. coloured value readouts).
+    void setHtml(const QString& html, const QFont& font);
     bool isEmpty() const { return m_text.isEmpty(); }
     QSizeF size() const;
     // Draws with the top-left corner at `topLeft`.

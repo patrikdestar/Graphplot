@@ -5,6 +5,7 @@
 // Without arguments a small demo data set is shown.
 #include "commands/PlotEditor.h"
 #include "gui/FigureWindow.h"
+#include "gui/Timeline.h"
 #include "model/PlotModel.h"
 #include "model/Style.h"
 #include "render/PlotRenderer.h"
@@ -115,6 +116,10 @@ int main(int argc, char** argv)
     parser.addHelpOption();
     QCommandLineOption shot("screenshot", "Render the window to <file> and exit.", "file");
     parser.addOption(shot);
+    QCommandLineOption timelineOpt("timeline", "Open the CSV files as a timeline (stacked sensor rows).");
+    parser.addOption(timelineOpt);
+    QCommandLineOption perColumn("row-per-column", "Timeline: one row per column instead of per file.");
+    parser.addOption(perColumn);
     QCommandLineOption demo2d("demo2d", "Show a synthetic 2D spectrum (contour demo).");
     parser.addOption(demo2d);
     parser.addPositionalArgument("files", "Column data files (CSV/TSV/whitespace), or Bruker 2D "
@@ -126,7 +131,12 @@ int main(int argc, char** argv)
 
     FigureWindow w;
     const QStringList files = parser.positionalArguments();
-    if (parser.isSet(demo2d)) {
+    if (parser.isSet(timelineOpt)) {
+        QString err;
+        if (!w.timeline()->loadCsv(files, parser.isSet(perColumn), &err))
+            QMessageBox::warning(&w, "Open time series", err);
+        w.undoStack()->clear();
+    } else if (parser.isSet(demo2d)) {
         addDemo2D(w);
     } else if (files.isEmpty()) {
         addDemoData(w);

@@ -48,7 +48,12 @@ public:
     // Which axes wheel / rubber-band zoom affect. Holding Ctrl restricts a
     // single wheel step to X, holding Shift restricts it to Y.
     ZoomAxes zoomAxes() const { return m_zoomAxes; }
-    void setZoomAxes(ZoomAxes axes) { m_zoomAxes = axes; }
+    void setZoomAxes(ZoomAxes axes)
+    {
+        if (axes == m_zoomAxes) return;
+        m_zoomAxes = axes;
+        emit zoomAxesChanged(axes);
+    }
 
     // When on, the mouse wheel scrolls contour levels of 2D data instead of
     // zooming (Alt+wheel always scrolls levels). Wheel up = lower levels,
@@ -68,6 +73,7 @@ signals:
     void selectionChanged(gp::ObjectRef ref);
     void wheelAdjustsLevelsChanged(bool on);
     void activeTargetChanged(int index);
+    void zoomAxesChanged(gp::ZoomAxes axes);
     void cursorMoved(QPointF dataPos, bool insidePlot);
     // Emitted on double-click / "Edit…" context action for an object.
     void editRequested(gp::ObjectRef ref);

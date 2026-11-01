@@ -33,6 +33,7 @@ class PlotEditor;
 class PlotRenderer;
 class PropertiesPanel;
 class PeakTable;
+class Timeline;
 
 // Layout of a multi-panel figure (matplotlib's subplots).
 struct GridSpec {
@@ -74,6 +75,12 @@ public:
     void setGrid(const GridSpec& spec);
     const GridSpec& gridSpec() const { return m_gridSpec; }
     QUndoStack* undoStack() const { return m_stack; }
+    // Creates an empty panel (not placed in the layout); returns its index.
+    int createPanel();
+    // The layout grid holding the panels (created on first use).
+    void ensureGrid();
+    QCPLayoutGrid* panelGrid() const { return m_grid; }
+    QList<QCPMarginGroup*>& marginGroups() { return m_marginGroups; }
 
     bool openDataFile(const QString& fileName, QString* error = nullptr);
     bool openMatrixFile(const QString& fileName, QString* error = nullptr);
@@ -93,6 +100,7 @@ public:
 signals:
     void closed();
     void currentAxesChanged(int index);
+    void panelCreated(int index);
 
 protected:
     void closeEvent(QCloseEvent* e) override;
@@ -106,10 +114,16 @@ private:
     void onOpen();
     void onOpenMatrix();
     void onOpenBruker();
+    void onOpenTimeSeries();
     void updateLevelStatus();
     void onExport();
     void buildStyleMenu();
 public:
+    // Switches the figure to the timeline layout (stacked rows sharing a time
+    // axis, navigator, cursor line). Created on first use.
+    Timeline* timeline();
+    bool hasTimeline() const { return m_timeline != nullptr; }
+
     // Applies a built-in style name or a style file to this figure (undoable).
     bool applyStyle(const QString& nameOrPath, QStringList* errors = nullptr);
 
@@ -138,6 +152,7 @@ private:
     QAction* m_levelsAction = nullptr;
     QString m_lastDir;
     QSize m_figureSize;
+    Timeline* m_timeline = nullptr;
 };
 
 }  // namespace gp

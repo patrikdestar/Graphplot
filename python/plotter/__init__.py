@@ -44,7 +44,7 @@ from ._plotter import _run_until_closed
 from . import style
 
 __all__ = [
-    "style", "figure", "Axes", "show", "pause", "figures", "close_all",
+    "style", "figure", "Axes", "timeline", "Timeline", "TimelineRow", "TimePin", "show", "pause", "figures", "close_all",
     "Figure", "Line", "Contour", "Marker", "Annotation", "Peak",
 ]
 
@@ -295,6 +295,203 @@ def _axes_list(self: Figure):
 def _gca(self: Figure):
     """The current panel (last created/used, or clicked in the window)."""
     return Axes(self, self._current())
+
+
+class TimelineRow:
+    """One row of a Timeline (a figure panel). Plot into it with ``row.plot``."""
+
+    def __init__(self, timeline: "Timeline", index: int):
+        self._tl = timeline
+        self.index = index
+
+    def plot(self, t, y, label: str = "", color=None) -> Line:
+        """Add a signal (time in seconds since the timeline origin, sorted)."""
+        return self._tl.figure._tl_add_signal(self.index, label, t, y, color)
+
+    def lines(self):
+        return Axes(self._tl.figure, self.index).lines()
+
+    @property
+    def axes(self) -> "Axes":
+        """Full panel API (markers, annotations, styles, y limits, ...)."""
+        return Axes(self._tl.figure, self.index)
+
+    name = property(lambda self: self._tl.figure._tl_row_name(self.index),
+                    lambda self, v: self._tl.figure._tl_set_row_name(self.index, str(v)))
+    visible = property(lambda self: self._tl.figure._tl_row_visible(self.index),
+                       lambda self, v: self._tl.figure._tl_set_row_visible(self.index, bool(v)))
+    height = property(lambda self: self._tl.figure._tl_row_height(self.index),
+                      lambda self, v: self._tl.figure._tl_set_row_height(self.index, float(v)),
+                      doc="Relative row height (default 1).")
+
+    def __eq__(self, other):
+        return isinstance(other, TimelineRow) and other._tl is self._tl and other.index == self.index
+
+    def __hash__(self):
+        return hash((id(self._tl), self.index))
+
+    def __repr__(self):
+        return f"<TimelineRow {self.index} {self.name!r}>"
+
+
+class TimePin:
+    """A time marker drawn through all rows of a Timeline (undoable)."""
+
+    def __init__(self, timeline: "Timeline", pin_id: int):
+        self._tl = timeline
+        self.id = pin_id
+
+    def _get(self):
+        for pid, t, label, color in self._tl.figure._tl_pins():
+            if pid == self.id:
+                return t, label, color
+        raise KeyError("this time marker no longer exists")
+
+    t = property(lambda self: self._get()[0],
+                 lambda self, v: self._tl.figure._tl_update_pin(self.id, float(v), self._get()[1]))
+    label = property(lambda self: self._get()[1],
+                     lambda self, v: self._tl.figure._tl_update_pin(self.id, self._get()[0], str(v)))
+    color = property(lambda self: self._get()[2])
+
+    def remove(self):
+        self._tl.figure._tl_remove_pin(self.id)
+
+    def jump(self):
+        """Centre the visible window on this marker."""
+        self._tl.figure._tl_jump_to_pin(self.id)
+
+    def __repr__(self):
+        try:
+            t, label, _ = self._get()
+            return f"<TimePin {label!r} at {self._tl.format_time(t)}>"
+        except KeyError:
+            return "<TimePin (removed)>"
+
+
+class Timeline:
+    """Stacked sensor rows sharing one time axis, with a navigator strip,
+    a cursor line through all rows (with value readouts), time markers,
+    row rearranging and auto-fit Y. Create with plotter.timeline().
+
+    Times are seconds relative to ``time_origin`` (Unix epoch seconds) when
+    the data has absolute timestamps; ``clock_time = True`` then labels the
+    axis with clock times.
+
+    Anything not defined here is forwarded to the underlying Figure
+    (show, savefig, use_style, set_style, undo, on, ...)."""
+
+    def __init__(self, figure: Figure):
+        object.__setattr__(self, "figure", figure)
+        figure._tl_enable()
+
+    # ---- rows ---------------------------------------------------------
+    def add_row(self, name: str = "") -> TimelineRow:
+        return TimelineRow(self, self.figure._tl_add_row(str(name)))
+
+    def add_signals(self, row_name: str, t, signals: dict, colors=None) -> TimelineRow:
+        """Add a row with several signals: add_signals("IMU", t, {"ax": ax, "ay": ay})."""
+        row = self.add_row(row_name)
+        for i, (name, y) in enumerate(signals.items()):
+            row.plot(t, y, label=name, color=None if colors is None else colors[i])
+        return row
+
+    @property
+    def rows(self):
+        """Rows in display order (top to bottom)."""
+        return [TimelineRow(self, i) for i in self.figure._tl_rows()]
+
+    def set_row_order(self, rows) -> None:
+        self.figure._tl_set_order([r.index if isinstance(r, TimelineRow) else int(r) for r in rows])
+
+    def move_signal(self, line: Line, row: TimelineRow) -> Line:
+        """Move a signal to another row (one undo step); returns the new Line."""
+        return self.figure._tl_move_signal(line, row.index)
+
+    def remove_row(self, row: TimelineRow) -> bool:
+        """Remove an empty row from the layout."""
+        return self.figure._tl_remove_row(row.index)
+
+    def load_csv(self, *files, row_per_column: bool = False) -> None:
+        """Load CSV logs (time column + signal columns); one row per file by default."""
+        import os
+        self.figure._tl_load_csv([os.path.expanduser(str(f)) for f in files], bool(row_per_column))
+
+    # ---- time window / cursor ------------------------------------------------
+    window = property(lambda self: self.figure._tl_window(),
+                      lambda self, w: self.figure._tl_set_window(float(w[0]), float(w[1])),
+                      doc="Visible time window (t0, t1).")
+
+    @property
+    def full_range(self):
+        return self.figure._tl_full_range()
+
+    def show_all(self):
+        self.figure._tl_show_all()
+
+    cursor_time = property(lambda self: self.figure._tl_cursor(),
+                           lambda self, t: self.figure._tl_set_cursor(t),
+                           doc="Time under the cursor line (None when the mouse is outside).")
+
+    def values_at(self, t: float) -> dict:
+        """Interpolated value of every visible signal: {(row_name, signal): value}."""
+        out = {}
+        for row, name, value in self.figure._tl_values_at(float(t)):
+            out[(self.figure._tl_row_name(row), name)] = value
+        return out
+
+    def format_time(self, t: float) -> str:
+        return self.figure._tl_format_time(float(t))
+
+    # ---- navigator / options ------------------------------------------------------
+    @property
+    def navigator(self) -> str:
+        row, sid = self.figure._tl_nav()
+        for r, i, name in self.figure._tl_signals():
+            if (r, i) == (row, sid):
+                return name
+        return ""
+
+    @navigator.setter
+    def navigator(self, value):
+        """A Line, or a name "row / signal" (or just the signal name)."""
+        if isinstance(value, Line):
+            self.figure._tl_set_nav(*self._line_ref(value))
+            return
+        for r, i, name in self.figure._tl_signals():
+            if name == value or name.split(" / ", 1)[-1] == value:
+                self.figure._tl_set_nav(r, i)
+                return
+        raise KeyError(f"no signal {value!r}")
+
+    def _line_ref(self, line: Line):
+        return line._panel, line._id
+
+    auto_fit_y = property(lambda self: self.figure._tl_autofit(),
+                          lambda self, v: self.figure._tl_set_autofit(bool(v)))
+    clock_time = property(lambda self: self.figure._tl_clock(),
+                          lambda self, v: self.figure._tl_set_clock(bool(v)))
+    time_origin = property(lambda self: self.figure._tl_origin(),
+                           lambda self, v: self.figure._tl_set_origin(float(v)),
+                           doc="Unix epoch seconds of t = 0 (None if the data has no absolute time).")
+
+    # ---- time markers ---------------------------------------------------------------
+    def pin(self, t: float, label: str = "", color=None) -> TimePin:
+        return TimePin(self, self.figure._tl_add_pin(float(t), str(label), color))
+
+    def pins(self):
+        return [TimePin(self, pid) for pid, *_ in self.figure._tl_pins()]
+
+    # ---- forwarding ------------------------------------------------------------------
+    def __getattr__(self, name):
+        return getattr(self.figure, name)
+
+    def __repr__(self):
+        return f"<Timeline rows={[r.name for r in self.rows]}>"
+
+
+def timeline(title: str | None = None, size: tuple[int, int] = (1200, 800)) -> Timeline:
+    """Create a timeline window: stacked sensor rows sharing one time axis."""
+    return Timeline(figure(title, size))
 
 
 Figure.subplots = _subplots

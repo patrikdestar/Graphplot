@@ -228,6 +228,18 @@ void RichTextBlock::set(const QString& text, const QFont& font, bool math, Qt::A
     if (align != Qt::AlignLeft) m_doc->setTextWidth(m_doc->idealWidth());
 }
 
+void RichTextBlock::setHtml(const QString& html, const QFont& font)
+{
+    m_text = html;
+    m_doc->setDocumentMargin(0);
+    m_doc->setDefaultFont(font);
+    QTextOption opt = m_doc->defaultTextOption();
+    opt.setWrapMode(QTextOption::NoWrap);
+    m_doc->setDefaultTextOption(opt);
+    m_doc->setHtml(html);
+    m_doc->setTextWidth(-1);
+}
+
 QSizeF RichTextBlock::size() const
 {
     if (m_text.isEmpty()) return {};

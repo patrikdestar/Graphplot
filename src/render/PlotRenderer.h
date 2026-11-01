@@ -102,6 +102,12 @@ public:
     // The visible 2D dataset whose extent contains the data point (topmost first).
     const Matrix* matrixAt(const QPointF& data) const;
 
+    // Shows/hides the whole panel (frame, axes, data, items) - used for rows
+    // that are temporarily removed from a layout.
+    void setPanelVisible(bool visible);
+    bool panelVisible() const { return m_panelVisible; }
+    void setRegionLabelVisible(bool on) { m_regionLabelOn = on; applyRegion(); }
+
     void replot();               // queued full replot
     void replotObjectLayers();   // immediate replot of marker/annotation/region layers only
 
@@ -190,6 +196,8 @@ private:
     ObjectRef m_highlight;
     bool m_exportMode = false;
     bool m_hasHome = false;
+    bool m_panelVisible = true;
+    bool m_regionLabelOn = true;
     ViewRange m_home;
 };
 

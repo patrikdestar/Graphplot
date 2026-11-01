@@ -2,6 +2,7 @@
 // (ctest sets this automatically).
 #include "commands/PlotEditor.h"
 #include "gui/FigureWindow.h"
+#include "gui/Timeline.h"
 #include "model/DataLoader.h"
 #include "model/PlotModel.h"
 #include "qcustomplot.h"
@@ -9,6 +10,7 @@
 #include "model/Contour.h"
 #include "model/PeakPicker.h"
 #include "model/Style.h"
+#include "model/TimeSeriesLoader.h"
 #include "render/RichText.h"
 #include "render/PeakOverlay.h"
 #include "render/ContourPlottable.h"
@@ -903,6 +905,222 @@ private slots:
         QVERIFY(richTextToHtml("a < b & 5$").contains("&lt;"));     // escaped, lone $ kept
         QCOMPARE(richTextToHtml("$x$", false), QString("$x$"));       // math disabled
         QVERIFY(richTextToHtml("price \\$5").contains("$5"));
+    }
+
+    // ---- time series ------------------------------------------------------------------------
+    void timeSeriesCsvFormats()
+    {
+        QTemporaryDir dir;
+        auto write = [&](const QString& name, const QByteArray& text) {
+            QFile f(dir.filePath(name));
+            if (!f.open(QIODevice::WriteOnly)) qFatal("cannot write");
+            f.write(text);
+            return f.fileName();
+        };
+        // Relative seconds, header with units, time not in the first column, unsorted, gap.
+        auto a = loadTimeSeriesCsv(write("imu.csv",
+            "ax [m/s2],time [s],ay\n0.1,0.02,1\n0.0,0.00,2\n,0.01,3\n"));
+        QVERIFY2(a.error.isEmpty(), qPrintable(a.error));
+        QVERIFY(!a.absolute);
+        QCOMPARE(a.timeColumn, QString("time [s]"));
+        QCOMPARE(a.columns, (QStringList{"ax [m/s2]", "ay"}));
+        QCOMPARE(a.time, (QVector<double>{0.0, 0.01, 0.02}));
+        QVERIFY(std::isnan(a.values[0][1]));  // empty cell -> gap
+        QCOMPARE(a.values[1][2], 1.0);
+        // Epoch milliseconds, semicolon separated.
+        auto b = loadTimeSeriesCsv(write("gps.csv", "timestamp;speed\n1714658607250;12.5\n1714658607350;12.7\n"));
+        QVERIFY(b.absolute);
+        QVERIFY(std::abs(b.time[0] - 1714658607.25) < 1e-6);
+        // Nanoseconds, no header.
+        auto c = loadTimeSeriesCsv(write("can.txt", "1714658607000000000 1 2\n1714658607500000000 3 4\n"));
+        QVERIFY(c.absolute);
+        QVERIFY(std::abs(c.time[1] - 1714658607.5) < 1e-6);
+        QCOMPARE(c.columns.size(), 2);
+        // ISO date-times.
+        auto d = loadTimeSeriesCsv(write("iso.csv", "datetime,v\n2024-05-02 14:03:27.250,1\n2024-05-02T14:03:28,2\n"));
+        QVERIFY2(d.error.isEmpty(), qPrintable(d.error));
+        QVERIFY(d.absolute);
+        QVERIFY(std::abs((d.time[1] - d.time[0]) - 0.75) < 1e-9);
+        // Errors
+        QVERIFY(!loadTimeSeriesCsv(write("bad.csv", "time\n1\n2\n")).error.isEmpty());
+    }
+
+    // ---- timeline ---------------------------------------------------------------------------
+private:
+    struct TimelineFixture {
+        std::unique_ptr<FigureWindow> w;
+        Timeline* tl = nullptr;
+        int imu = -1, gps = -1;
+        ObjectId ax = kInvalidId, speed = kInvalidId;
+    };
+    TimelineFixture makeTimeline()
+    {
+        TimelineFixture f;
+        f.w = std::make_unique<FigureWindow>();
+        f.w->resize(1000, 800);
+        f.w->show();
+        if (!QTest::qWaitForWindowExposed(f.w.get())) qWarning("not exposed");
+        f.tl = f.w->timeline();
+        QVector<double> t, a, v;
+        for (int i = 0; i <= 1000; ++i) {
+            t << i * 0.1;                  // 0..100 s
+            a << (i >= 400 && i < 450 ? -3.0 : 0.0);
+            v << 20.0 - (i >= 400 ? std::min(10.0, (i - 400) * 0.06) : 0.0);
+        }
+        f.imu = f.tl->addRow("IMU");
+        f.ax = f.tl->addSignal(f.imu, "ax", t, a);
+        f.gps = f.tl->addRow("GPS");
+        f.speed = f.tl->addSignal(f.gps, "speed", t, v);
+        f.w->plot()->replot();
+        QCoreApplication::processEvents();
+        return f;
+    }
+
+private slots:
+
+    void timelineRowsShareTimeAndAutoFit()
+    {
+        auto f = makeTimeline();
+        QCOMPARE(f.tl->rows(), (QList<int>{f.imu, f.gps}));
+        QCOMPARE(f.imu, 0);  // the figure's first panel is reused
+        QCOMPARE(f.tl->window(), (QPair<double, double>{0.0, 100.0}));
+        f.tl->setWindow(30, 50);
+        QCoreApplication::processEvents();  // auto-fit runs queued
+        PlotRenderer* gpsR = f.w->axes(f.gps).renderer;
+        QCOMPARE(gpsR->xAxis()->range().lower, 30.0);  // rows are linked
+        // Auto-fit: speed in [30, 50] s spans 14..20 (+ padding), not the full 10..20.
+        QVERIFY(gpsR->yAxis()->range().lower > 13 && gpsR->yAxis()->range().lower < 14);
+        // Navigator shows the window as its region.
+        const Region nav = f.tl->navigatorModel()->region();
+        QVERIFY(nav.active && nav.xmin == 30 && nav.xmax == 50);
+    }
+
+    void timelineNavigatorDragAndWheel()
+    {
+        auto f = makeTimeline();
+        f.tl->setWindow(20, 40);
+        f.w->plot()->replot();
+        QCPAxis* nx = f.tl->navigatorRenderer()->xAxis();
+        const int y = f.tl->navigatorRenderer()->axisRect()->rect().center().y();
+        auto px = [&](double t) { return QPoint(int(std::lround(nx->coordToPixel(t))), y); };
+        // Drag the window body by +30 s.
+        drag(f.w->plot(), px(30), px(60));
+        auto [a, b] = f.tl->window();
+        QVERIFY(std::abs(a - 50) < 0.5 && std::abs(b - 70) < 0.5);
+        // Drag the right edge out to 90 s.
+        drag(f.w->plot(), px(b), px(90));
+        std::tie(a, b) = f.tl->window();
+        QVERIFY(std::abs(b - 90) < 0.5 && std::abs(a - 50) < 0.5);
+        // Wheel over the navigator zooms the window about the mouse.
+        QWheelEvent ev(px(70), f.w->plot()->mapToGlobal(px(70)), QPoint(), QPoint(0, 120), Qt::NoButton,
+                       Qt::NoModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(f.w->plot(), &ev);
+        auto [c, d] = f.tl->window();
+        QVERIFY(d - c < b - a);
+        // Click outside the window centres it there (keeping its width).
+        QTest::mouseClick(f.w->plot(), Qt::LeftButton, {}, px(10));
+        auto [e, g] = f.tl->window();
+        QVERIFY(std::abs((e + g) / 2 - 10) < 0.6);
+        QVERIFY(std::abs((g - e) - (d - c)) < 1e-6);
+        // Double-click: whole recording.
+        QTest::mouseDClick(f.w->plot(), Qt::LeftButton, {}, px(50));
+        QCOMPARE(f.tl->window(), (QPair<double, double>{0.0, 100.0}));
+    }
+
+    void timelineCursorReadoutsAndPins()
+    {
+        auto f = makeTimeline();
+        f.tl->setWindow(0, 100);
+        f.w->plot()->replot();
+        PlotRenderer* imuR = f.w->axes(f.imu).renderer;
+        const QPoint p(int(imuR->xAxis()->coordToPixel(42.0)), imuR->axisRect()->rect().center().y());
+        QMouseEvent move(QEvent::MouseMove, QPointF(p), f.w->plot()->mapToGlobal(QPointF(p)), Qt::NoButton,
+                         Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(f.w->plot(), &move);
+        QVERIFY(f.tl->cursorTime().has_value());
+        QVERIFY(std::abs(*f.tl->cursorTime() - 42.0) < 0.2);
+        const auto values = f.tl->valuesAt(42.0);
+        QCOMPARE(values.size(), 2);
+        QCOMPARE(values[0].value, -3.0);   // ax during braking
+        QVERIFY(std::abs(values[1].value - 18.8) < 1e-9);  // speed interpolated
+        // Ctrl+click drops a time marker through all rows.
+        QTest::mouseClick(f.w->plot(), Qt::LeftButton, Qt::ControlModifier, p);
+        QCOMPARE(int(f.tl->pins().size()), 1);
+        const ObjectId pin = f.tl->pins()[0].id;
+        // Drag it (in the other row) to 60 s; undo restores 42 s.
+        PlotRenderer* gpsR = f.w->axes(f.gps).renderer;
+        const double t0 = f.tl->pins()[0].t;
+        const QPoint from(int(std::lround(gpsR->xAxis()->coordToPixel(t0))), gpsR->axisRect()->rect().center().y());
+        const QPoint to(int(gpsR->xAxis()->coordToPixel(60.0)), from.y());
+        drag(f.w->plot(), from, to);
+        QVERIFY(std::abs(f.tl->pins()[0].t - 60.0) < 0.3);
+        f.w->undoStack()->undo();
+        QCOMPARE(f.tl->pins()[0].t, t0);
+        f.tl->removePin(pin);
+        QVERIFY(f.tl->pins().empty());
+        f.w->undoStack()->undo();
+        QCOMPARE(int(f.tl->pins().size()), 1);
+        // Leaving the plot hides the cursor.
+        QEvent leave(QEvent::Leave);
+        QApplication::sendEvent(f.w->plot(), &leave);
+        QVERIFY(!f.tl->cursorTime().has_value());
+    }
+
+    void timelineRearrangeRows()
+    {
+        auto f = makeTimeline();
+        f.tl->setRowOrder({f.gps, f.imu});
+        QCOMPARE(f.tl->rows(), (QList<int>{f.gps, f.imu}));
+        f.w->plot()->replot();
+        // gps is now above imu
+        QVERIFY(f.w->axes(f.gps).renderer->axisRect()->rect().top() <
+                f.w->axes(f.imu).renderer->axisRect()->rect().top());
+        // Move "speed" into the IMU row: one undo step.
+        const ObjectId moved = f.tl->moveSignal({f.gps, f.speed}, f.imu);
+        QVERIFY(moved != kInvalidId);
+        QCOMPARE(int(f.w->axes(f.imu).model->datasets().size()), 2);
+        QVERIFY(f.w->axes(f.gps).model->datasets().empty());
+        QVERIFY(f.tl->removeRowIfEmpty(f.gps));
+        QCOMPARE(f.tl->rows(), (QList<int>{f.imu}));
+        f.w->undoStack()->undo();  // undo the move (row removal is a layout change)
+        QCOMPARE(int(f.w->axes(f.gps).model->datasets().size()), 1);
+        // Hide / show and heights
+        const int r3 = f.tl->addRow("extra");
+        f.tl->setRowVisible(r3, false);
+        QVERIFY(!f.w->axes(r3).renderer->axisRect()->visible());
+        f.tl->setRowVisible(r3, true);
+        f.tl->setRowHeight(r3, 2.0);
+        QCOMPARE(f.tl->rowHeight(r3), 2.0);
+    }
+
+    void timelineClockAxisAndCsv()
+    {
+        QTemporaryDir dir;
+        QFile a(dir.filePath("imu.csv"));
+        QVERIFY(a.open(QIODevice::WriteOnly));
+        a.write("timestamp,ax\n1714658600.0,0\n1714658600.5,1\n1714658601.0,0\n");
+        a.close();
+        QFile b(dir.filePath("gps.csv"));
+        QVERIFY(b.open(QIODevice::WriteOnly));
+        b.write("time_ms;speed;alt\n1714658600200;10;100\n1714658600700;11;101\n");
+        b.close();
+        FigureWindow w;
+        Timeline* tl = w.timeline();
+        QString err;
+        QVERIFY2(tl->loadCsv({a.fileName(), b.fileName()}, false, &err), qPrintable(err));
+        QCOMPARE(tl->rows().size(), 2);
+        QVERIFY(tl->hasAbsoluteTime());
+        QCOMPARE(tl->timeOrigin(), 1714658600.0);
+        // Different time formats are aligned on one clock.
+        // (epoch seconds in a double resolve ~0.24 us)
+        QVERIFY(std::abs(w.axes(tl->rows()[1]).model->datasets()[0].x.front() - 0.2) < 1e-6);
+        tl->setClockTime(true);
+        QVERIFY(tl->clockTime());
+        QVERIFY(tl->formatTime(0.25).endsWith(".250"));
+        // Row per column
+        FigureWindow w2;
+        QVERIFY(w2.timeline()->loadCsv({b.fileName()}, true, &err));
+        QCOMPARE(w2.timeline()->rows().size(), 2);
     }
 
     // ---- data loading -----------------------------------------------------------------------

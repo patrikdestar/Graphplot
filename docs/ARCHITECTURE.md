@@ -137,6 +137,37 @@ A figure holds one or more *panels*. Each panel has its own `PlotModel`,
   - Ratio panels use zero spacing with fixed zero inner margins, so the
     frames touch.
 
+### Timeline
+
+`gui/Timeline` turns a figure into stacked rows.
+
+- **Rows:** each row is an ordinary panel, so data, styles, undo and Python
+  handles all work. Row x axes are linked to row 0 through `rangeChanged`.
+- **Navigator:** a separate model and renderer (not an editable panel) on
+  its own fixed-height axis rect. The visible window is the navigator
+  model's region. The window and the row range are synchronised in both
+  directions, with a re-entrancy guard.
+- **Event handling:** the timeline installs its own event filter *after*
+  the interaction controller, so Qt calls it first.
+  - It handles the navigator: drag, resize, wheel and click.
+  - It handles time-marker drags and Ctrl+click, plus the cursor.
+  - It passes everything else on, so normal zoom, pan and editing keep
+    working in the rows, restricted to the time axis.
+- **Cursor:** the cursor line and value boxes live on their own buffered
+  "cursor" layer, so mouse moves only repaint that layer. Values are
+  interpolated by binary search in the sorted time arrays.
+- **Auto-fit:** it runs once per event-loop pass after window changes. It
+  scans only the samples inside the window (also found by binary search).
+- **Clock axis:** a `QCPAxisTickerDateTime` subclass shifts the relative
+  axis by the epoch origin, so ticks fall on round clock times.
+- **Time markers:** pins are undoable commands on the figure's shared undo
+  stack.
+- **Hidden rows:** their panel is taken out of the layout and hidden with
+  all its items.
+- **CSV loading:** `model/TimeSeriesLoader` detects the time column and
+  its format (epoch magnitude: s, ms, µs or ns; or ISO 8601), sorts rows,
+  and turns empty cells into NaN gaps.
+
 ### Styles
 
 `Style` (model layer) contains every visual parameter. `PlotRenderer::applyStyle`
@@ -229,6 +260,11 @@ documented in the package docstring.
   friendship with its own legend item class does not extend to subclasses.
   The rich legend item therefore lets the base class draw the icon (with an
   empty name) and draws the text itself.
+- **Extra panels and layers:** QCustomPlot puts only its default axis rect
+  on the "background" layer. Panels created later would paint their
+  background over the grid, image and region layers. The renderer moves
+  every panel to "background"; this was found when the timeline navigator's
+  window band did not show.
 - **Legend auto-add:** QCustomPlot adds every new plottable to the *main*
   legend by default. This is switched off; legends are rebuilt per panel.
 - **Licence:** QCustomPlot is GPLv3 (see README).
