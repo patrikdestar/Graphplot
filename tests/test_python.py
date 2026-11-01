@@ -1459,6 +1459,32 @@ class PlotterTests(unittest.TestCase):
         self.assertAlmostEqual(labels[1].position[0], -2.2)
         plt.close("all")
 
+    def test_round19_fixes(self):
+        import plotter.pyplot as plt
+        fig, ax = plt.subplots()
+        ax.plot([0, 1, 2], [1, 2, 3])
+        self.assertGreater(len(ax.get_xticks()), 1)  # automatic ticks are reported
+        ax.get_xticklabels()[0].set_rotation(45)
+        self.assertEqual(ax._ax.x_tick_rotation, 45.0)
+        fig, axs = plt.subplots(4, 1, figsize=(6, 4), sharex=True)
+        for a in axs:
+            for k in range(4):
+                a.plot([0, 1], [0, k], label=f"L{k}")
+            a.legend()
+        with tempfile.TemporaryDirectory() as d:
+            fig.savefig(os.path.join(d, "l.png"))
+        self.assertTrue(all(a.get_legend() is not None for a in axs))  # small panels keep legends
+        plt.close("all")
+        tl = plotter.timeline("Orig")
+        t = np.linspace(0, 10, 50)
+        tl.add_signals("r", t, {"a": np.sin(t)})
+        tl.add_signals("q", t, {"b": np.cos(t)})
+        tl.set_row_order(list(reversed(tl.rows)))
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "t.gpfig")
+            tl.save(path)
+            self.assertEqual(plotter.load(path).title, "Orig")  # title survives reorder + save
+
     def test_round6_correctness(self):
         import plotter.pyplot as plt
         f = self.fig

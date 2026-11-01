@@ -1352,7 +1352,9 @@ void PlotRenderer::applyImageAppearance(const Matrix& m, MatrixVisual& v)
             banded.setLevelCount(1000);
             for (int i = 0; i < bands; ++i) {
                 // The colour at the band's middle value, as matplotlib.
-                const QColor c = g.color(0.5 * (lv[i] + lv[i + 1]), QCPRange(lo, hi));
+                // Colours on the image's colour scale (centred on zero for a
+                // diverging map, or vmin..vmax), at the band's middle value.
+                const QColor c = g.color(0.5 * (lv[i] + lv[i + 1]), range);
                 const double p0 = (lv[i] - lo) / (hi - lo), p1 = (lv[i + 1] - lo) / (hi - lo);
                 banded.setColorStopAt(p0, c);
                 banded.setColorStopAt(std::max(p0, p1 - 1e-4), c);
@@ -1663,8 +1665,16 @@ void PlotRenderer::applyAnnotation(ObjectId id)
     updateAnnotationVisibility();
 }
 
+void PlotRenderer::finishLegend()
+{
+    const bool show = m_legendWanted && legendFits();
+    if (m_legend->visible() != show) m_legend->setVisible(show);
+    if (m_legendBest && show) placeLegendBest();
+}
+
 bool PlotRenderer::legendFits() const
 {
+    if (!m_compact) return true;  // a legend that was asked for stays on ordinary panels
     const int h = m_rect->rect().height();
     // Room for the legend plus its inset margins above and below.
     return h <= 0 || m_legend->minimumOuterSizeHint().height() + 20 <= h;
@@ -1676,7 +1686,8 @@ void PlotRenderer::updateAnnotationVisibility()
         const Annotation* a = m_model->annotation(it.key());
         if (!a) continue;
         bool show = m_panelVisible;
-        if (show && !a->axesCoords) {
+        // The arrow target is in data coordinates even for axes-placed text.
+        if (show && (a->arrow || !a->axesCoords)) {
             const double px = a->arrow ? a->arrowX : a->x, py = a->arrow ? a->arrowY : a->y;
             show = m_x->range().contains(px) && m_y->range().contains(py);
         }
@@ -2196,6 +2207,13 @@ bool PlotRenderer::fitTickCounts()
         }
     }
     // y: by panel height.
+    if (m_compact) {  // too short for even two labels: none (the row name still shows)
+        const bool room = ar.height() >= 2 * QFontMetrics(m_y->tickLabelFont()).height();
+        if (m_y->tickLabels() != room) {
+            m_y->setTickLabels(room);
+            changed = true;
+        }
+    }
     if (adjustable(m_y)) {
         const QFontMetrics fm(m_y->tickLabelFont());
         const int styleY = std::max(1, st.ytick.count);

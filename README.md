@@ -242,7 +242,8 @@ The application:
 - `--timeline a.csv b.csv` opens sensor logs as a timeline (one row per file;
   add `--row-per-column` for one row per signal).
 - `--export figure.pdf` renders the figure (plot only; `.png`, `.jpg`, `.svg`,
-  `.pdf`) and exits. `--size 800x600` sets the figure size in pixels;
+  `.pdf`) and exits. `--size 800x600` sets the figure size in pixels
+  (default: the figure's saved size, else 1000x650);
   `--scale 1` sets the pixel scale of PNG/JPG files (default 2, so an
   800x600 figure gives a 1600x1200 image); `--screenshot out.png` renders the whole window. Errors then go
   to the terminal with a non-zero exit code (for scripts and CI).

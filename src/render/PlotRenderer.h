@@ -138,6 +138,13 @@ public:
     void startFresh();
     void updateAnnotationVisibility();
     bool legendFits() const;
+    // Compact panels (timeline rows): a legend taller than the panel and
+    // tick labels that cannot fit are hidden instead of spilling over.
+    void setCompact(bool on) { m_compact = on; }
+    // After the figure's layout has settled: final legend visibility and
+    // 'best' position for this geometry.
+    void finishLegend();
+    bool m_compact = false;
     bool m_legendWanted = false;
     const QList<PlotRenderer*>& sharedX() const { return m_shareX; }
     const QList<PlotRenderer*>& sharedY() const { return m_shareY; }

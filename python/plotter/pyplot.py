@@ -1038,13 +1038,13 @@ class PltAxes:
     def set_yticklabels(self, labels, **kw):
         self._set_ticklabels("y", labels, kw)
 
-    def get_xticks(self):
+    def get_xticks(self, minor=False):
         t = self._ax.get_xticks()
-        return _np.asarray([]) if t is None else t[0]
+        return _np.asarray(self._ax._drawn_ticks(True)[0]) if t is None else t[0]
 
-    def get_yticks(self):
+    def get_yticks(self, minor=False):
         t = self._ax.get_yticks()
-        return _np.asarray([]) if t is None else t[0]
+        return _np.asarray(self._ax._drawn_ticks(False)[0]) if t is None else t[0]
 
     def get_xscale(self):
         return "log" if self._ax.x_log else "linear"
@@ -1178,7 +1178,11 @@ class PltAxes:
 
     def _tick_texts(self, axis):
         t = getattr(self._ax, "get_" + axis + "ticks")()
-        return list(t[1]) if t is not None and len(t[1]) else [str(v) for v in getattr(self, "get_" + axis + "ticks")()]
+        if t is not None and len(t[1]):
+            return list(t[1])
+        if t is None:  # automatic ticks: the labels as drawn
+            return list(self._ax._drawn_ticks(axis == "x")[1])
+        return [str(v) for v in t[0]]
 
     def clabel(self, *_, **__):
         """Contour labels are not drawn (accepted for compatibility)."""

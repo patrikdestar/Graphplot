@@ -208,6 +208,12 @@ int main(int argc, char** argv)
                         ok = false;
                     }
                 }
+                // Without --size: the default figure size (as in Python), not
+                // whatever size the hidden window happens to have.
+                if (!parser.isSet(sizeOpt) && !w.figureSize().isValid()) {
+                    width = 1000;
+                    height = 650;
+                }
                 bool scaleOk = true;
                 const double scale = parser.isSet(scaleOpt) ? parser.value(scaleOpt).toDouble(&scaleOk) : 2.0;
                 if (!scaleOk || !(scale > 0 && scale <= 10)) {

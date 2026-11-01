@@ -1573,6 +1573,30 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         [](FigurePtr self, bool x, bool y) { inGui([&] { self->renderer()->autoscale(x, y); }); },
         py::arg("x") = true, py::arg("y") = true);
     fig.def("reset_view", [](FigurePtr self) { inGui([&] { self->renderer()->resetView(); }); });
+    fig.def(
+        "_drawn_ticks",
+        [](FigurePtr self, bool isX) {
+            // The ticks as currently drawn (automatic or custom), after a layout.
+            return inGui([&] {
+                self->w()->plot()->replot(QCustomPlot::rpImmediateRefresh);
+                QCPAxis* a = isX ? self->renderer()->xAxis() : self->renderer()->yAxis();
+                const QVector<double> ticks = a->tickVector();  // copies: one list for begin/end
+                const QVector<QString> texts = a->tickVectorLabels();
+                std::vector<double> pos(ticks.begin(), ticks.end());
+                std::vector<std::string> labels;
+                for (const QString& l : texts) labels.push_back(l.toStdString());
+                // Only the ticks inside the view (QCustomPlot keeps one outside each end).
+                std::vector<double> p2;
+                std::vector<std::string> l2;
+                for (size_t i = 0; i < pos.size(); ++i)
+                    if (a->range().contains(pos[i])) {
+                        p2.push_back(pos[i]);
+                        l2.push_back(i < labels.size() ? labels[i] : std::string());
+                    }
+                return std::make_pair(p2, l2);
+            });
+        },
+        py::arg("x"));
     fig.def("fit_following", [](FigurePtr self) { inGui([&] { self->renderer()->fitFollowing(); }); },
             "Fit the axes that still follow the data (not zoomed, no limits set; shared axes included).");
     fig.def("set_home_view", [](FigurePtr self) {
@@ -1596,7 +1620,26 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
     auto [tg, ts] = axesProp(&AxesInfo::title);
     auto [xg, xs] = axesProp(&AxesInfo::xLabel);
     auto [yg, ys] = axesProp(&AxesInfo::yLabel);
-    fig.def_property("title", tg, ts);
+    // A timeline's title is the figure's: always the first panel's (the
+    // current panel is just one of its rows).
+    fig.def_property(
+        "title",
+        [tg](FigurePtr self) {
+            if (inGui([&] { return self->w()->hasTimeline(); }))
+                return inGui([&] { return self->w()->axes(0).model->axesInfo().title.toStdString(); });
+            return tg(self);
+        },
+        [ts](FigurePtr self, const Text& v) {
+            if (inGui([&] { return self->w()->hasTimeline(); })) {
+                inGui([&] {
+                    AxesInfo a = self->w()->axes(0).model->axesInfo();
+                    a.title = QString::fromStdString(v);
+                    self->w()->axes(0).editor->setAxesInfo(a);
+                });
+                return;
+            }
+            ts(self, v);
+        });
     fig.def_property(
         "window_title",
         [](FigurePtr self) { return inGui([&] { return self->w()->windowTitle().toStdString(); }); },

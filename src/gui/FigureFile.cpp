@@ -108,9 +108,18 @@ bool FigureWindow::saveFigure(const QString& fileName, QString* error) const
                                        {"sharex", shareName(g.sharex)}, {"sharey", shareName(g.sharey)}};
     }
     QJsonArray panelArray;
+    // A timeline's title is the figure's (drawn from the first panel): it
+    // goes with the first saved row, whatever the row order.
+    const QString figureTitle = m_axes.front().model->axesInfo().title;
     for (int i : panels) {
         const Axes& ax = m_axes[size_t(i)];
-        QJsonObject panel{{"model", modelToJson(*ax.model)}, {"view", viewToJson(ax.renderer->viewRange())}};
+        QJsonObject model = modelToJson(*ax.model);
+        if (m_timeline) {
+            QJsonObject axes = model["axes"].toObject();
+            axes["title"] = panelArray.isEmpty() ? figureTitle : QString();
+            model["axes"] = axes;
+        }
+        QJsonObject panel{{"model", model}, {"view", viewToJson(ax.renderer->viewRange())}};
         if (ax.twinOf >= 0) panel["twinOf"] = ax.twinOf;
         panelArray << panel;
     }

@@ -235,6 +235,7 @@ void Timeline::attachRow(int row)
     v.readout->setLayer(m_cursorLayer);
     v.readout->position->setTypeY(QCPItemPosition::ptAxisRectRatio);
     v.readout->setPadding(QMargins(5, 3, 5, 3));
+    v.readout->setClipToAxisRect(false);  // a short row must not cut the values in half
     v.readout->setBrush(QColor(255, 255, 255, 225));
     v.readout->setPen(QPen(QColor(0xc8, 0xc7, 0xc2)));
     v.readout->setVisible(false);
@@ -247,6 +248,7 @@ void Timeline::attachRow(int row)
     info.legendVisible = true;
     if (info.legendLoc.isEmpty()) info.legendLoc = "best";  // keep clear of the signals
     m->setAxesInfo(info);
+    r->setCompact(true);  // short rows: no oversized legend, no piled-up tick labels
     // Rows share the time axis: link every row to row 0 (both directions).
     if (row != 0) {
         QCPAxis* a = rowRenderer(0)->xAxis();

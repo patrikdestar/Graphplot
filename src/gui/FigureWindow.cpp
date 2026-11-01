@@ -1322,6 +1322,11 @@ void FigureWindow::correctGridRatios()
         if (fitted) relayout();
         if (!changed && !fitted) break;
     }
+    // Legends last, on the settled geometry (hosts before their twins).
+    for (const Axes& a : m_axes)
+        if (a.twinOf < 0 && a.renderer->panelVisible()) a.renderer->finishLegend();
+    for (const Axes& a : m_axes)
+        if (a.twinOf >= 0 && a.renderer->panelVisible()) a.renderer->finishLegend();
 }
 
 }  // namespace gp
