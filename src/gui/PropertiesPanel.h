@@ -72,6 +72,8 @@ private:
     void commitMatrix(bool mergeable);
     void commitPeak(bool mergeable, const QString& text);
     void commitAxes();
+    void refreshLimits();
+    void commitLimits();
 
     PlotEditor* m_editor;
     PlotModel* m_model;
@@ -106,6 +108,10 @@ private:
     QCheckBox* m_diag = nullptr;
     QCheckBox* m_xLog = nullptr;
     QCheckBox* m_yLog = nullptr;
+    QDoubleSpinBox* m_xMin = nullptr;
+    QDoubleSpinBox* m_xMax = nullptr;
+    QDoubleSpinBox* m_yMin = nullptr;
+    QDoubleSpinBox* m_yMax = nullptr;
 
     // dataset
     QLineEdit* m_dsName = nullptr;
@@ -161,6 +167,7 @@ private:
     QDoubleSpinBox* m_rgMin = nullptr;
     QDoubleSpinBox* m_rgMax = nullptr;
     QLabel* m_rgWidth = nullptr;
+    QLabel* m_rgStats = nullptr;
 };
 
 }  // namespace gp

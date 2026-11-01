@@ -4,6 +4,8 @@
 #include "interaction/InteractionController.h"
 #include "model/Contour.h"
 #include "model/PlotModel.h"
+#include "model/Statistics.h"
+#include "render/PlotRenderer.h"
 
 #include <QCheckBox>
 #include <QColorDialog>
@@ -131,6 +133,10 @@ PropertiesPanel::PropertiesPanel(PlotEditor* editor, InteractionController* cont
     buildUi();
     rebuildTree();
     refreshAxes();
+    refreshLimits();
+    // The panel is rebuilt whenever the current figure panel changes, so the
+    // controller's renderer is this panel's renderer for its whole life.
+    connect(m_controller->renderer(), &PlotRenderer::viewChanged, this, &PropertiesPanel::refreshLimits);
 
     auto structural = [this] { rebuildTree(); };
     auto changed = [this](ObjectKind kind) {
@@ -200,6 +206,23 @@ void PropertiesPanel::buildUi()
     axesForm->addRow("Y label", m_yLabel);
     axesForm->addRow(checks);
     axesForm->addRow(checks2);
+    // Typed view limits (follow zoom / pan; editing one sets the view).
+    const char* limitNames[] = {"xMin", "xMax", "yMin", "yMax"};
+    int li = 0;
+    for (QDoubleSpinBox** f : {&m_xMin, &m_xMax, &m_yMin, &m_yMax}) {
+        *f = makeCoordSpin();
+        (*f)->setObjectName(limitNames[li++]);
+        (*f)->setMinimumWidth(80);
+        connect(*f, &QDoubleSpinBox::valueChanged, this, &PropertiesPanel::commitLimits);
+    }
+    auto* xr = new QHBoxLayout;
+    xr->addWidget(m_xMin);
+    xr->addWidget(m_xMax);
+    auto* yr = new QHBoxLayout;
+    yr->addWidget(m_yMin);
+    yr->addWidget(m_yMax);
+    axesForm->addRow("X range", xr);
+    axesForm->addRow("Y range", yr);
     for (QLineEdit* e : {m_title, m_xLabel, m_yLabel})
         connect(e, &QLineEdit::editingFinished, this, &PropertiesPanel::commitAxes);
     connect(m_legend, &QCheckBox::toggled, this, &PropertiesPanel::commitAxes);
@@ -429,6 +452,12 @@ QWidget* PropertiesPanel::buildRegionPage()
     form->addRow("X min", m_rgMin);
     form->addRow("X max", m_rgMax);
     form->addRow("Width", m_rgWidth);
+    // Statistics of every visible dataset inside the region.
+    m_rgStats = new QLabel;
+    m_rgStats->setTextFormat(Qt::RichText);
+    m_rgStats->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_rgStats->setWordWrap(true);
+    form->addRow(m_rgStats);
     form->addRow(clear);
     connect(m_rgMin, &QDoubleSpinBox::valueChanged, this, &PropertiesPanel::commitRegion);
     connect(m_rgMax, &QDoubleSpinBox::valueChanged, this, &PropertiesPanel::commitRegion);
@@ -776,6 +805,22 @@ void PropertiesPanel::refreshCurrentPage()
         m_rgMin->setValue(r.xmin);
         m_rgMax->setValue(r.xmax);
         m_rgWidth->setText(fmt(r.xmax - r.xmin));
+        QString html = "<table cellspacing='0' cellpadding='1'>";
+        for (const SignalStats& s : rangeStats(*m_model, r.xmin, r.xmax)) {
+            html += QString("<tr><td colspan='2'><b>%1</b> (%2 points)</td></tr>")
+                        .arg(s.name.toHtmlEscaped())
+                        .arg(s.n);
+            if (s.n == 0) continue;
+            auto row = [&](const QString& k, const QString& v) {
+                html += QString("<tr><td>&nbsp;&nbsp;%1&nbsp;</td><td>%2</td></tr>").arg(k, v);
+            };
+            row("mean ± sd", fmt(s.mean) + " ± " + fmt(s.std));
+            row("min", fmt(s.min) + " @ " + fmt(s.xAtMin));
+            row("max", fmt(s.max) + " @ " + fmt(s.xAtMax));
+            row("rms", fmt(s.rms));
+            row("integral", fmt(s.integral));
+        }
+        m_rgStats->setText(html + "</table>");
         break;
     }
     case ObjectKind::Peak: {
@@ -908,6 +953,23 @@ void PropertiesPanel::commitMatrix(bool mergeable)
     s.showImage = m_mxImage->isChecked();
     s.visible = m_mxVisible->isChecked();
     m_editor->setMatrixAppearance(m->id, m_mxName->text(), s, mergeable);
+}
+
+void PropertiesPanel::refreshLimits()
+{
+    const ViewRange v = m_controller->renderer()->viewRange();
+    const QSignalBlocker b1(m_xMin), b2(m_xMax), b3(m_yMin), b4(m_yMax);
+    m_xMin->setValue(v.xmin);
+    m_xMax->setValue(v.xmax);
+    m_yMin->setValue(v.ymin);
+    m_yMax->setValue(v.ymax);
+}
+
+void PropertiesPanel::commitLimits()
+{
+    const ViewRange v{m_xMin->value(), m_xMax->value(), m_yMin->value(), m_yMax->value()};
+    if (v.xmax > v.xmin && v.ymax > v.ymin) m_controller->renderer()->setViewRange(v);
+    else refreshLimits();  // reject an empty or inverted range
 }
 
 void PropertiesPanel::commitAxes()

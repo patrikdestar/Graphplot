@@ -28,6 +28,12 @@
 #include <QStatusBar>
 #include <QToolBar>
 #include <QSignalBlocker>
+#include <QClipboard>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QGuiApplication>
+#include <QMimeData>
+#include <QTimer>
 #include <QUndoStack>
 
 namespace gp {
@@ -68,6 +74,7 @@ FigureWindow::FigureWindow(QWidget* parent) : QMainWindow(parent)
     m_dock->raise();
     buildActions();
     limitPlainKeyShortcuts();
+    setAcceptDrops(true);
     m_plot->setFocus();
 
     m_cursorLabel = new QLabel;
@@ -100,6 +107,9 @@ FigureWindow::~FigureWindow() = default;
 
 void FigureWindow::wireAxes(const Axes& ax)
 {
+    PlotRenderer* renderer = ax.renderer;
+    m_history[renderer].last = renderer->viewRange();  // the starting view
+    connect(renderer, &PlotRenderer::viewChanged, this, [this, renderer] { recordView(renderer); });
     PlotModel* model = ax.model;
     // Show the peak list automatically once there are peaks.
     connect(model, &PlotModel::peakAdded, this, [this] {
@@ -111,6 +121,89 @@ void FigureWindow::wireAxes(const Axes& ax)
     connect(model, &PlotModel::regionChanged, this, [this, model] {
         if (model == m_model) updateRegionLabel();
     });
+}
+
+// ---- view history -------------------------------------------------------------
+
+void FigureWindow::recordView(PlotRenderer* r)
+{
+    ViewHistory& h = m_history[r];
+    if (!h.settle) {
+        // Debounce: a wheel scroll or a pan emits many view changes; only the
+        // view where the user paused (~0.4 s) becomes a history entry.
+        h.settle = new QTimer(this);
+        h.settle->setSingleShot(true);
+        h.settle->setInterval(400);
+        connect(h.settle, &QTimer::timeout, this, [this, r] { commitView(r); });
+    }
+    h.settle->start();
+}
+
+void FigureWindow::commitView(PlotRenderer* r)
+{
+    ViewHistory& h = m_history[r];
+    if (h.settle) h.settle->stop();
+    const ViewRange now = r->viewRange();
+    if (now == h.last) return;  // nothing new (e.g. the result of Back / Forward)
+    h.back << h.last;
+    if (h.back.size() > 100) h.back.removeFirst();
+    h.forward.clear();
+    h.last = now;
+}
+
+void FigureWindow::stepView(int direction)
+{
+    ViewHistory& h = m_history[m_renderer];
+    QList<ViewRange>& from = direction < 0 ? h.back : h.forward;
+    QList<ViewRange>& to = direction < 0 ? h.forward : h.back;
+    if (h.settle && h.settle->isActive()) commitView(m_renderer);  // still settling
+    if (from.isEmpty()) return;
+    to << h.last;
+    h.last = from.takeLast();
+    m_renderer->setViewRange(h.last);
+}
+
+void FigureWindow::copyToClipboard()
+{
+    for (const Axes& ax : m_axes) ax.renderer->setExportMode(true);
+    const QPixmap pm = m_plot->toPixmap(m_plot->width(), m_plot->height(), 2.0);
+    for (const Axes& ax : m_axes) ax.renderer->setExportMode(false);
+    QGuiApplication::clipboard()->setImage(pm.toImage());
+    statusBar()->showMessage("Figure copied to the clipboard", 3000);
+}
+
+// ---- drag & drop ----------------------------------------------------------------
+
+void FigureWindow::dragEnterEvent(QDragEnterEvent* e)
+{
+    if (e->mimeData()->hasUrls()) e->acceptProposedAction();
+}
+
+void FigureWindow::dropEvent(QDropEvent* e)
+{
+    QStringList errors;
+    for (const QUrl& url : e->mimeData()->urls()) {
+        if (!url.isLocalFile()) continue;
+        const QString err = openPath(url.toLocalFile());
+        if (!err.isEmpty()) errors << QFileInfo(url.toLocalFile()).fileName() + ": " + err;
+    }
+    if (!errors.isEmpty()) QMessageBox::warning(this, "Open", errors.join("\n"));
+    e->acceptProposedAction();
+}
+
+QString FigureWindow::openPath(const QString& path)
+{
+    const QFileInfo fi(path);
+    QString err;
+    if (fi.suffix().compare("gpstyle", Qt::CaseInsensitive) == 0) {
+        QStringList errs;
+        applyStyle(path, &errs);
+        return errs.join("; ");
+    }
+    if (fi.isDir() || fi.fileName() == "2rr") return openBruker(path, &err) != kInvalidId ? QString() : err;
+    // Text logs: into the timeline if this window is one, else as column data.
+    if (m_timeline) return m_timeline->loadCsv({path}, false, &err) ? QString() : err;
+    return openDataFile(path, &err) ? QString() : err;
 }
 
 void FigureWindow::updateRegionLabel()
@@ -358,6 +451,8 @@ void FigureWindow::buildActions()
     QAction* exportAct = file->addAction(icons::make(icons::Kind::Export), "&Export…", this,
                                          &FigureWindow::onExport);
     exportAct->setShortcut(QKeySequence("Ctrl+E"));
+    QAction* copyAct = file->addAction("&Copy figure to clipboard", this, &FigureWindow::copyToClipboard);
+    copyAct->setShortcut(QKeySequence("Ctrl+Shift+C"));
     file->addSeparator();
     QAction* closeAct = file->addAction("&Close", this, &QWidget::close);
     closeAct->setShortcut(QKeySequence::Close);
@@ -507,6 +602,10 @@ void FigureWindow::buildActions()
     view->addAction(autoX);
     view->addAction(autoY);
     view->addAction(reset);
+    QAction* back = view->addAction("Previous view", this, [this] { stepView(-1); });
+    back->setShortcut(QKeySequence("Alt+Left"));
+    QAction* fwd = view->addAction("Next view", this, [this] { stepView(+1); });
+    fwd->setShortcut(QKeySequence("Alt+Right"));
     view->addAction(setHome);
     view->addSeparator();
     view->addAction(m_dock->toggleViewAction());

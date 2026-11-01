@@ -336,5 +336,8 @@ removed object raises `KeyError`. Setting a property is an undoable edit.
     (prompt idle, `show()`, `pause()`, `wait_for_region()`).
   - Do not block the main thread on such a worker (for example with
     `thread.join()`) without running the event loop.
+- **Jupyter notebooks:** the windows need a Qt event loop. In a notebook
+  kernel, call `plotter.show()` (blocking) or `plotter.pause()`; there is no
+  automatic kernel integration (terminal IPython uses `%gui plotter`).
 - **Data copies:** arrays are copied on the way in and on the way out, so
   later NumPy changes do not affect the plot until you send the data again.

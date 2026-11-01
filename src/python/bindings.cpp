@@ -20,6 +20,7 @@
 #include "gui/Timeline.h"
 #include "model/Contour.h"
 #include "model/PeakPicker.h"
+#include "model/Statistics.h"
 #include "model/Style.h"
 #include "model/PlotModel.h"
 #include "qcustomplot.h"
@@ -968,6 +969,41 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
             inGui([&] { self->editor()->setRegion(Region{true, xmin, xmax}); });
         },
         py::arg("xmin"), py::arg("xmax"));
+    fig.def(
+        "region_stats",
+        [](FigurePtr self, const py::object& xmin, const py::object& xmax) {
+            // Convert the Python arguments here, while the GIL is held.
+            const bool useRegion = xmin.is_none() || xmax.is_none();
+            const double a = useRegion ? 0.0 : xmin.cast<double>();
+            const double b = useRegion ? 0.0 : xmax.cast<double>();
+            const auto stats = inGui([&] {
+                if (!useRegion) return rangeStats(*self->model(), a, b);
+                const Region r = self->model()->region();
+                if (!r.active) throw py::value_error("no region is selected (or pass xmin, xmax)");
+                return rangeStats(*self->model(), r.xmin, r.xmax);
+            });
+            py::dict out;
+            for (const SignalStats& s : stats) {
+                py::dict d;
+                d["n"] = s.n;
+                d["mean"] = s.mean;
+                d["std"] = s.std;
+                d["min"] = s.min;
+                d["max"] = s.max;
+                d["x_at_min"] = s.xAtMin;
+                d["x_at_max"] = s.xAtMax;
+                d["rms"] = s.rms;
+                d["integral"] = s.integral;
+                // Datasets may share a name: keep every entry by suffixing the id.
+                QString key = s.name.isEmpty() ? QString("dataset %1").arg(s.id) : s.name;
+                if (out.contains(py::str(key.toStdString()))) key += QString(" #%1").arg(s.id);
+                out[py::str(key.toStdString())] = d;
+            }
+            return out;
+        },
+        py::arg("xmin") = py::none(), py::arg("xmax") = py::none(),
+        "Statistics of every visible dataset inside the selected region (or [xmin, xmax]):\n"
+        "{name: {n, mean, std, min, max, x_at_min, x_at_max, rms, integral}}.");
     fig.def("clear_selection", [](FigurePtr self) { inGui([&] { self->editor()->clearRegion(); }); });
     fig.def(
         "wait_for_region",

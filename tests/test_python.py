@@ -579,6 +579,19 @@ class PlotterTests(unittest.TestCase):
         self.assertFalse(tl.off("window_changed", cb))
         tl.close()
 
+    def test_region_stats(self):
+        fig = self.fig
+        fig.plot([0, 1, 2, 3, 4], [0, 1, 2, 3, 4], label="a")
+        fig.plot([0, 1, 2], [5, 5, 5], label="a")  # same name -> distinct key
+        with self.assertRaises(ValueError):
+            fig.region_stats()  # nothing selected
+        st = fig.region_stats(4, 0)
+        self.assertEqual(len(st), 2)
+        self.assertEqual(st["a"]["n"], 5)
+        self.assertAlmostEqual(st["a"]["mean"], 2.0)
+        self.assertAlmostEqual(st["a"]["integral"], 8.0)
+        self.assertEqual(st["a"]["x_at_max"], 4.0)
+
     def test_audit_pyplot(self):
         import plotter.pyplot as plt
         fig, axs = plt.subplots(2, 2)

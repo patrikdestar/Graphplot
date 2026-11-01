@@ -9,6 +9,7 @@
 #include "model/BrukerReader.h"
 #include "model/Contour.h"
 #include "model/PeakPicker.h"
+#include "model/Statistics.h"
 #include "model/Style.h"
 #include "model/TimeSeriesLoader.h"
 #include "render/RichText.h"
@@ -18,6 +19,7 @@
 
 #include <QElapsedTimer>
 #include <QLineEdit>
+#include <QMimeData>
 
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -1268,6 +1270,76 @@ private slots:
         FigureWindow w2;
         QVERIFY(w2.timeline()->loadCsv({b.fileName()}, true, &err));
         QCOMPARE(w2.timeline()->rows().size(), 2);
+    }
+
+    // ---- region statistics, typed limits, view history, drag & drop -----------------
+    void featureRangeStats()
+    {
+        PlotModel m;
+        Dataset d = ramp("ramp", 11);  // y = x for x = 0..10
+        d.y[2] = std::nan("");          // a gap: excluded, interrupts the integral
+        m.insertDataset(d);
+        const auto st = rangeStats(m, 4, 0);  // reversed bounds are fine
+        QCOMPARE(int(st.size()), 1);
+        const SignalStats& s = st[0];
+        QCOMPARE(s.n, qsizetype(4));  // 0, 1, 3, 4
+        QCOMPARE(s.mean, 2.0);
+        QCOMPARE(s.min, 0.0);
+        QCOMPARE(s.xAtMax, 4.0);
+        QCOMPARE(s.integral, 0.5 + 3.5);
+        QVERIFY(std::abs(s.std - std::sqrt(10.0 / 3)) < 1e-12);
+        QVERIFY(std::abs(s.rms - std::sqrt(26.0 / 4)) < 1e-12);
+        QCOMPARE(rangeStats(m, 20, 30)[0].n, qsizetype(0));  // empty range
+    }
+
+    void featureLimitsAndViewHistory()
+    {
+        auto w = makeWindow();
+        auto* xMin = w->findChild<QDoubleSpinBox*>("xMin");
+        auto* xMax = w->findChild<QDoubleSpinBox*>("xMax");
+        QVERIFY(xMin && xMax);
+        QTest::qWait(500);                // the 0..100 view becomes the history start
+        QCOMPARE(xMax->value(), 100.0);  // follows the view
+        xMax->setValue(50);               // typing sets the view
+        QCOMPARE(w->renderer()->viewRange().xmax, 50.0);
+        QTest::qWait(500);                // let the history settle
+        w->renderer()->setViewRange({10, 20, 0, 5});
+        QAction* back = nullptr;
+        QAction* fwd = nullptr;
+        for (QAction* a : w->findChildren<QAction*>()) {
+            if (a->text() == "Previous view") back = a;
+            if (a->text() == "Next view") fwd = a;
+        }
+        QVERIFY(back && fwd);
+        back->trigger();  // commits the still-settling view, then steps back
+        QCOMPARE(w->renderer()->viewRange().xmax, 50.0);
+        back->trigger();
+        QCOMPARE(w->renderer()->viewRange().xmax, 100.0);
+        fwd->trigger();
+        fwd->trigger();
+        QCOMPARE(w->renderer()->viewRange(), (ViewRange{10, 20, 0, 5}));
+        QCOMPARE(xMin->value(), 10.0);
+    }
+
+    void featureDropOpensFiles()
+    {
+        auto w = makeWindow();
+        QTemporaryDir dir;
+        const QString fn = dir.filePath("data.csv");
+        QFile f(fn);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("t,a\n0,1\n1,2\n");
+        f.close();
+        auto* mime = new QMimeData;
+        mime->setUrls({QUrl::fromLocalFile(fn)});
+        QDragEnterEvent enter(QPoint(10, 10), Qt::CopyAction, mime, Qt::LeftButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(w.get(), &enter);
+        QVERIFY(enter.isAccepted());
+        QDropEvent drop(QPointF(10, 10), Qt::CopyAction, mime, Qt::LeftButton, Qt::NoModifier);
+        const int before = int(w->model()->datasets().size());
+        QCoreApplication::sendEvent(w.get(), &drop);
+        QCOMPARE(int(w->model()->datasets().size()), before + 1);
+        delete mime;
     }
 
     // ---- data loading -----------------------------------------------------------------------

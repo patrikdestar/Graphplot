@@ -40,6 +40,7 @@ add_library(graphplot_model STATIC
   src/model/PeakPicker.h src/model/PeakPicker.cpp
   src/model/Style.h src/model/Style.cpp
   src/model/TimeSeriesLoader.h src/model/TimeSeriesLoader.cpp
+  src/model/Statistics.h src/model/Statistics.cpp
   src/commands/Commands.h src/commands/Commands.cpp
   src/commands/PlotEditor.h src/commands/PlotEditor.cpp)
 target_include_directories(graphplot_model PUBLIC src)

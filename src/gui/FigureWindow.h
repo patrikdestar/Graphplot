@@ -12,6 +12,7 @@
 
 #include "interaction/InteractionController.h"
 
+#include <QHash>
 #include <QList>
 #include <QMainWindow>
 #include <vector>
@@ -25,6 +26,9 @@ class QUndoStack;
 class QCPLayoutGrid;
 class QCPMarginGroup;
 class QCPAxisRect;
+class QTimer;
+class QDragEnterEvent;
+class QDropEvent;
 
 namespace gp {
 
@@ -104,6 +108,8 @@ signals:
 
 protected:
     void closeEvent(QCloseEvent* e) override;
+    void dragEnterEvent(QDragEnterEvent* e) override;
+    void dropEvent(QDropEvent* e) override;
 
 private:
     void buildActions();
@@ -118,6 +124,13 @@ private:
     void updateLevelStatus();
     void updateRegionLabel();
     void limitPlainKeyShortcuts();
+    // View history (Back / Forward through zoom states), per panel.
+    void recordView(PlotRenderer* r);
+    void commitView(PlotRenderer* r);
+    void stepView(int direction);
+    void copyToClipboard();
+    // Opens a file or folder by type (used by drag & drop); returns an error text.
+    QString openPath(const QString& path);
     void onExport();
     void buildStyleMenu();
 public:
@@ -157,6 +170,12 @@ private:
     QString m_lastDir;
     QSize m_figureSize;
     Timeline* m_timeline = nullptr;
+    struct ViewHistory {
+        QList<ViewRange> back, forward;
+        ViewRange last;  // the view currently shown (last committed)
+        QTimer* settle = nullptr;  // records a view once zooming / panning pauses
+    };
+    QHash<PlotRenderer*, ViewHistory> m_history;
 };
 
 }  // namespace gp
