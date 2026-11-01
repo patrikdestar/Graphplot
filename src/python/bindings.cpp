@@ -48,6 +48,14 @@ namespace {
 
 QVector<double> toVector(const py::handle& obj, const char* what)
 {
+    // datetime64 / timedelta64 become (epoch) seconds; a plain float cast
+    // would yield nanoseconds.
+    if (auto raw = py::array::ensure(obj); raw && (raw.dtype().kind() == 'M' || raw.dtype().kind() == 'm')) {
+        const char* unit = raw.dtype().kind() == 'M' ? "datetime64[ns]" : "timedelta64[ns]";
+        py::array ns = raw.attr("astype")(unit).attr("astype")("int64");
+        py::object secs = ns.attr("__truediv__")(1e9);
+        return toVector(secs, what);
+    }
     auto arr = py::array_t<double, py::array::c_style | py::array::forcecast>::ensure(obj);
     if (!arr) throw py::type_error(std::string(what) + " must be convertible to a float array");
     if (arr.ndim() != 1)
@@ -74,6 +82,10 @@ std::pair<QVector<double>, QVector<double>> toErrors(const py::object& obj, qsiz
     }
     auto arr = py::array_t<double, py::array::c_style | py::array::forcecast>::ensure(obj);
     if (!arr) throw py::type_error(std::string(what) + " must be a number or an array");
+    if (arr.ndim() == 0) {  // numpy scalar (np.float32(0.1), np.int64(2), ...)
+        QVector<double> v(n, std::abs(*arr.data()));
+        return {v, v};
+    }
     auto copy = [&](const double* p) {
         QVector<double> v(n);
         for (qsizetype i = 0; i < n; ++i) v[i] = std::abs(p[i]);
@@ -100,13 +112,16 @@ QColor toColor(const py::handle& obj, const char* what = "color")
     if (py::isinstance<py::sequence>(obj)) {
         auto seq = obj.cast<std::vector<double>>();
         if (seq.size() == 3 || seq.size() == 4) {
-            const bool unit = std::all_of(seq.begin(), seq.end(), [](double v) { return v <= 1.0; });
+            // RGB in 0..1 or 0..255 (decided on the three colour components);
+            // alpha in 0..1 or 0..255 on its own, e.g. (255, 0, 0, 0.5).
+            const bool unit = std::all_of(seq.begin(), seq.begin() + 3, [](double v) { return v <= 1.0; });
             const double k = unit ? 255.0 : 1.0;
-            QColor c;
-            c.setRgb(int(std::lround(seq[0] * k)), int(std::lround(seq[1] * k)),
-                     int(std::lround(seq[2] * k)),
-                     seq.size() == 4 ? int(std::lround(seq[3] * k)) : 255);
-            return c;
+            const double a = seq.size() == 4 ? (seq[3] <= 1.0 ? seq[3] * 255.0 : seq[3]) : 255.0;
+            int c[4] = {int(std::lround(seq[0] * k)), int(std::lround(seq[1] * k)),
+                        int(std::lround(seq[2] * k)), int(std::lround(a))};
+            for (int v : c)
+                if (v < 0 || v > 255) throw py::value_error(std::string(what) + " components out of range");
+            return QColor(c[0], c[1], c[2], c[3]);
         }
     }
     throw py::type_error(std::string(what) + " must be a name, '#rrggbb' or an (r, g, b[, a]) tuple");
@@ -147,6 +162,15 @@ Orientation toOrientation(const std::string& s)
 class Figure : public std::enable_shared_from_this<Figure> {
 public:
     explicit Figure(QPointer<FigureWindow> w) : m_w(std::move(w)) {}
+    // The last reference can be dropped from a Qt slot (GIL released):
+    // destroying Python callables requires the GIL.
+    ~Figure()
+    {
+        if (!m_callbacks.empty() && Py_IsInitialized()) {
+            py::gil_scoped_acquire gil;
+            m_callbacks.clear();
+        }
+    }
 
     // Returns the window or raises if it has been closed/destroyed.
     FigureWindow* w() const
@@ -177,6 +201,15 @@ public:
         m_callbacks.emplace_back(event, std::move(fn));
     }
     void clearCallbacks() { m_callbacks.clear(); }
+    // Removes one callback (compared by identity); returns whether it existed.
+    bool removeCallback(const std::string& event, const py::function& fn)
+    {
+        const auto before = m_callbacks.size();
+        m_callbacks.erase(std::remove_if(m_callbacks.begin(), m_callbacks.end(),
+                                         [&](const auto& c) { return c.first == event && c.second.is(fn); }),
+                          m_callbacks.end());
+        return m_callbacks.size() != before;
+    }
     void fire(const std::string& event, const std::function<py::tuple()>& makeArgs);
 
     // Monotonic counters used by wait_for_*().
@@ -202,8 +235,12 @@ using FigurePtr = std::shared_ptr<Figure>;
 
 // Handle base: (figure, id)
 struct Handle {
-    // Remembers the panel (axes) that was current when the object was created.
-    Handle(FigurePtr f, ObjectId i) : fig(std::move(f)), id(i), ax(fig->w()->currentAxes()) {}
+    // Remembers the panel (axes) that was current when the object was created
+    // (read on the GUI thread, which owns that state).
+    Handle(FigurePtr f, ObjectId i)
+        : fig(std::move(f)), id(i), ax(inGui([this] { return fig->w()->currentAxes(); }))
+    {
+    }
     Handle(FigurePtr f, ObjectId i, int a) : fig(std::move(f)), id(i), ax(a) {}
     FigurePtr fig;
     ObjectId id;
@@ -214,8 +251,28 @@ struct Handle {
         if (ax < 0 || ax >= w->axesCount()) throw py::key_error("the panel no longer exists");
         return w->axes(ax).model;
     }
-    PlotEditor* editor() const { return fig->w()->axes(ax).editor; }
+    PlotEditor* editor() const
+    {
+        model();  // validates the panel index
+        return fig->w()->axes(ax).editor;
+    }
+    // Handles only make sense for the figure that created them.
+    void checkFigure(const FigurePtr& f) const
+    {
+        if (fig != f) throw py::value_error("this handle belongs to another figure");
+    }
 };
+
+// A handle argument that must belong to `self` (and, optionally, to its current panel).
+template <typename H>
+const H& ownHandle(const FigurePtr& self, const py::handle& obj, bool currentPanel, const char* what)
+{
+    const H& h = obj.cast<const H&>();
+    h.checkFigure(self);
+    if (currentPanel && inGui([&] { return self->w()->currentAxes(); }) != h.ax)
+        throw py::value_error(std::string(what) + " must be in the same panel");
+    return h;
+}
 
 struct Line : Handle {
     const Dataset& get() const
@@ -416,10 +473,12 @@ void Figure::flush()
 
 void Figure::fire(const std::string& event, const std::function<py::tuple()>& makeArgs)
 {
+    // The callback list is only touched with the GIL held (on() and
+    // disconnect_all() run from Python, i.e. with the GIL).
+    py::gil_scoped_acquire gil;  // the event loop runs with the GIL released
     bool any = false;
     for (const auto& [ev, fn] : m_callbacks) any |= ev == event;
     if (!any) return;
-    py::gil_scoped_acquire gil;  // the event loop runs with the GIL released
     const auto callbacks = m_callbacks;  // callbacks may add/remove callbacks
     for (const auto& [ev, fn] : callbacks) {
         if (ev != event) continue;
@@ -604,7 +663,7 @@ PYBIND11_MODULE(_plotter, mod)
                 d.style.fillColor = py::isinstance<py::bool_>(fill) ? QColor() : toColor(fill, "fill");
                 if (!d.style.fillColor.isValid()) d.style.fillColor = QColor(0, 0, 0, 0);  // resolved below
             }
-            if (!fillTo.is_none()) d.style.fillTo = fillTo.cast<Line&>().id;
+            if (!fillTo.is_none()) d.style.fillTo = ownHandle<Line>(self, fillTo, true, "fill_to").id;
             std::tie(d.xErrLow, d.xErrHigh) = toErrors(xerr, xv.size(), "xerr");
             std::tie(d.yErrLow, d.yErrHigh) = toErrors(yerr, xv.size(), "yerr");
             d.x = std::move(xv);
@@ -736,7 +795,7 @@ with the nuclei; the diagonal is shown for homonuclear spectra. Returns a Contou
             o.negative = negative;
             o.diagonalExclusion = excludeDiagonal;
             ObjectId only = kInvalidId;
-            if (!contour.is_none()) only = contour.cast<Contour&>().id;
+            if (!contour.is_none()) only = ownHandle<Contour>(self, contour, true, "contour").id;
             const QList<ObjectId> ids = inGui([&] {
                 PlotRenderer* r = self->w()->renderer();
                 if (region == "view") {
@@ -978,14 +1037,17 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         },
         py::arg("label"), "Return the Line handle of the dataset with this label.");
     fig.def("remove", [](FigurePtr self, const py::object& h) {
-        ObjectRef ref;
-        if (py::isinstance<Line>(h)) ref = {ObjectKind::Dataset, h.cast<Line&>().id};
-        else if (py::isinstance<Contour>(h)) ref = {ObjectKind::Matrix, h.cast<Contour&>().id};
-        else if (py::isinstance<MarkerH>(h)) ref = {ObjectKind::Marker, h.cast<MarkerH&>().id};
-        else if (py::isinstance<AnnotationH>(h)) ref = {ObjectKind::Annotation, h.cast<AnnotationH&>().id};
-        else if (py::isinstance<PeakH>(h)) ref = {ObjectKind::Peak, h.cast<PeakH&>().id};
-        else throw py::type_error("expected a Line, Contour, Marker or Annotation");
-        inGui([&] { self->editor()->removeObject(ref); });
+        // Remove from the handle's own panel (ids are only unique per panel).
+        auto removeIn = [&](const Handle& hd, ObjectKind kind) {
+            hd.checkFigure(self);
+            inGui([&] { hd.editor()->removeObject({kind, hd.id}); });
+        };
+        if (py::isinstance<Line>(h)) removeIn(h.cast<Line&>(), ObjectKind::Dataset);
+        else if (py::isinstance<Contour>(h)) removeIn(h.cast<Contour&>(), ObjectKind::Matrix);
+        else if (py::isinstance<MarkerH>(h)) removeIn(h.cast<MarkerH&>(), ObjectKind::Marker);
+        else if (py::isinstance<AnnotationH>(h)) removeIn(h.cast<AnnotationH&>(), ObjectKind::Annotation);
+        else if (py::isinstance<PeakH>(h)) removeIn(h.cast<PeakH&>(), ObjectKind::Peak);
+        else throw py::type_error("expected a Line, Contour, Marker, Annotation or Peak");
     });
     fig.def("clear", [](FigurePtr self) {
         inGui([&] {
@@ -1262,6 +1324,8 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
     });
     fig.def("_tl_remove_row", [tl](FigurePtr self, int row) { return inGui([&] { return tl(self)->removeRowIfEmpty(row); }); });
     fig.def("_tl_move_signal", [tl](FigurePtr self, const Line& line, int toRow) {
+        line.checkFigure(self);
+        inGui([&] { line.model(); });  // validates the panel
         const ObjectId id = inGui([&] { return tl(self)->moveSignal({line.ax, line.id}, toRow); });
         if (id == kInvalidId) throw py::value_error("cannot move this signal to that row");
         return Line{{self, id, toRow}};
@@ -1395,8 +1459,15 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
 'region_changed'  callback(xmin, xmax)  - both None when the selection is cleared
 'marker_changed'  callback(marker)      - after a marker was moved/edited
 'levels_changed'  callback(contour)     - after contour settings/levels changed
-'closed'          callback()            - the window was closed)doc");
+'closed'          callback()            - the window was closed
+Timeline figures (plotter.timeline) also have:
+'cursor_moved'    callback(t or None)   - the cursor line moved
+'window_changed'  callback(t0, t1)      - the visible time window changed
+'pins_changed'    callback()            - time markers added/moved/removed
+Remove a callback with off(event, callback).)doc");
     fig.def("disconnect_all", &Figure::clearCallbacks);
+    fig.def("off", &Figure::removeCallback, py::arg("event"), py::arg("callback"),
+            "Remove one callback registered with on(); returns True if it was registered.");
 
     // ---- Line ------------------------------------------------------------------------------
     py::class_<Line>(mod, "Line", "Handle to a 1D dataset.")
@@ -1487,7 +1558,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
                           }
                           h.setStyle([&](QString&, DatasetStyle& s) { s.fillColor = c; });
                       }, "Fill colour (None = no fill); True = translucent line colour")
-        .def("remove", [](Line& h) { inGui([&] { h.editor()->removeDataset(h.id); }); })
+        .def("remove", [](Line& h) { inGui([&] { h.get(); h.editor()->removeDataset(h.id); }); })
         .def_property_readonly("_id", [](Line& h) { return h.id; })
         .def_property_readonly("_panel", [](Line& h) { return h.ax; })
         .def_property_readonly("exists", [](Line& h) {
@@ -1578,7 +1649,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
             },
             py::arg("z"), py::arg("x") = py::none(), py::arg("y") = py::none(),
             "Replace the grid (keeps the contour settings).")
-        .def("remove", [](Contour& h) { inGui([&] { h.editor()->removeMatrix(h.id); }); })
+        .def("remove", [](Contour& h) { inGui([&] { h.get(); h.editor()->removeMatrix(h.id); }); })
         .def("__repr__", [](Contour& h) {
             return inGui([&]() -> std::string {
                 if (!h.fig->alive() || !h.model()->matrix(h.id)) return "<Contour (removed)>";
@@ -1616,7 +1687,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         .def_property("width",
                       [](MarkerH& h) { return inGui([&] { return h.get().lineWidth; }); },
                       [](MarkerH& h, double v) { h.edit([&](Marker& m) { m.lineWidth = v; }); })
-        .def("remove", [](MarkerH& h) { inGui([&] { h.editor()->removeMarker(h.id); }); })
+        .def("remove", [](MarkerH& h) { inGui([&] { h.get(); h.editor()->removeMarker(h.id); }); })
         .def("__repr__", [](MarkerH& h) {
             return inGui([&]() -> std::string {
                 if (!h.fig->alive() || !h.model()->marker(h.id)) return "<Marker (removed)>";
@@ -1658,7 +1729,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
                       [](PeakH& h, std::pair<double, double> v) {
                           h.edit([&](Peak& p) { p.labelOffset = QPointF(v.first, v.second); }, "Move peak label");
                       }, "Label position relative to the peak, in pixels (x right, y down).")
-        .def("remove", [](PeakH& h) { inGui([&] { h.editor()->removePeak(h.id); }); })
+        .def("remove", [](PeakH& h) { inGui([&] { h.get(); h.editor()->removePeak(h.id); }); })
         .def("__repr__", [](PeakH& h) {
             return inGui([&]() -> std::string {
                 if (!h.fig->alive() || !h.model()->peak(h.id)) return "<Peak (removed)>";
@@ -1698,7 +1769,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
                           });
                       },
                       [](AnnotationH& h, double v) { h.edit([&](Annotation& a) { a.fontSize = v; }); })
-        .def("remove", [](AnnotationH& h) { inGui([&] { h.editor()->removeAnnotation(h.id); }); })
+        .def("remove", [](AnnotationH& h) { inGui([&] { h.get(); h.editor()->removeAnnotation(h.id); }); })
         .def("__repr__", [](AnnotationH& h) {
             return inGui([&]() -> std::string {
                 if (!h.fig->alive() || !h.model()->annotation(h.id)) return "<Annotation (removed)>";

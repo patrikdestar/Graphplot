@@ -39,37 +39,32 @@ bool runEventLoopUntil(const std::function<bool()>& done, int timeoutMs);
 
 // Executes f on the GUI thread and returns its result. f must not touch
 // Python objects; exceptions propagate to the caller.
+// Runs `task` on the GUI thread and waits for it, with the GIL released so
+// the GUI thread can run Python callbacks meanwhile. Throws if there is no
+// application or the call could not be delivered.
+void runOnGuiThreadBlocking(const std::function<void()>& task);
+
 template <typename F>
 auto inGui(F&& f) -> std::invoke_result_t<F>
 {
     using R = std::invoke_result_t<F>;
-    if (isGuiThread()) return f();
+    if (isGuiThread()) return f();  // the common case: called from the main thread
     std::exception_ptr err;
-    if constexpr (std::is_void_v<R>) {
-        {
-            pybind11::gil_scoped_release release;
-            QMetaObject::invokeMethod(
-                QCoreApplication::instance(),
-                [&] {
-                    try { f(); } catch (...) { err = std::current_exception(); }
-                },
-                Qt::BlockingQueuedConnection);
+    std::optional<std::conditional_t<std::is_void_v<R>, int, R>> result;
+    runOnGuiThreadBlocking([&] {
+        try {
+            if constexpr (std::is_void_v<R>) {
+                f();
+                result.emplace(0);
+            } else {
+                result.emplace(f());
+            }
+        } catch (...) {
+            err = std::current_exception();
         }
-        if (err) std::rethrow_exception(err);
-    } else {
-        std::optional<R> result;
-        {
-            pybind11::gil_scoped_release release;
-            QMetaObject::invokeMethod(
-                QCoreApplication::instance(),
-                [&] {
-                    try { result.emplace(f()); } catch (...) { err = std::current_exception(); }
-                },
-                Qt::BlockingQueuedConnection);
-        }
-        if (err) std::rethrow_exception(err);
-        return std::move(*result);
-    }
+    });
+    if (err) std::rethrow_exception(err);
+    if constexpr (!std::is_void_v<R>) return std::move(*result);
 }
 
 }  // namespace gp::pyglue

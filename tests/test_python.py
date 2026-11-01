@@ -501,6 +501,116 @@ class PlotterTests(unittest.TestCase):
                 tl.load_csv(os.path.join(d, "missing.csv"))
             tl.close()
 
+    def test_audit_handles_and_lifetime(self):
+        # Handles act on their own panel / figure, whatever is current.
+        l0 = self.fig.plot([0, 1], [0, 1], label="panel0")
+        a0, a1 = self.fig.subplots(2, 1)
+        l1 = a1.plot([0, 1], [1, 0], label="panel1")
+        self.fig.sca(a0)
+        self.fig.remove(l1)
+        self.assertEqual([l.label for l in a0.lines()], ["panel0"])
+        self.assertEqual(a1.lines(), [])
+        with self.assertRaises(KeyError):
+            l1.remove()  # already removed
+        other = plotter.figure()
+        with self.assertRaises(ValueError):
+            other.remove(l0)  # belongs to another figure
+        with self.assertRaises(ValueError):
+            self.fig.sca(a1)
+            self.fig.plot([0, 1], [0, 1], fill=True, fill_to=l0)  # other panel
+        # Axes properties are read from that panel.
+        a1.x_log = True
+        self.assertTrue(a1.x_log)
+        self.assertFalse(a0.x_log)
+        # Closed figures are not re-opened by show() and are forgotten.
+        other.close()
+        plotter.show(block=False)
+        self.assertFalse(other.is_open)
+        self.assertNotIn(other, plotter._figures)
+        # Colours: separate alpha scale, numpy scalar errors, datetime64 input.
+        c = self.fig.plot([0, 1], [0, 1], color=(255, 0, 0, 0.5))
+        self.assertEqual(c.color, "#80ff0000")
+        e = self.fig.errorbar([0, 1], [0, 1], yerr=np.float32(0.1))
+        self.assertAlmostEqual(float(e.yerr[0][0]), 0.1, places=6)
+        t = np.array(["2024-05-02T14:03:20", "2024-05-02T14:03:21"], dtype="datetime64[ms]")
+        d = self.fig.plot(t, [1, 2])
+        self.assertAlmostEqual(d.x[0], 1714658600.0)
+        with self.assertRaises(ValueError):
+            self.fig.plot([0, 1], [0, 1], color=(300, 0, 0))
+
+    def test_audit_timeline_api(self):
+        tl = plotter.timeline()
+        t = np.array(["2024-05-02T14:03:20.000", "2024-05-02T14:03:20.500", "2024-05-02T14:03:21.000"],
+                     dtype="datetime64[ms]")
+        row = tl.add_row("imu")
+        row.plot(t, [0.0, 1.0, 0.0], label=None)  # label None is fine
+        row.plot(t, [5.0, 6.0, 7.0], label="b")
+        self.assertAlmostEqual(tl.time_origin, 1714658600.0)
+        self.assertEqual(list(row.lines()[1].x), [0.0, 0.5, 1.0])
+        tl.xlabel = "Time"  # forwarded to the figure
+        self.assertEqual(tl.figure.xlabel, "Time")
+        self.assertIn("imu / b", tl.signals())
+        self.assertEqual(tl.signal("b").label, "b")
+        tl.window = (0.25, 1.0)
+        data = tl.window_data()
+        self.assertEqual(list(data["imu / b"][0]), [0.5, 1.0])
+        p = tl.pin(0.5, "x")
+        tl.remove_pin(p)
+        tl.pin(0.2)
+        tl.pin(0.3)
+        tl.clear_pins()
+        self.assertEqual(tl.pins(), [])
+        with tempfile.TemporaryDirectory() as d:
+            long_csv = os.path.join(d, "long.csv")
+            tl.export_csv(long_csv, window=False)
+            with open(long_csv) as f:
+                rows = f.read().splitlines()
+            self.assertEqual(rows[0], "signal,time_s,time_utc,value")
+            self.assertEqual(len(rows), 1 + 6)
+            wide = os.path.join(d, "wide.csv")
+            tl.export_csv(wide, window=(0, 1), resample=0.25)
+            with open(wide) as f:
+                lines = f.read().splitlines()
+            self.assertTrue(lines[0].startswith("time_s,time_utc,imu / "))
+            self.assertEqual(len(lines), 1 + 5)  # 0, .25, .5, .75, 1
+        cb = lambda *a: None  # noqa: E731
+        tl.on("window_changed", cb)
+        self.assertTrue(tl.off("window_changed", cb))
+        self.assertFalse(tl.off("window_changed", cb))
+        tl.close()
+
+    def test_audit_pyplot(self):
+        import plotter.pyplot as plt
+        fig, axs = plt.subplots(2, 2)
+        self.assertEqual(axs.shape, (2, 2))
+        axs[0, 1].plot([1, 2], [3, 4])
+        self.assertEqual(len(list(axs.flat)), 4)
+        plt.figure(num="same")
+        same = plt.gcf()
+        plt.figure(num="same")
+        self.assertIs(plt.gcf(), same)
+        lines = plt.plot([0, 1, 2], np.array([[0, 1], [1, 2], [2, 3]]), drawstyle="steps-post")
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(lines[0].step, "post")
+        plt.errorbar([0, 1], [0, 1], yerr=0.1, fmt="none")
+        plt.plot([0, 1], [0, 1], color="0.5", label=3, alpha=0.4)
+        plt.fill_between([0, 1, 2], [1, 2, 3], where=[True, False, True])
+        plt.axvline(1, ymin=0.2, ymax=0.8)
+        plt.xlim(left=-1)
+        self.assertEqual(plt.xlim()[0], -1.0)
+        ax = plt.gca()
+        ax.text(0.5, 0.5, "centre", transform=ax.transAxes)
+        yy, xx = np.mgrid[-1:1:30j, -1:1:30j]
+        c = ax.contour(xx, yy, np.exp(-(xx ** 2 + yy ** 2)), levels=np.int64(5))
+        self.assertEqual(c.n_levels, 5)
+        c2 = ax.contour(xx, yy, np.exp(-(xx ** 2 + yy ** 2)), levels=[0.1, 0.2, 0.4, 0.8])
+        self.assertEqual(c2.n_levels, 4)
+        self.assertAlmostEqual(c2.base_level, 0.1)
+        self.assertAlmostEqual(c2.factor, 2.0)
+        with self.assertWarns(UserWarning):
+            plt.scatter([1, 2, 3, 4, 5], [1, 2, 3, 4, 5], c=[1, 2, 3, 4, 5])  # per-point values
+        plt.close("all")
+
     def test_savefig(self):
         self.fig.plot(self.x, np.sin(self.x), label="s")
         self.fig.marker(50, label="M")

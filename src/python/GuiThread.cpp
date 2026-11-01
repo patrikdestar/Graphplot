@@ -46,6 +46,18 @@ char* s_argv[] = {s_arg0, nullptr};
 
 }  // namespace
 
+void runOnGuiThreadBlocking(const std::function<void()>& task)
+{
+    QCoreApplication* app = QCoreApplication::instance();
+    if (!app) throw std::runtime_error("no QApplication: create a figure on the main thread first");
+    bool delivered = false;
+    {
+        py::gil_scoped_release release;
+        delivered = QMetaObject::invokeMethod(app, task, Qt::BlockingQueuedConnection);
+    }
+    if (!delivered) throw std::runtime_error("could not run the call on the GUI thread");
+}
+
 bool isGuiThread()
 {
     auto* app = QCoreApplication::instance();

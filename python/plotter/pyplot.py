@@ -43,6 +43,8 @@ _FMT_LINES = ["--", "-.", "-", ":"]
 def _parse_fmt(fmt: str):
     """'r--o' -> (color, linestyle, marker); missing parts are None."""
     color = linestyle = marker = None
+    if fmt.lower() == "none":  # errorbar(fmt="none"): bars only
+        return None, "none", None
     s = fmt
     for ls in _FMT_LINES:
         if ls in s:
@@ -61,19 +63,51 @@ def _parse_fmt(fmt: str):
     return color, linestyle, marker
 
 
-def _common(kw: dict):
-    """Translate matplotlib keyword aliases to plotter keywords."""
+def _mpl_color(c):
+    """matplotlib colour forms that plotter does not parse itself."""
+    if isinstance(c, str):
+        try:
+            v = float(c)  # grayscale "0.5"
+        except ValueError:
+            return c
+        if 0.0 <= v <= 1.0:
+            return (v, v, v)
+    return c
+
+
+_DRAWSTYLES = {"default": None, "steps": "pre", "steps-pre": "pre", "steps-post": "post",
+               "steps-mid": "mid"}
+
+
+def _common(kw: dict, ax=None):
+    """Translate matplotlib keyword aliases to plotter keywords.
+
+    ``ax`` (a plotter Axes) is needed to give ``alpha`` a colour when none was
+    specified (the next colour of the cycle)."""
     out = {}
     if "c" in kw:
         kw.setdefault("color", kw.pop("c"))
+    if "drawstyle" in kw or "ds" in kw:
+        ds = kw.pop("drawstyle", None) or kw.pop("ds", None)
+        if ds not in _DRAWSTYLES:
+            raise ValueError(f"unsupported drawstyle {ds!r}")
+        if _DRAWSTYLES[ds]:
+            out["step"] = _DRAWSTYLES[ds]
     for mpl, ours in (("linewidth", "width"), ("lw", "width"), ("linestyle", "style"),
                       ("ls", "style"), ("markersize", "markersize"), ("ms", "markersize"),
                       ("label", "label"), ("color", "color"), ("marker", "marker")):
         if mpl in kw:
             out[ours] = kw.pop(mpl)
-    if "alpha" in kw and out.get("color") is not None:
-        r, g, b, _ = _plotter._plotter._rgba(out["color"])
-        out["color"] = (r, g, b, float(kw.pop("alpha")))
+    if out.get("color") is not None:
+        out["color"] = _mpl_color(out["color"])
+    if "label" in out and out["label"] is not None:
+        out["label"] = str(out["label"])
+    if kw.get("alpha") is not None:
+        if out.get("color") is None and ax is not None:
+            out["color"] = ax._take_color()
+        if out.get("color") is not None:
+            r, g, b, _ = _plotter._plotter._rgba(out["color"])
+            out["color"] = (r, g, b, float(kw["alpha"]))
     kw.pop("alpha", None)
     kw.pop("zorder", None)
     if out.get("style") in ("", " ", "None"):
@@ -114,14 +148,24 @@ class PltAxes:
                 opts["linestyle"] = ls
             if marker and "marker" not in opts:
                 opts["marker"] = marker
-            lines.append(self._ax.plot(x, y, **_common(opts)))
+            y = _np.asarray(y)
+            # A 2-D y plots one line per column (as in matplotlib).
+            for col in (y.T if y.ndim == 2 else [y]):
+                lines.append(self._ax.plot(x, col, **_common(dict(opts), self._ax)))
         return lines
 
     def scatter(self, x, y, s=None, c=None, marker="o", **kw):
         if c is not None:
-            kw["color"] = c
+            arr = _np.asarray(c)
+            if arr.dtype.kind in "fiu" and arr.ndim == 1 and arr.size not in (3, 4):
+                # One value per point (colour-mapped in matplotlib) is not supported.
+                import warnings
+                warnings.warn("plotter.pyplot.scatter: per-point colours are not supported; "
+                              "using a single colour", stacklevel=2)
+            else:
+                kw["color"] = c
         size = None if s is None else float(_np.sqrt(_np.mean(s)))
-        opts = _common(kw)
+        opts = _common(kw, self._ax)
         return self._ax.plot(x, y, style="none", marker=_FMT_MARKERS.get(marker, "o"),
                              markersize=size, **{k: v for k, v in opts.items()
                                                  if k not in ("style", "marker")})
@@ -133,7 +177,7 @@ class PltAxes:
         color, ls, marker = _parse_fmt(fmt) if fmt else (None, "none", "o")
         if color and "color" not in kw and "c" not in kw:
             kw["color"] = color
-        opts = _common(kw)
+        opts = _common(kw, self._ax)
         opts.setdefault("style", ls or "none")
         opts.setdefault("marker", marker)
         return self._ax.plot(x, y, xerr=xerr, yerr=yerr, **opts)
@@ -157,14 +201,22 @@ class PltAxes:
         ys = _np.concatenate([[0.0], values, [0.0]])
         return self._ax.plot(xs, ys, step="post", fill=True if fill else None, **_common(kw))
 
-    def fill_between(self, x, y1, y2=0, alpha=0.3, color=None, label=None, step=None, **kw):
+    def fill_between(self, x, y1, y2=0, where=None, alpha=0.3, color=None, label=None, step=None,
+                     **kw):
         kw.pop("linewidth", None)
         kw.pop("edgecolor", None)
+        kw.pop("interpolate", None)
         if "facecolor" in kw:
             color = kw.pop("facecolor")
         if kw:
             raise TypeError(f"unsupported keyword(s): {', '.join(sorted(kw))}")
-        return self._ax.fill_between(x, y1, y2, label=label, color=color, alpha=alpha, step=step)
+        y1 = _np.asarray(y1, dtype=float) + 0 * _np.asarray(x, dtype=float)
+        y2 = _np.broadcast_to(_np.asarray(y2, dtype=float), y1.shape)
+        if where is not None:
+            # Outside `where` the band collapses to zero height.
+            y1 = _np.where(_np.asarray(where, dtype=bool), y1, y2)
+        return self._ax.fill_between(x, y1, y2, label=None if label is None else str(label),
+                                     color=_mpl_color(color), alpha=alpha, step=step)
 
     def contour(self, *args, levels=None, colors=None, **kw):
         """contour(Z) or contour(X, Y, Z); levels: number of (geometric) levels."""
@@ -180,29 +232,52 @@ class PltAxes:
             y = y[:, 0] if y.ndim == 2 else y
         else:
             raise TypeError("contour(Z) or contour(X, Y, Z)")
-        n = levels if isinstance(levels, int) else None
-        return self._ax.contour(z, x, y, levels=n, color=colors, label=label)
+        import numbers
+
+        n = base = factor = None
+        if isinstance(levels, numbers.Integral):
+            n = int(levels)
+        elif levels is not None:
+            # Explicit levels: geometric levels are base * factor**k, so use
+            # the positive ones to choose base, factor and count.
+            lv = _np.sort(_np.abs(_np.asarray(levels, dtype=float)))
+            lv = _np.unique(lv[lv > 0])
+            if lv.size:
+                base, n = float(lv[0]), int(lv.size)
+                factor = float((lv[-1] / lv[0]) ** (1 / (lv.size - 1))) if lv.size > 1 else 2.0
+        return self._ax.contour(z, x, y, levels=n, factor=factor, base=base, color=colors,
+                                label=label)
 
     def contourf(self, *args, **kw):
         c = self.contour(*args, **kw)
         c.image = True
         return c
 
-    def axvline(self, x=0, **kw):
+    def axvline(self, x=0, ymin=0, ymax=1, **kw):
+        # ymin / ymax (partial lines) are accepted; markers always span the panel.
         opts = _common(kw)
         return self._ax.marker(x, "v", show_value=False, **{k: v for k, v in opts.items()
                                                             if k in ("color", "label", "style", "width")})
 
-    def axhline(self, y=0, **kw):
+    def axhline(self, y=0, xmin=0, xmax=1, **kw):
         opts = _common(kw)
         return self._ax.marker(y, "h", show_value=False, **{k: v for k, v in opts.items()
                                                             if k in ("color", "label", "style", "width")})
 
+    @property
+    def transAxes(self):  # noqa: N802 - matplotlib name
+        """Marker for axes-fraction coordinates in text(..., transform=ax.transAxes)."""
+        return ("axes", self)
+
     def text(self, x, y, s, fontsize=None, color=None, **kw):
-        kw.pop("transform", None)
+        transform = kw.pop("transform", None)
+        if isinstance(transform, tuple) and transform[:1] == ("axes",):
+            # Axes fraction -> data coordinates of the current view.
+            (x0, x1), (y0, y1) = self.get_xlim(), self.get_ylim()
+            x, y = x0 + x * (x1 - x0), y0 + y * (y1 - y0)
         kw.pop("ha", None)
         kw.pop("va", None)
-        return self._ax.annotate(str(s), x, y, fontsize=fontsize, color=color)
+        return self._ax.annotate(str(s), x, y, fontsize=fontsize, color=_mpl_color(color))
 
     def annotate(self, text, xy, xytext=None, **kw):
         x, y = xytext if xytext is not None else xy
@@ -293,6 +368,8 @@ class _PltFigure:
         self._fig = _plotter.figure(None if num is None else str(num),
                                     size=(int(w * _DPI), int(h * _DPI)))
         self._size = (int(w * _DPI), int(h * _DPI))
+        self.closed = False  # set when the window is closed (by code or by the user)
+        self._fig.on("closed", lambda: setattr(self, "closed", True))
         self.axes = [PltAxes(self, self._fig.axes[0])]
 
     def gca(self):
@@ -319,9 +396,19 @@ class _PltFigure:
 
 # ---- module-level (stateful) API ------------------------------------------------------
 
+_numbered: dict = {}
+
+
 def figure(num=None, figsize=None, **_):
+    """New figure, or the existing (still open) figure with this number/name."""
     global _current
+    existing = _numbered.get(num) if num is not None else None
+    if existing is not None and not existing.closed:
+        _current = existing
+        return existing
     _current = _PltFigure(figsize=figsize, num=num)
+    if num is not None:
+        _numbered[num] = _current
     return _current
 
 
@@ -347,7 +434,8 @@ def subplots(nrows=1, ncols=1, sharex=False, sharey=False, figsize=None, squeeze
     wr = width_ratios or gk.get("width_ratios")
     hspace = gk.get("hspace")
     wspace = gk.get("wspace")
-    # matplotlib's hspace is a fraction of the axes height; 0 means touching.
+    # matplotlib gives hspace as a fraction of the panel height; plotter uses
+    # pixels: approximated as fraction * 100 px (0 = frames touch).
     px = lambda v: None if v is None else int(round(v * 100))  # noqa: E731
     grid = fig._fig.subplots(nrows, ncols, sharex=bool(sharex), sharey=bool(sharey),
                              height_ratios=hr, width_ratios=wr, hspace=px(hspace),
@@ -355,12 +443,17 @@ def subplots(nrows=1, ncols=1, sharex=False, sharey=False, figsize=None, squeeze
     axes = [[PltAxes(fig, a) for a in row] for row in grid]
     fig.axes = [a for row in axes for a in row]
     fig._fig.sca(grid[0][0])
+    # Like matplotlib: an object ndarray (axs[0, 1], axs.flat, axs.ravel()).
+    arr = _np.empty((nrows, ncols), dtype=object)
+    for r in range(nrows):
+        for c in range(ncols):
+            arr[r, c] = axes[r][c]
     if squeeze:
         if nrows == 1 and ncols == 1:
-            return fig, axes[0][0]
+            return fig, arr[0, 0]
         if nrows == 1 or ncols == 1:
-            return fig, [a for row in axes for a in row]
-    return fig, axes
+            return fig, arr.ravel()
+    return fig, arr
 
 
 def _ax_call(name):
@@ -400,15 +493,17 @@ def title(s, **kw):
     gca().set_title(s, **kw)
 
 
-def xlim(*args):
-    if args:
-        gca().set_xlim(*args)
+def xlim(*args, left=None, right=None):
+    if args or left is not None or right is not None:
+        gca().set_xlim(*args, **({"left": left} if left is not None else {}),
+                       **({"right": right} if right is not None else {}))
     return gca().get_xlim()
 
 
-def ylim(*args):
-    if args:
-        gca().set_ylim(*args)
+def ylim(*args, bottom=None, top=None):
+    if args or bottom is not None or top is not None:
+        gca().set_ylim(*args, **({"bottom": bottom} if bottom is not None else {}),
+                       **({"top": top} if top is not None else {}))
     return gca().get_ylim()
 
 

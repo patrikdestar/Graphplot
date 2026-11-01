@@ -24,12 +24,12 @@ fig = plotter.figure(title=None, size=(1000, 650))
 | `plot(x, y=None, *, label, color, width, style='-', marker=None, markersize, visible=True, replace=False, step=None, fill=None, fill_to=None, xerr=None, yerr=None)` | `Line` |
 | `errorbar(x, y, yerr=None, xerr=None, *, label, color, marker='o', ...)` | `Line` |
 | `hist(data, bins=10, range=None, *, density=False, weights=None, histtype='step', label, color, fill)` | `(counts, edges, Line)` |
-| `fill_between(x, y1, y2=0, *, label, color, alpha=0.3, step=None)` | `Line` (one undo step) |
+| `fill_between(x, y1, y2=0, *, label, color, alpha=0.3, step=None, line=False)` | `Line` (one undo step; `line=True` also draws the edges) |
 | `contour(z, x=None, y=None, *, label, levels, factor, base=None, color, negative_color, negative=True, image=False, linewidth)` | `Contour` |
 | `open_bruker(path)` | `Contour` (Bruker processed 2D spectrum, ppm axes) |
 | `marker(position, orientation='v', *, color, label='', style='--', width=1.5, show_value=True)` | `Marker` |
 | `vline(x, **kw)`, `hline(y, **kw)` | `Marker` |
-| `annotate(text, x, y, *, color, fontsize=10)` | `Annotation` |
+| `annotate(text, x, y, *, color=None, fontsize=None)` | `Annotation` (unset colour/size follow the style) |
 | `lines()`, `contours()`, `markers()`, `annotations()` | lists of handles |
 | `line(label)` | the `Line` with that label |
 | `get_marker_positions()` | `[(label, 'v'/'h', position), …]` |
@@ -156,7 +156,7 @@ How panels work:
 | `region_mask(x)` | boolean mask of `x` inside the region (or `None`) |
 | `wait_for_region(timeout=-1)` | keep the window interactive until the user finishes a selection; return it. Returns `None` on timeout or close. |
 | `scale_contour_levels(factor)` | same as the mouse wheel / `*` `/` keys |
-| `on(event, callback)` | register a callback (see below) |
+| `on(event, callback)`, `off(event, callback)` | register / remove a callback (see below) |
 | `disconnect_all()` | remove callbacks |
 
 Callbacks run on the GUI thread after an edit is *complete*: after the mouse
@@ -217,12 +217,17 @@ What a timeline is:
 | `clock_time` | clock-time axis labels (needs absolute timestamps) |
 | `time_origin` | Unix epoch seconds of t = 0 (`None` for relative data) |
 | `pin(t, label="", color=None)` | add a time marker; returns a `TimePin` |
-| `pins()` | all `TimePin`s |
+| `pins()`, `remove_pin(pin)`, `clear_pins()` | time markers |
+| `signals()`, `signal(name)` | `{"row / signal": Line}`; one signal by full or short name |
+| `window_data(window=None)` | `{"row / signal": (t, y)}` inside the visible (or given) window |
+| `export_csv(path, window=True, resample=None)` | CSV of the visible window (`False`: everything; or `(t0, t1)`). `resample=None`: long format, every sample; `resample=dt`: wide format on a common grid (linear interpolation) |
 | `format_time(t)` | time as displayed |
 
 `TimelineRow` members:
 
-- `plot(t, y, label="", color=None)`: `t` must be sorted.
+- `plot(t, y, label="", color=None)`: `t` must be sorted. Seconds since the
+  origin, or absolute `datetime64` / pandas timestamps (the first absolute
+  time sets `time_origin`).
 - `lines()`.
 - `name`, `visible`, `height` (relative).
 - `axes`: the full panel API.
@@ -265,7 +270,8 @@ Differences from matplotlib:
 
 - Figure sizes are converted at 100 px per inch.
 - Contour levels are geometric (NMR convention).
-- `hspace` is given in hundredths of the panel height.
+- `hspace` / `wspace` (fractions of the panel size in matplotlib) are converted
+  to pixels as fraction × 100; 0 still makes the frames touch.
 
 ## Handles
 
@@ -280,7 +286,7 @@ removed object raises `KeyError`. Setting a property is an undoable edit.
   `step`, `fill`.
 - `set_data(x, y, *, undoable=False)`: by default, streaming updates do not
   fill the undo history.
-- `set_errors(xerr=None, yerr=None)`.
+- `set_errors(xerr=None, yerr=None)`: like `set_data`, not recorded in the undo history.
 - `remove()`.
 
 ### `Peak`

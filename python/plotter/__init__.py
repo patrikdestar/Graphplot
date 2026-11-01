@@ -37,6 +37,7 @@ __copyright__ = "Copyright (c) 2026 Justinas Minkevicius. All rights reserved."
 __license__ = "Proprietary - no use without the author's written permission (see LICENSE)"
 
 import sys as _sys
+import threading as _threading
 
 from ._plotter import Annotation, Contour, Figure, Line, Marker, Peak
 from ._plotter import process_events as _process_events
@@ -49,6 +50,9 @@ __all__ = [
 ]
 
 _figures: list[Figure] = []
+# Serialises "make panel current + call" sequences of Axes proxies, so two
+# threads using different panels of one figure cannot interleave.
+_panel_lock = _threading.RLock()
 
 
 def _interactive() -> bool:
@@ -73,6 +77,12 @@ def figure(title: str | None = None, size: tuple[int, int] = (1000, 650)) -> Fig
     return fig
 
 
+def _forget_closed() -> None:
+    # Closed figures stay usable through their handles, but show() must not
+    # re-open them and the module must not keep them alive forever.
+    _figures[:] = [f for f in _figures if f.is_open]
+
+
 def figures() -> list[Figure]:
     """All figures created in this session that are still open."""
     return [f for f in _figures if f.is_open]
@@ -80,11 +90,9 @@ def figures() -> list[Figure]:
 
 def show(block: bool | None = None, timeout: float | None = None) -> None:
     """Show all figures. If blocking, run the event loop until all are closed."""
-    for f in _figures:
-        try:
-            f._show()
-        except RuntimeError:
-            pass
+    _forget_closed()  # never re-open windows the user already closed
+    for f in list(_figures):
+        f._show()
     if block is None:
         block = not _interactive()
     if block:
@@ -99,6 +107,7 @@ def pause(seconds: float = 0.05) -> None:
 def close_all() -> None:
     for f in _figures:
         f.close()
+    _figures.clear()
 
 
 def _figure_show(self: Figure, block: bool | None = None, timeout: float | None = None) -> Figure:
@@ -215,9 +224,6 @@ class Axes:
     applied to this panel. Handles returned by these methods stay bound to
     the panel they were created in."""
 
-    _PROPERTIES = {"title", "xlabel", "ylabel", "x_reversed", "y_reversed", "diagonal",
-                   "peak_labels"}
-
     def __init__(self, figure: Figure, index: int):
         object.__setattr__(self, "figure", figure)
         object.__setattr__(self, "index", index)
@@ -229,24 +235,28 @@ class Axes:
     def __getattr__(self, name):
         if name.startswith("__"):
             raise AttributeError(name)
-        if name in Axes._PROPERTIES:
-            self._activate()
-            return getattr(self.figure, name)
+        # Properties (xlabel, x_log, ...) are read from this panel.
+        if isinstance(getattr(type(self.figure), name, None), property):
+            with _panel_lock:
+                self._activate()
+                return getattr(self.figure, name)
         attr = getattr(self.figure, name)
         if not callable(attr):
             return attr
 
         def call(*args, **kwargs):
-            self._activate()
-            return attr(*args, **kwargs)
+            with _panel_lock:
+                self._activate()
+                return attr(*args, **kwargs)
 
         call.__name__ = name
         call.__doc__ = getattr(attr, "__doc__", None)
         return call
 
     def __setattr__(self, name, value):
-        self._activate()
-        setattr(self.figure, name, value)
+        with _panel_lock:
+            self._activate()
+            setattr(self.figure, name, value)
 
     def __repr__(self):
         return f"<Axes {self.index} of {self.figure!r}>"
@@ -297,6 +307,23 @@ def _gca(self: Figure):
     return Axes(self, self._current())
 
 
+def _to_seconds(t):
+    """Time values as float seconds; returns (array, is_absolute_epoch).
+
+    Accepts numbers (seconds), numpy datetime64 / timedelta64 and sequences of
+    datetime-like objects (pandas Timestamps, datetime.datetime)."""
+    import numpy as np
+
+    a = np.asarray(t)
+    if a.dtype.kind == "M":  # datetime64 -> Unix epoch seconds
+        return a.astype("datetime64[ns]").astype(np.int64) / 1e9, True
+    if a.dtype.kind == "m":  # timedelta64 -> seconds
+        return a.astype("timedelta64[ns]").astype(np.int64) / 1e9, False
+    if a.dtype == object and a.size and hasattr(a.flat[0], "timestamp"):
+        return np.array([x.timestamp() for x in a.ravel()], dtype=float), True
+    return a.astype(float), False
+
+
 class TimelineRow:
     """One row of a Timeline (a figure panel). Plot into it with ``row.plot``."""
 
@@ -305,8 +332,15 @@ class TimelineRow:
         self.index = index
 
     def plot(self, t, y, label: str = "", color=None) -> Line:
-        """Add a signal (time in seconds since the timeline origin, sorted)."""
-        return self._tl.figure._tl_add_signal(self.index, label, t, y, color)
+        """Add a signal. ``t``: seconds since the timeline origin, or absolute
+        times (datetime64 / pandas timestamps), which set the origin on first use."""
+        secs, absolute = _to_seconds(t)
+        if absolute:
+            if self._tl.time_origin is None:
+                self._tl.time_origin = float(secs[0])
+            secs = secs - self._tl.time_origin
+        return self._tl.figure._tl_add_signal(self.index, "" if label is None else str(label),
+                                              secs, y, color)
 
     def lines(self):
         return Axes(self._tl.figure, self.index).lines()
@@ -481,9 +515,98 @@ class Timeline:
     def pins(self):
         return [TimePin(self, pid) for pid, *_ in self.figure._tl_pins()]
 
+    def remove_pin(self, pin) -> None:
+        self.figure._tl_remove_pin(pin.id if isinstance(pin, TimePin) else int(pin))
+
+    def clear_pins(self) -> None:
+        for pid, *_ in self.figure._tl_pins():
+            self.figure._tl_remove_pin(pid)
+
+    # ---- signals and data -------------------------------------------------------------
+    def signals(self) -> dict:
+        """All signals as {"row / signal": Line}, in display order."""
+        out = {}
+        for row in self.rows:
+            for line in row.lines():
+                out[f"{row.name} / {line.label}"] = line
+        return out
+
+    def signal(self, name: str) -> Line:
+        """A signal by "row / signal" or by its own name."""
+        sigs = self.signals()
+        if name in sigs:
+            return sigs[name]
+        matches = [l for key, l in sigs.items() if key.split(" / ", 1)[-1] == name]
+        if len(matches) != 1:
+            raise KeyError(f"{name!r} matches {len(matches)} signals")
+        return matches[0]
+
+    def window_data(self, window=None) -> dict:
+        """Samples inside the time window (default: the visible one):
+        {"row / signal": (t, y)} as numpy arrays."""
+        import numpy as np
+
+        t0, t1 = window if window is not None else self.window
+        out = {}
+        for key, line in self.signals().items():
+            x, y = line.x, line.y
+            i0, i1 = np.searchsorted(x, t0, "left"), np.searchsorted(x, t1, "right")
+            out[key] = (x[i0:i1], y[i0:i1])
+        return out
+
+    def export_csv(self, path: str, window=True, resample: float | None = None) -> None:
+        """Write signals to CSV.
+
+        window    True = visible window, False = whole recording, or (t0, t1)
+        resample  None: long format (signal, time, value) - every sample as recorded.
+                  dt (seconds): wide format on a common time grid, linearly
+                  interpolated (NaN outside a signal's range or in gaps).
+        Time is written as seconds and, with absolute data, as ISO time too."""
+        import csv
+        from datetime import datetime, timezone
+
+        import numpy as np
+
+        if window is True:
+            win = self.window
+        elif window is False:
+            win = self.full_range
+        else:
+            win = tuple(window)
+        data = self.window_data(win)
+        origin = self.time_origin
+
+        def iso(t):
+            return datetime.fromtimestamp(origin + t, tz=timezone.utc).isoformat(timespec="milliseconds")
+
+        with open(path, "w", newline="") as f:
+            w = csv.writer(f)
+            if resample is None:
+                w.writerow(["signal", "time_s"] + (["time_utc"] if origin is not None else []) + ["value"])
+                for key, (t, y) in data.items():
+                    for ti, yi in zip(t, y):
+                        w.writerow([key, repr(float(ti))] + ([iso(ti)] if origin is not None else []) + [repr(float(yi))])
+                return
+            grid = np.arange(win[0], win[1] + 0.5 * resample, resample)
+            cols = []
+            for key, (t, y) in data.items():
+                v = np.interp(grid, t, y, left=np.nan, right=np.nan) if len(t) else np.full(grid.size, np.nan)
+                cols.append(v)
+            w.writerow(["time_s"] + (["time_utc"] if origin is not None else []) + list(data))
+            for i, ti in enumerate(grid):
+                w.writerow([repr(float(ti))] + ([iso(ti)] if origin is not None else [])
+                           + [repr(float(c[i])) for c in cols])
+
     # ---- forwarding ------------------------------------------------------------------
     def __getattr__(self, name):
         return getattr(self.figure, name)
+
+    def __setattr__(self, name, value):
+        # Timeline properties are set here; everything else (xlabel, title...) on the figure.
+        if isinstance(getattr(type(self), name, None), property):
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self.figure, name, value)
 
     def __repr__(self):
         return f"<Timeline rows={[r.name for r in self.rows]}>"
