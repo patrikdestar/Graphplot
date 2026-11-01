@@ -112,24 +112,30 @@ public:
                   QVector<double>& ticks, QVector<double>* subTicks, QVector<QString>* tickLabels) override
     {
         const double ratio = range.lower > 0 ? range.upper / range.lower : 0;
-        if (ratio > 0 && ratio < 10) {  // under a decade: evenly spaced round ticks
-            m_linear.setTickCount(tickCount());
-            m_linear.generate(range, locale, 'g', 6, ticks, subTicks, nullptr);
-        } else if (ratio > 0 && ratio < 100) {  // one or two decades: 1-2-5 ticks (10, 20, 50, 100)
-            ticks.clear();
+        // Mantissa series from coarse to fine; the first with two or more ticks
+        // in range is used (well spread on a log axis), evenly spaced ticks
+        // only for less than a factor 3.
+        auto series = [&](std::initializer_list<double> ms) {
+            QVector<double> out;
             const int k0 = int(std::floor(std::log10(range.lower))), k1 = int(std::ceil(std::log10(range.upper)));
             for (int k = k0; k <= k1; ++k)
-                for (double m : {1.0, 2.0, 5.0}) {
+                for (double m : ms) {
                     const double t = m * std::pow(10.0, k);
-                    if (t >= range.lower * (1 - 1e-9) && t <= range.upper * (1 + 1e-9)) ticks << t;
+                    if (t >= range.lower * (1 - 1e-9) && t <= range.upper * (1 + 1e-9)) out << t;
                 }
+            return out;
+        };
+        if (ratio > 0 && ratio < 3) {
+            m_linear.setTickCount(tickCount());
+            m_linear.generate(range, locale, 'g', 6, ticks, subTicks, nullptr);
+        } else if (ratio > 0 && ratio < 100) {
+            ticks = series({1.0, 2.0, 5.0});
+            if (ticks.size() < 2) ticks = series({1.0, 2.0, 3.0, 5.0});
+            if (ticks.size() < 2) ticks = series({1, 2, 3, 4, 5, 6, 7, 8, 9});
             if (subTicks) {
                 subTicks->clear();
-                for (int k = k0; k <= k1; ++k)
-                    for (int m = 1; m <= 9; ++m) {
-                        const double t = m * std::pow(10.0, k);
-                        if (t > range.lower && t < range.upper && !ticks.contains(t)) *subTicks << t;
-                    }
+                for (double t : series({1, 2, 3, 4, 5, 6, 7, 8, 9}))
+                    if (!ticks.contains(t)) *subTicks << t;
             }
         } else {
             QCPAxisTickerLog::generate(range, locale, formatChar, precision, ticks, subTicks, tickLabels);
@@ -539,7 +545,12 @@ PlotRenderer::PlotRenderer(PlotModel* model, QCustomPlot* plot, QCPAxisRect* rec
     // legend.loc 'best': placed after every layout pass, which also runs for
     // exports at their own size (so the choice fits the exported geometry).
     connect(m_plot, &QCustomPlot::afterLayout, this, [this] {
-        fitTickCounts();
+        // Tick counts and end-label margins depend on each other: settle them
+        // within this pass (a few rounds at most).
+        for (int round = 0; round < 3; ++round) {
+            fitTickCounts();
+            if (!fitEndLabels()) break;
+        }
         if (m_legendBest && !m_twinHost) placeLegendBest();
     });
 
@@ -2150,17 +2161,16 @@ void PlotRenderer::fitTickCounts()
         }
     }
     if (changed) m_rect->update(QCPLayoutElement::upPreparation);
-    fitEndLabels();
 }
 
-void PlotRenderer::fitEndLabels()
+bool PlotRenderer::fitEndLabels()
 {
     // QCustomPlot leaves out a tick label that would stick out of the widget,
     // so the first / last label ("Monday", "recovered") could vanish. Reserve
     // the room they need as minimum side margins and lay out again if needed.
-    if (m_twinHost) return;
+    if (m_twinHost) return false;
     const QRect ar = m_rect->rect();
-    if (ar.width() < 20 || ar.height() < 20) return;
+    if (ar.width() < 20 || ar.height() < 20) return false;
     int needT = 0, needB = 0;
     if (m_y->visible() && m_y->tickLabels()) {  // y labels are centred on their ticks
         const QFontMetrics fy(m_y->tickLabelFont());
@@ -2171,18 +2181,7 @@ void PlotRenderer::fitEndLabels()
             needB = std::max(needB, int(std::ceil(fy.height() / 2.0 - (ar.bottom() - py))) + 2);
         }
     }
-    if (!m_x->visible() || !m_x->tickLabels()) {
-        const QMargins want(0, std::max(0, needT), 0, std::max(0, needB));
-        if (want != m_endLabelMargins) {
-            m_endLabelMargins = want;
-            m_rect->setMinimumMargins(want);
-            QCPLayoutGrid* layout = m_plot->plotLayout();
-            layout->update(QCPLayoutElement::upPreparation);
-            layout->update(QCPLayoutElement::upMargins);
-            layout->update(QCPLayoutElement::upLayout);
-        }
-        return;
-    }
+    if (!m_x->visible() || !m_x->tickLabels()) return applyEndMargins(0, needT, 0, needB);
     const QVector<double> ticks = m_x->tickVector();
     const QVector<QString> labels = m_x->tickVectorLabels();
     const QFontMetrics fm(m_x->tickLabelFont());
@@ -2198,14 +2197,21 @@ void PlotRenderer::fitEndLabels()
         needL = std::max(needL, int(std::ceil(left - (px - ar.left()))) + 3);
         needR = std::max(needR, int(std::ceil(right - (ar.right() - px))) + 3);
     }
-    const QMargins want(std::max(0, needL), std::max(0, needT), std::max(0, needR), std::max(0, needB));
-    if (want == m_endLabelMargins) return;
-    m_endLabelMargins = want;
+    return applyEndMargins(needL, needT, needR, needB);
+}
+
+bool PlotRenderer::applyEndMargins(int l, int t, int r, int b)
+{
+    // QCustomPlot's default minimum margins (15 px) stay the base.
+    const int base = 15;
+    const QMargins want(std::max(base, l), std::max(base, t), std::max(base, r), std::max(base, b));
+    if (want == m_rect->minimumMargins()) return false;
     m_rect->setMinimumMargins(want);
     QCPLayoutGrid* layout = m_plot->plotLayout();
     layout->update(QCPLayoutElement::upPreparation);
     layout->update(QCPLayoutElement::upMargins);
     layout->update(QCPLayoutElement::upLayout);
+    return true;
 }
 
 }  // namespace gp

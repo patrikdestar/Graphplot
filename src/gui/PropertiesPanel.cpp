@@ -1020,6 +1020,8 @@ void PropertiesPanel::commitMatrix(bool mergeable)
     if (cmap != QString(s.colormap).remove("_r") && !(cmap == "auto" && s.colormap.isEmpty()))
         s.colormap = cmap == "auto" ? QString() : cmap;
     s.visible = m_mxVisible->isChecked();
+    // A name typed by the user is a real label (legend entry, colour-bar title).
+    if (m_mxName->text() != m->name) s.labelled = !m_mxName->text().isEmpty();
     m_editor->setMatrixAppearance(m->id, m_mxName->text(), s, mergeable);
 }
 
