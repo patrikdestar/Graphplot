@@ -1409,6 +1409,13 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
             // Waiting forever on a window nobody can see would never return.
             if (timeout < 0 && !inGui([&] { return self->w()->isVisible(); }))
                 throw std::runtime_error("the figure is not shown: call fig.show(block=False) first");
+            const QString platform = QGuiApplication::platformName();
+            if (timeout < 0 && (platform == "offscreen" || platform == "minimal")) {
+                // No screen: nobody can select anything, so do not wait forever.
+                py::module_::import("warnings").attr("warn")(
+                    "plotter: no screen (offscreen platform); wait_for_region() returns None");
+                return py::none();
+            }
             const quint64 start = self->regionVersion;
             const bool ok = pyglue::runEventLoopUntil(
                 [self, start] { return self->regionVersion != start || self->closed; },
@@ -2428,7 +2435,10 @@ Remove a callback with off(event, callback).)doc");
             [](Contour& h, const py::object& z, const py::object& x, const py::object& y) {
                 Matrix m = matrixFromNumpy(z, x, y);
                 inGui([&] {
-                    h.get();
+                    const Matrix& old = h.get();
+                    // Coordinates not given: the grid keeps its extent (ppm axes stay).
+                    if (x.is_none()) m.x0 = old.x0, m.x1 = old.x1;
+                    if (y.is_none()) m.y0 = old.y0, m.y1 = old.y1;
                     h.editor()->setMatrixData(h.id, m.nx, m.ny, m.z, m.x0, m.x1, m.y0, m.y1);
                 });
             },

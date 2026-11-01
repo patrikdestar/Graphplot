@@ -96,6 +96,13 @@ def _is_dates(v):
     return hasattr(first, "timestamp") or (hasattr(first, "year") and hasattr(first, "toordinal"))
 
 
+def _unmask(v):
+    """Masked arrays -> float arrays with NaN at masked points (drawn as gaps)."""
+    if _np.ma.isMaskedArray(v):
+        return _np.ma.filled(_np.ma.asarray(v, dtype=float), _np.nan)
+    return v
+
+
 def _nums(v):
     """Numbers as a float array; dates become Unix seconds (as plot() does)."""
     if _is_dates(v):
@@ -262,6 +269,7 @@ class PltAxes:
                         x = idx  # numbers or dates: the index is x (as matplotlib)
             else:
                 x, y = args.pop(0), args.pop(0)
+            x, y = _unmask(x), _unmask(y)
             if _np.ndim(x) == 0:  # plot(1, 2, 'ro'): one point
                 x = [x]
             if _np.ndim(y) == 0:
@@ -294,6 +302,9 @@ class PltAxes:
         edge = None if edge in (None, "face") else ("none" if edge == "none" else _mpl_color(edge))
         if "color" in kw and c is None:
             c = kw.pop("color")
+        x, y = _unmask(x), _unmask(y)
+        if c is not None and not isinstance(c, str):
+            c = _unmask(c)
         x = _np.atleast_1d(self._xs(x)).astype(float).ravel()
         y = _np.atleast_1d(_np.asarray(y, dtype=float)).ravel()
         npts = x.size
@@ -489,9 +500,9 @@ class PltAxes:
         if len(args) in (2, 4) and levels is None:  # trailing positional levels
             levels = args.pop()
         if len(args) == 1:
-            z, x, y = args[0], None, None
+            z, x, y = _unmask(args[0]), None, None
         elif len(args) == 3:
-            x, y, z = (_np.asarray(a) for a in args)
+            x, y, z = (_np.asarray(_unmask(a)) for a in args)
             x = x[0] if x.ndim == 2 else x
             y = y[:, 0] if y.ndim == 2 else y
         else:
@@ -569,7 +580,7 @@ class PltAxes:
                interpolation=None, label=None, **kw):
         """Colour-mapped image of a 2-D array (matplotlib conventions: row 0 at the
         top unless origin='lower'; extent = (left, right, bottom, top) pixel edges)."""
-        z = _np.asarray(X, dtype=float)
+        z = _np.asarray(_unmask(X), dtype=float)
         if z.ndim != 2:
             raise ValueError("imshow: only 2-D arrays (RGB images are not supported)")
         ny, nx = z.shape
@@ -598,7 +609,7 @@ class PltAxes:
         if len(args) == 1:
             c_arr, x, y = _np.asarray(args[0], dtype=float), None, None
         elif len(args) == 3:
-            X, Y, c_arr = (_np.asarray(a, dtype=float) for a in args)
+            X, Y, c_arr = (_np.asarray(_unmask(a), dtype=float) for a in args)
             ny, nx = c_arr.shape
             X = X[0] if X.ndim == 2 else X
             Y = Y[:, 0] if Y.ndim == 2 else Y

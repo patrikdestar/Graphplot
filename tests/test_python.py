@@ -1379,6 +1379,20 @@ class PlotterTests(unittest.TestCase):
         self.assertEqual(f.xlim(), (10.0, 20.0))
         self.assertNotEqual(f.plot(x, x).color, first.color)
 
+    def test_round14_user_fixes(self):
+        import plotter.pyplot as plt
+        y = np.ma.masked_where(np.arange(10) % 4 == 0, np.arange(10.0))
+        line, = plt.plot(np.arange(10.0), y)
+        self.assertEqual(int(np.isnan(line.get_ydata()).sum()), 3)  # masked points are gaps
+        plt.close("all")
+        g = plotter.figure()
+        c = g.contour(np.random.rand(8, 8), x=(-3, 3), y=(-3, 3))
+        c.set_data(np.random.rand(8, 8))
+        self.assertEqual(tuple(c.extent), (-3.0, 3.0, -3.0, 3.0))  # grid kept
+        h = plotter.figure()
+        h.plot([1, 2, 3], [1e300, 2e300, -1e300])
+        self.assertGreater(h.ylim()[1], 1e200)  # fitted as far as the plot can show
+
     def test_round6_correctness(self):
         import plotter.pyplot as plt
         f = self.fig

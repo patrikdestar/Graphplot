@@ -219,6 +219,24 @@ class StyledTicker : public QCPAxisTicker {
 public:
     bool unicodeMinus = true;
 
+    void generate(const QCPRange& range, const QLocale& locale, QChar formatChar, int precision,
+                  QVector<double>& ticks, QVector<double>* subTicks, QVector<QString>* tickLabels) override
+    {
+        QCPAxisTicker::generate(range, locale, formatChar, precision, ticks, subTicks, nullptr);
+        if (!tickLabels) return;
+        // Data far from zero (1e6 + 0.25 steps): enough significant digits that
+        // neighbouring ticks never print the same number.
+        int digits = precision;
+        if (ticks.size() > 1) {
+            const double step = std::abs(ticks[1] - ticks[0]);
+            double maxAbs = 0;
+            for (double t : ticks) maxAbs = std::max(maxAbs, std::abs(t));
+            if (step > 0 && maxAbs > 0)
+                digits = std::clamp(int(std::ceil(std::log10(maxAbs / step))) + 2, precision, 15);
+        }
+        *tickLabels = createLabelVector(ticks, locale, formatChar, digits);
+    }
+
 protected:
     QString getTickLabel(double tick, const QLocale& locale, QChar formatChar, int precision) override
     {
@@ -624,8 +642,24 @@ ViewRange PlotRenderer::viewRange() const
     return {x.lower, x.upper, y.lower, y.upper};
 }
 
-void PlotRenderer::setViewRange(const ViewRange& r)
+void PlotRenderer::setViewRange(const ViewRange& rIn)
 {
+    // QCustomPlot ignores ranges beyond +-1e250 or narrower than 1e-250:
+    // clamp to what it can show instead of keeping the old view.
+    ViewRange r = rIn;
+    auto fit = [](double& lo, double& hi) {
+        if (!std::isfinite(lo) || !std::isfinite(hi)) return;
+        const double big = QCPRange::maxRange * 0.25, small = QCPRange::minRange * 100;
+        lo = std::clamp(lo, -big, big);
+        hi = std::clamp(hi, -big, big);
+        if (hi - lo < small) {
+            const double c = 0.5 * (lo + hi);
+            lo = c - small;
+            hi = c + small;
+        }
+    };
+    fit(r.xmin, r.xmax);
+    fit(r.ymin, r.ymax);
     m_x->setRange(r.xmin, r.xmax);
     m_y->setRange(r.ymin, r.ymax);
     // keep the mirrored frame axes in sync (tick positions)
@@ -1202,6 +1236,17 @@ void PlotRenderer::applyImageAppearance(const Matrix& m, MatrixVisual& v)
         std::vector<double> lv = contourLevels(s);
         std::sort(lv.begin(), lv.end());
         lv.erase(std::unique(lv.begin(), lv.end()), lv.end());
+        // Levels that do not span the data (e.g. geometric NMR levels, or
+        // negative ones on positive data): bands between the levels inside the
+        // data range plus one below the lowest and one above the highest, so
+        // every level line is a band edge.
+        if (!lv.empty() && v.hi > v.lo && (lv.front() > v.lo || lv.back() < v.hi)) {
+            std::vector<double> inside{v.lo};
+            for (double l : lv)
+                if (l > v.lo && l < v.hi) inside.push_back(l);
+            inside.push_back(v.hi);
+            lv = inside;
+        }
         if (lv.size() >= 2) {
             const double lo = lv.front(), hi = lv.back();
             const int bands = int(lv.size()) - 1;
@@ -1219,6 +1264,7 @@ void PlotRenderer::applyImageAppearance(const Matrix& m, MatrixVisual& v)
             range = QCPRange(lo, hi);
         }
     }
+    g.setNanHandling(QCPColorGradient::nhTransparent);  // NaN cells are gaps
     v.image->setGradient(g);
     v.image->setDataRange(range);
     v.image->setInterpolate(s.smooth);
