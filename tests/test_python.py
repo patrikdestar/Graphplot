@@ -1107,16 +1107,15 @@ class PlotterTests(unittest.TestCase):
         ax.set_xlim(dt.datetime(2024, 1, 1), dt.datetime(2024, 1, 4))
         self.assertEqual(ax.get_xlim()[0], 1704067200.0)
         ax.annotate("x", xy=(t[30], 30), xytext=(t[10], 50), arrowprops={})
-        labels = [l.label for l in ax._ax.lines() if l.label]
-        self.assertIn("night", labels)  # in the legend, as matplotlib
-        self.assertIn("start", labels)
+        self.assertTrue(span.in_legend and ref.in_legend)  # in the legend, as matplotlib
+        self.assertEqual(len(ax._ax.lines()), 3)  # line + fill_between (2), no stand-ins
         # Twin legend via handles, marker shapes, scatter sizes / colours, ragged hist.
         fig, a = plt.subplots()
         l1, = a.plot([0, 1], [0, 1], label="exp")
         b = a.twinx()
         lb, = b.plot([0, 1], [1, 0], "rv", label="sin", mfc="none")
         a.legend(handles=[l1, lb])
-        self.assertIn("sin", [l.label for l in a._ax.lines()])
+        self.assertTrue(a._ax.legend_with_twin)
         self.assertEqual(lb.marker, "triangle_down")
         a.scatter([1, 2, 3], [1, 2, 3], s=[10, 100, 400], c=["red", "green", "blue"])
         a.hist([np.arange(10.0), np.arange(5.0)], bins=4)
@@ -1133,6 +1132,64 @@ class PlotterTests(unittest.TestCase):
         c = a.contour(x, x, np.outer(x, x), [-0.5, 0.5])
         with self.assertRaises(RuntimeError):
             plt.colorbar(c)
+        plt.close("all")
+
+    def test_round9_fixes(self):
+        import datetime as dt
+        import plotter.pyplot as plt
+        t = np.arange("2024-01-01", "2024-01-05", dtype="datetime64[D]")
+        for call in ("fill_between", "scatter", "bar"):
+            fig, ax = plt.subplots()
+            getattr(ax, call)(t, [1.0, 2.0, 3.0, 4.0])
+            self.assertTrue(ax._ax.x_time, call)  # dates stay dates
+        self.assertGreater(ax.get_xlim()[1] - ax.get_xlim()[0], 86400)  # day-wide bars
+        fig, ax = plt.subplots()
+        m = ax.axvline(dt.datetime(2024, 1, 2), label="ev")
+        ax.plot(t, [1, 2, 3, 4])
+        self.assertTrue(ax._ax.x_time)
+        m.remove()
+        self.assertEqual(len(ax._ax.lines()), 1)
+        f = plotter.figure()
+        f.x_time = True
+        f.plot([1.7e9, 1.7e9 + 3600], [1, 2])
+        self.assertTrue(f.x_time)
+        f.clear()
+        self.assertFalse(f.x_time)
+        # legend(labels) with an array; Series with text index; growing set_xdata/set_ydata.
+        fig, ax = plt.subplots()
+        ax.plot([0, 1], [0, 1])
+        ax.plot([0, 1], [1, 0])
+        ax.legend(np.array(["a", "b"]))
+        line, = ax.plot([0, 1], [0, 1])
+        line.set_xdata([0, 1, 2])
+        line.set_ydata([0, 1, 4])
+        self.assertEqual(list(line.get_ydata()), [0, 1, 4])
+        self.assertEqual(plt.style.available(), list(plt.style.available))
+        plt.rcParams["axes.prop_cycle"] = ["#ff0000", "#00ff00"]
+        cyc = plt.rcParams["axes.prop_cycle"]
+        self.assertEqual(cyc, ["#ff0000", "#00ff00"])
+        ax.scatter([1, 2], [1, 2], c=[[1, 0, 0]])
+        # imshow extent keeps origin='upper'; tick rotation; figure(num) not a title.
+        z = np.zeros((4, 6))
+        z[0, 0] = 1
+        im = ax.imshow(z, extent=[0, 6, 0, 4])
+        self.assertEqual(im.z[-1, 0], 1)  # row 0 is drawn at the top
+        ax.set_xticks([0, 1], ["a", "b"], rotation=45)
+        self.assertEqual(ax._ax.x_tick_rotation, 45)
+        g = plt.figure("temps")
+        self.assertEqual(g._fig.title, "")
+        self.assertIn("temps", plt.get_fignums())
+        cb = plt.colorbar(im)
+        cb.set_label("K")
+        txt = ax.text(0, 0, "a")
+        txt.set_text("b")
+        self.assertEqual(txt.get_text(), "b")
+        g.canvas.draw()
+        g.canvas.flush_events()
+        line, caps, bars = plt.errorbar([1, 2], [1, 2], yerr=0.1)
+        n, bins, patches = plt.hist([1, 2, 2, 3])
+        self.assertEqual(len(list(patches)), 1)
+        self.assertEqual(plt.gca().get_xscale(), "linear")
         plt.close("all")
 
     def test_round6_correctness(self):

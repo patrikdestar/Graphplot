@@ -206,7 +206,8 @@ QJsonObject markerToJson(const Marker& m)
             {"lineStyle", lineStyleName(m.lineStyle)},
             {"lineWidth", m.lineWidth},
             {"showValue", m.showValue},
-            {"spanEnd", m.span ? QJsonValue(jnum(m.spanEnd)) : QJsonValue()}};
+            {"spanEnd", m.span ? QJsonValue(jnum(m.spanEnd)) : QJsonValue()},
+            {"inLegend", m.inLegend}};
 }
 
 Marker markerFromJson(const QJsonObject& o)
@@ -222,6 +223,7 @@ Marker markerFromJson(const QJsonObject& o)
     m.showValue = o["showValue"].toBool(true);
     m.span = o.contains("spanEnd") && !o["spanEnd"].isNull();
     if (m.span) m.spanEnd = jdbl(o["spanEnd"]);
+    m.inLegend = o["inLegend"].toBool();
     return m;
 }
 
@@ -287,7 +289,8 @@ QJsonObject axesToJson(const AxesInfo& a)
             {"legend", a.legendVisible}, {"grid", a.gridVisible},  {"xReversed", a.xReversed},
             {"yReversed", a.yReversed}, {"diagonal", a.showDiagonal}, {"peakLabels", a.showPeakLabels},
             {"xLog", a.xLog},         {"yLog", a.yLog}, {"xTime", a.xTime},
-            {"legendLoc", a.legendLoc}};
+            {"legendLoc", a.legendLoc}, {"legendWithTwin", a.legendWithTwin}, {"xTickRotation", a.xTickRotation},
+            {"yTickRotation", a.yTickRotation}};
 }
 
 QJsonValue ticksToJson(bool custom, const QVector<double>& pos, const QStringList& labels)
@@ -323,6 +326,9 @@ AxesInfo axesFromJson(const QJsonObject& o)
     a.xLog = o["xLog"].toBool();
     a.xTime = o["xTime"].toBool();
     a.legendLoc = o["legendLoc"].toString();
+    a.legendWithTwin = o["legendWithTwin"].toBool();
+    a.xTickRotation = std::clamp(o["xTickRotation"].toDouble(), -90.0, 90.0);
+    a.yTickRotation = std::clamp(o["yTickRotation"].toDouble(), -90.0, 90.0);
     a.yLog = o["yLog"].toBool();
     ticksFromJson(o["xTicks"], &a.customXTicks, &a.xTicks, &a.xTickLabels);
     ticksFromJson(o["yTicks"], &a.customYTicks, &a.yTicks, &a.yTickLabels);

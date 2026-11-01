@@ -75,6 +75,43 @@ public:
     }
 };
 
+// Annotation arrow that starts at the edge of its label's box (plus a small
+// gap) instead of at the text anchor, so the shaft never crosses the text.
+class TextArrow : public QCPItemLine {
+public:
+    TextArrow(QCustomPlot* plot, const RichTextItem* text) : QCPItemLine(plot), m_text(text) {}
+
+protected:
+    void draw(QCPPainter* painter) override
+    {
+        QPointF a = start->pixelPosition();
+        const QPointF b = end->pixelPosition();
+        if (m_text) {
+            const QRectF box = m_text->boxRect().adjusted(-3, -3, 3, 3);
+            if (box.contains(b)) return;  // the target is under the text: nothing to point at
+            if (box.contains(a)) {
+                // Leave the box along the line: the smallest t at which a + t (b - a) exits.
+                const QPointF d = b - a;
+                double t = 1.0;
+                if (d.x() > 0) t = std::min(t, (box.right() - a.x()) / d.x());
+                if (d.x() < 0) t = std::min(t, (box.left() - a.x()) / d.x());
+                if (d.y() > 0) t = std::min(t, (box.bottom() - a.y()) / d.y());
+                if (d.y() < 0) t = std::min(t, (box.top() - a.y()) / d.y());
+                a += t * d;
+            }
+        }
+        if (QLineF(a, b).length() < 4) return;
+        painter->setPen(selected() ? selectedPen() : pen());
+        painter->setBrush(Qt::NoBrush);
+        painter->drawLine(QLineF(a, b));
+        const QCPVector2D dir = QCPVector2D(b) - QCPVector2D(a);
+        head().draw(painter, QCPVector2D(b), dir);
+    }
+
+private:
+    const RichTextItem* m_text;
+};
+
 // A regular polygon (or star) path; QCustomPlot draws custom paths scaled
 // by size / 6, so a radius of 3 gives about the size of the built-in symbols.
 QPainterPath polygonPath(int corners, double rotationDeg, double innerRatio = 0.0)
@@ -642,10 +679,9 @@ ObjectRef PlotRenderer::hitTestObject(const QPointF& px, double tol) const
         const double p = vert ? px.x() : px.y();
         const double a = vert ? m_x->coordToPixel(it->position) : m_y->coordToPixel(it->position);
         d = std::abs(p - a);
-        if (it->span) {  // anywhere on the band, but behind thin lines nearby (tol / 2)
+        if (it->span) {  // a band is grabbed at either edge (its inside stays free for zoom / pan)
             const double b = vert ? m_x->coordToPixel(it->spanEnd) : m_y->coordToPixel(it->spanEnd);
-            if (p >= std::min(a, b) && p <= std::max(a, b)) d = std::min(d, tol / 2);
-            else d = std::min(d, std::abs(p - b));
+            d = std::min(d, std::abs(p - b));
         }
         if (v.label && v.label->visible()) {
             const double dl = v.label->selectTest(px, false);
@@ -862,6 +898,8 @@ void PlotRenderer::applyDatasetAppearance(ObjectId id)
     // Filled symbols (open symbols like x/+ ignore the brush).
     const QColor edge = s.markerEdge.isValid() ? ink(s.markerEdge) : color;
     QPen edgePen(edge.alpha() == 0 ? QColor(Qt::transparent) : edge, 1.0);
+    edgePen.setCosmetic(true);  // custom symbol paths are drawn scaled; the outline stays 1 px
+    edgePen.setJoinStyle(Qt::RoundJoin);
     const QColor face = s.markerFace.isValid() ? ink(s.markerFace) : color;
     const QBrush faceBrush = face.alpha() == 0 ? QBrush(Qt::NoBrush) : QBrush(face);
     const QCPScatterStyle scatter = makeScatterStyle(s.scatter, edgePen, faceBrush, s.scatterSize);
@@ -905,6 +943,17 @@ void PlotRenderer::syncLegend()
         if (p && d.style.visible && d.style.inLegend && !d.name.isEmpty())
             m_legend->addItem(new RichLegendItem(m_legend, p, m_model->style().mathText));
     }
+    // Labelled reference lines / bands (axvline / axvspan with a label).
+    for (const auto& mk : m_model->markers())
+        if (QCPGraph* g = m_markers.value(mk.id).legendSample)
+            m_legend->addItem(new RichLegendItem(m_legend, g, m_model->style().mathText));
+    // twinx: the host's legend can list the twin's lines too (one legend).
+    if (m_twin && m_model->axesInfo().legendWithTwin)
+        for (const auto& d : m_twin->m_model->datasets()) {
+            QCPAbstractPlottable* p = m_twin->m_plottables.value(d.id);
+            if (p && d.style.visible && d.style.inLegend && !d.name.isEmpty())
+                m_legend->addItem(new RichLegendItem(m_legend, p, m_model->style().mathText));
+        }
     for (const auto& m : m_model->matrices()) {
         const MatrixVisual v = m_matrices.value(m.id);
         // Images without contours have no legend entry (as in matplotlib); the
@@ -914,6 +963,8 @@ void PlotRenderer::syncLegend()
     }
     m_legend->setVisible(m_model->axesInfo().legendVisible &&
                                m_legend->itemCount() > 0);
+    // The host lists this panel's lines: keep it current.
+    if (m_twinHost && m_twinHost->m_model->axesInfo().legendWithTwin) m_twinHost->syncLegend();
 }
 
 // ---- 2D data ---------------------------------------------------------------------------
@@ -1152,6 +1203,10 @@ void PlotRenderer::onMarkerRemoved(ObjectId id)
     if (v.line) m_plot->removeItem(v.line);
     if (v.label) m_plot->removeItem(v.label);
     if (v.band) m_plot->removeItem(v.band);
+    if (v.legendSample) {
+        m_plot->removePlottable(v.legendSample);
+        syncLegend();
+    }
     if (m_highlight.kind == ObjectKind::Marker && m_highlight.id == id) m_highlight = {};
     replotObjectLayers();
 }
@@ -1193,7 +1248,7 @@ void PlotRenderer::applyMarker(ObjectId id)
         v.label->setPositionAlignment(Qt::AlignBottom | Qt::AlignLeft);
     }
 
-    QString text = m->label;
+    QString text = m->inLegend ? QString() : m->label;
     if (m->showValue) {
         const QString value = (m->orientation == Orientation::Vertical ? "x = " : "y = ") +
                               fmt(m->position);
@@ -1238,6 +1293,29 @@ void PlotRenderer::applyMarker(ObjectId id)
         mv.band->setPen(hl ? QPen(kHighlight, 1, Qt::DashLine) : QPen(Qt::NoPen));
         mv.band->setVisible(m_panelVisible);
     }
+    // Legend entry: an empty graph (renderer-only, never data) with the look.
+    const bool wantSample = m->inLegend && !m->label.isEmpty();
+    if (wantSample && !mv.legendSample) {
+        mv.legendSample = new QCPGraph(m_x, m_y);
+        mv.legendSample->setSelectable(QCP::stNone);
+        mv.legendSample->removeFromLegend();
+    } else if (!wantSample && mv.legendSample) {
+        m_plot->removePlottable(mv.legendSample);
+        mv.legendSample = nullptr;
+    }
+    if (mv.legendSample) {
+        mv.legendSample->setName(m->label);
+        if (m->span) {
+            QColor fill = ink(m->color);
+            if (fill.alpha() == 255) fill.setAlphaF(0.25);
+            mv.legendSample->setPen(QPen(fill, 6));  // a thick swatch of the band colour
+        } else {
+            QPen p(ink(m->color), m->lineWidth, toPenStyle(m->lineStyle));
+            if (m->lineStyle == LineStyle::None) p.setStyle(Qt::SolidLine);
+            mv.legendSample->setPen(p);
+        }
+    }
+    syncLegend();
 }
 
 // ---- annotations -------------------------------------------------------------------------
@@ -1288,7 +1366,7 @@ void PlotRenderer::applyAnnotation(ObjectId id)
     // Arrow from the text anchor to the annotated point.
     QCPItemLine* arrow = m_annotationArrows.value(id);
     if (a->arrow && !arrow) {
-        arrow = new QCPItemLine(m_plot);
+        arrow = new TextArrow(m_plot, t);
         bindItem(arrow);
         arrow->setLayer(m_objectLayer);
         arrow->setSelectable(false);
@@ -1592,6 +1670,8 @@ void PlotRenderer::applyAxesInfo()
     }
     // An axis switched back from log to linear gets the style's format again.
     for (QCPAxis* a : {m_x, m_y}) applyNumberFormat(a, st);
+    m_x->setTickLabelRotation(-info.xTickRotation);  // QCustomPlot turns clockwise
+    m_y->setTickLabelRotation(-info.yTickRotation);
     m_x->setRangeReversed(info.xReversed);
     m_x2->setRangeReversed(info.xReversed);
     m_y->setRangeReversed(info.yReversed);

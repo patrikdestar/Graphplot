@@ -360,6 +360,17 @@ bool PlotModel::dataBounds(double& xmin, double& xmax, double& ymin, double& yma
             const double hx = m.nx > 1 ? (x1 - x0) / (m.nx - 1) / 2 : 0.5;
             const double hy = m.ny > 1 ? (y1 - y0) / (m.ny - 1) / 2 : 0.5;
             x0 -= hx, x1 += hx, y0 -= hy, y1 += hy;
+            // Edges such as 0 or 5 come out as 3e-18 / 4.9999999999 after the
+            // half-cell arithmetic; snap them so ticks at the edges stay.
+            auto snap = [](double& a, double& b) {
+                const double span = b - a;
+                if (!(span > 0) || !std::isfinite(span)) return;
+                const double q = std::pow(10.0, std::floor(std::log10(span)) - 9);
+                a = std::round(a / q) * q;
+                b = std::round(b / q) * q;
+            };
+            snap(x0, x1);
+            snap(y0, y1);
         }
         // On logarithmic axes only the positive part of the extent counts.
         if (xPositive) x0 = std::max(x0, x1 * 1e-6);

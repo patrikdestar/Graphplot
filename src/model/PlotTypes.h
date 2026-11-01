@@ -114,6 +114,9 @@ struct Marker {
     // panel, filled with the colour (its alpha; opaque colours get 25 %).
     bool span = false;
     double spanEnd = 0.0;
+    // The label goes into the legend (with a line / band sample) instead of
+    // a tag on the plot (pyplot's axvline(label=...)).
+    bool inLegend = false;
     bool operator==(const Marker&) const = default;
 };
 
@@ -166,6 +169,7 @@ struct AxesInfo {
     QString yLabel;
     bool legendVisible = true;
     QString legendLoc;          // e.g. "upper left"; empty = the style's legend.loc
+    bool legendWithTwin = false;  // the legend also lists the twin panel's lines (twinx)
     bool gridVisible = true;
     bool xReversed = false;     // high values on the left (NMR ppm convention)
     bool yReversed = false;     // high values at the bottom
@@ -175,6 +179,8 @@ struct AxesInfo {
     bool yLog = false;
     // x values are Unix times (seconds since 1970, UTC): date / time tick labels.
     bool xTime = false;
+    // Tick label rotation in degrees (counter-clockwise, as matplotlib).
+    double xTickRotation = 0.0, yTickRotation = 0.0;
     // Custom ticks: positions (and optional text labels; empty = the numbers).
     // customXTicks = false: automatic ticks; true with no positions: no ticks.
     bool customXTicks = false, customYTicks = false;

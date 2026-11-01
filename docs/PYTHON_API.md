@@ -45,7 +45,7 @@ File paths may be strings with `~` or `pathlib.Path` objects.
 | `contour(z, x=None, y=None, *, label, levels, factor, base=None, color, negative_color, negative=True, image=False, linewidth)` | `Contour` |
 | `image(z, x=None, y=None, *, cmap='viridis', colorbar=True, vmin=None, vmax=None, label=None)` | `Contour` drawn as a colour-mapped image only (heat map) |
 | `open_bruker(path)` | `Contour` (Bruker processed 2D spectrum, ppm axes) |
-| `marker(position, orientation='v', *, color, label='', style='--', width=1.5, show_value=True, span_to=None)` | `Marker` (with `span_to`: a translucent band from `position` to `span_to`) |
+| `marker(position, orientation='v', *, color, label='', style='--', width=1.5, show_value=True, span_to=None, legend=False)` | `Marker` (with `span_to`: a translucent band from `position` to `span_to`; `legend=True`: the label goes into the legend instead of onto the plot) |
 | `vline(x, **kw)`, `hline(y, **kw)` | `Marker` |
 | `annotate(text, x, y, *, color=None, fontsize=None, ha='left', va='bottom', arrow_to=None, coords='data')` | `Annotation` (unset colour/size follow the style; `coords='axes'`: x, y are fractions of the axes box and stay put when the view changes) |
 | `lines()`, `contours()`, `markers()`, `annotations()` | lists of handles |
@@ -143,6 +143,9 @@ How `pick_peaks` works:
 | `x_reversed`, `y_reversed` | high values on the left / bottom (set automatically by `open_bruker`) |
 | `x_log`, `y_log` | logarithmic axes |
 | `x_time` | x values are Unix times (UTC): date / time tick labels (set automatically for datetime x data) |
+| `x_tick_rotation`, `y_tick_rotation` | tick label rotation in degrees (counter-clockwise, -90..90) |
+| `legend_with_twin` | the legend also lists the twinx panel's lines |
+| `window_title` | title of the window only (not drawn) |
 | `legend_loc` | legend position of this panel (`'upper left'`, …); `None` = the style's `legend.loc` |
 | `diagonal` | dashed y = x line |
 
@@ -325,7 +328,7 @@ import plotter.pyplot as plt
 | `figure`, `subplots` (incl. `gridspec_kw` height ratios / hspace), `subplot(211)`, `fig.add_subplot`, `clf`, `cla`, `suptitle`, `get_fignums`, `ion`/`ioff`/`draw` (no-ops), `fig.set_size_inches`, `fig.legend`, `gcf`, `gca`, `sca`, `close` (figure, number, name or `'all'`), `show`, `pause`, `savefig(dpi=, format=)` to a path (no extension: `.png`) or a binary file object; `.png`, `.jpg`, `.svg`, `.pdf` | non-uniform `pcolormesh` grids (a clear error) |
 | `plot` with format strings (`'r--o'`, `'C1--'`, several x/y/fmt groups), `step`, `bar` (categories, colour lists, `yerr`), `barh` (categories), `semilogx`/`semilogy`/`loglog`, `axis([...])`, `hlines`/`vlines`, `axvspan`/`axhspan` (bands that always cover the full height / width), `fill_betweenx`, `scatter` (`c=` values + `cmap`, colour names or RGBA rows per point; `s=` per-point areas; `edgecolors=`), `errorbar(fmt=)`, `hist` (one or several datasets; `step`, `stepfilled`/`bar`, `errorbar`, `log=True`), `stairs`; datetime x values (`datetime64`, `datetime`, `date`, pandas timestamps, a pandas Series' index) get date tick labels and work in every call (`axvline`, `axvspan`, `fill_between`, `bar`, `xlim`, `text`, `annotate`, …); markers `o s ^ v < > d D p h * . x +`, `mfc`/`mec` (incl. `'none'`); `Line` handles have `set_data`/`set_xdata`/`set_ydata`/`get_*`/`set_color`/`set_label`/… for animation code | polar and 3D axes |
 | `fill_between` (incl. `where=`), `contour` (single colour: negative levels dashed), `contourf` (flat colour bands between round levels), `imshow` (origin, extent, cmap, vmin/vmax), `pcolormesh` (uniform grids, edges or centres), `colorbar(mappable, label=)`, `axhline`, `axvline`, `text` (incl. `transform=ax.transAxes`: stays in place when the view changes), `annotate` (`xycoords`/`textcoords` `'data'` or `'axes fraction'`; `'offset points'` puts the text at `xy`), `twinx` | RGB images |
-| `xlabel`, `ylabel`, `title`, `xlim`, `ylim`, `xscale`, `yscale`, `legend(labels, handles=, loc=name or code (per panel), frameon=, fontsize=)` (handles from a `twinx` axis are listed too; labelled `axhline`/`axvline`/`axvspan` appear), `ax.set(...)`, `xticks`/`yticks`, `minorticks_on`/`off` (figure-wide), `figtext`, `rcParams` (common keys map to style keys; named sizes like `'large'`, font lists, invalid values raise), `ax.set_xticks`/`set_xticklabels`, `grid`, `plt.style.use`; colours `'C0'`… (the n-th colour of the current cycle, i.e. plotter's palette unless `axes.prop_cycle` is set), `'tab:blue'`…, `'0.5'`, basic names (`'red'`, `'k'`, …) with matplotlib's exact values; `rcParams['axes.prop_cycle'] = cycler(color=[...])`; `plt.style.available` / `plt.style.use(name or list)` | other `rcParams` keys (kept, not used; see `plotter.style.set`) |
+| `xlabel`, `ylabel`, `title`, `xlim`, `ylim`, `xscale`, `yscale`, `legend(labels, handles=, loc=name or code (per panel), frameon=, fontsize=)`, tick label `rotation=` (`set_xticks`, `set_xticklabels`, `xticks`, `tick_params`), `get_xscale`, `get_legend`, `label_outer`, `fig.get_axes`, `fig.supxlabel`/`supylabel`, `plt.axes()`; `colorbar(...).set_label`, `text(...).set_text`/`set_position`, `errorbar` returns `(line, caps, bars)`, `hist` patches are iterable (handles from a `twinx` axis are listed too; labelled `axhline`/`axvline`/`axvspan` appear), `ax.set(...)`, `xticks`/`yticks`, `minorticks_on`/`off` (figure-wide), `figtext`, `rcParams` (common keys map to style keys; named sizes like `'large'`, font lists, invalid values raise), `ax.set_xticks`/`set_xticklabels`, `grid`, `plt.style.use`; colours `'C0'`… (the n-th colour of the current cycle, i.e. plotter's palette unless `axes.prop_cycle` is set), `'tab:blue'`…, `'0.5'`, basic names (`'red'`, `'k'`, …) with matplotlib's exact values; `rcParams['axes.prop_cycle'] = cycler(color=[...])`; `plt.style.available` / `plt.style.use(name or list)` | other `rcParams` keys (kept, not used; see `plotter.style.set`) |
 
 Axes methods use the matplotlib names (`set_xlabel`, `set_xlim`,
 `set_yscale`, `invert_xaxis`, `get_xlim`, `autoscale`, …). `suptitle` sets the
@@ -343,7 +346,14 @@ Differences from matplotlib:
 - Masked arrays are drawn with gaps; NaT / NaN values are gaps too.
 - `axhline` / `axvline` / `axvspan` always span the whole panel (`xmin`/`xmax`,
   `ymin`/`ymax` fractions are accepted and ignored).
+- `legend(handles=[...])` with lines of a `twinx` panel makes one legend
+  listing both panels' lines (host lines first); the order of `handles` is
+  not otherwise applied.
 - Accepted but without effect: `set_aspect`, `axis('equal')`, `set_title(loc=)`,
+  `suptitle(fontsize=)`, `set_xticks(..., minor=True)` (turns on automatic minor ticks),
+  `fig.canvas.draw()` / `flush_events()` (drawing is automatic), multi-dataset
+  `hist` side-by-side bars (drawn as overlapping steps), `ax.xaxis` formatters;
+  unknown math commands are shown as text,
   `fontweight`, `legend(ncols=)`, `savefig(transparent=)`, `rcParams['savefig.dpi']`,
   `bar(edgecolor=)`, `errorbar(ecolor=)`, `markevery`, `subplots_adjust`.
   `yscale('symlog')` is drawn linear. `contour(..., cmap=)` lines use the
@@ -398,7 +408,7 @@ removed object raises `KeyError`. Setting a property is an undoable edit.
 
 ### `Marker`
 
-- **Properties:** `position`, `label`, `color`, `style`, `width`, `span_end`
+- **Properties:** `position`, `label`, `color`, `style`, `width`, `in_legend`, `span_end`
   (other edge of a band, `None` for a plain line).
 - **Read-only:** `orientation` (`'v'` or `'h'`).
 - `remove()`.

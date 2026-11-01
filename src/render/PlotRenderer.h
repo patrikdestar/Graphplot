@@ -29,6 +29,7 @@ class QCPAxisRect;
 class QCPAxis;
 class QCPLegend;
 class QCPAxisTicker;
+class QCPGraph;
 class QCPAbstractItem;
 
 namespace gp {
@@ -154,6 +155,7 @@ private:
         QCPItemStraightLine* line = nullptr;
         RichTextItem* label = nullptr;
         QCPItemRect* band = nullptr;  // span markers (axvspan / axhspan)
+        QCPGraph* legendSample = nullptr;  // empty graph giving the legend entry its look
     };
     struct MatrixVisual {
         ContourPlottable* contour = nullptr;

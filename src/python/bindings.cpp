@@ -959,11 +959,13 @@ PYBIND11_MODULE(_plotter, mod)
                 const bool first = self->model()->datasets().empty() && self->model()->matrices().empty();
                 // The first data decides between date and number labels (as in
                 // matplotlib); one undo step together with the data.
-                const bool switchTime = first && xIsDate != self->model()->axesInfo().xTime;
+                // (Plain numbers never switch it off: they may be dates already
+                // converted to seconds; clear() resets the panel.)
+                const bool switchTime = first && xIsDate && !self->model()->axesInfo().xTime;
                 if (switchTime) {
                     ed->undoStack()->beginMacro("Plot");
                     AxesInfo info = self->model()->axesInfo();
-                    info.xTime = xIsDate;
+                    info.xTime = true;
                     ed->setAxesInfo(info);
                 }
                 const ObjectId nid = ed->addDataset(d);
@@ -1218,8 +1220,10 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
     fig.def(
         "marker",
         [](FigurePtr self, double pos, const std::string& orientation, const py::object& color,
-           const Text& label, const std::string& style, double width, bool showValue, const py::object& spanTo) {
+           const Text& label, const std::string& style, double width, bool showValue, const py::object& spanTo,
+           bool legend) {
             Marker m;
+            m.inLegend = legend;
             m.orientation = toOrientation(orientation);
             m.position = pos;
             m.label = QString::fromStdString(label);
@@ -1242,7 +1246,9 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         py::arg("position"), py::arg("orientation") = "v", py::kw_only(),
         py::arg("color") = py::none(), py::arg("label") = "", py::arg("style") = "--",
         py::arg("width") = 1.5, py::arg("show_value") = true, py::arg("span_to") = py::none(),
-        "Add a vertical ('v', at x = position) or horizontal ('h', at y = position) marker.");
+        py::arg("legend") = false,
+        "Add a vertical ('v', at x = position) or horizontal ('h', at y = position) marker.\n"
+        "legend=True lists the label in the legend instead of drawing it on the plot.");
 
     fig.def(
         "annotate",
@@ -1464,6 +1470,11 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
             while (!m->matrices().empty()) ed->removeMatrix(m->matrices().back().id);
             while (!m->datasets().empty()) ed->removeDataset(m->datasets().back().id);
             ed->clearRegion();
+            if (m->axesInfo().xTime) {  // a cleared panel starts with number labels again
+                AxesInfo info = m->axesInfo();
+                info.xTime = false;
+                ed->setAxesInfo(info);
+            }
             ed->undoStack()->endMacro();
         });
     }, "Remove all datasets, markers, annotations and the selection (undoable).");
@@ -1546,6 +1557,11 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
     auto [xg, xs] = axesProp(&AxesInfo::xLabel);
     auto [yg, ys] = axesProp(&AxesInfo::yLabel);
     fig.def_property("title", tg, ts);
+    fig.def_property(
+        "window_title",
+        [](FigurePtr self) { return inGui([&] { return self->w()->windowTitle().toStdString(); }); },
+        [](FigurePtr self, const Text& t) { inGui([&] { self->w()->setWindowTitle(QString::fromStdString(t)); }); },
+        "Title of the window only (not drawn on the plot).");
     fig.def_property("xlabel", xg, xs);
     fig.def_property(
         "suptitle",
@@ -1608,6 +1624,17 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         },
         py::arg("visible") = true);
     fig.def_property(
+        "legend_with_twin",
+        [](FigurePtr self) { return inGui([&] { return self->model()->axesInfo().legendWithTwin; }); },
+        [](FigurePtr self, bool on) {
+            inGui([&] {
+                AxesInfo a = self->model()->axesInfo();
+                a.legendWithTwin = on;
+                self->editor()->setAxesInfo(a);
+            });
+        },
+        "The legend also lists the lines of this panel's twinx panel (one legend for both).");
+    fig.def_property(
         "legend_loc",
         [](FigurePtr self) -> py::object {
             const QString loc = inGui([&] { return self->model()->axesInfo().legendLoc; });
@@ -1629,6 +1656,24 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         },
         "Legend position of this panel ('upper left', 'lower right', 'center', ...);\n"
         "None = the style's legend.loc.");
+    for (const char* axis : {"x", "y"}) {
+        const bool isX = axis[0] == 'x';
+        fig.def_property(
+            (std::string(axis) + "_tick_rotation").c_str(),
+            [isX](FigurePtr self) {
+                return inGui([&] { const AxesInfo& a = self->model()->axesInfo(); return isX ? a.xTickRotation : a.yTickRotation; });
+            },
+            [isX](FigurePtr self, double deg) {
+                if (!std::isfinite(deg)) throw py::value_error("rotation must be a number of degrees");
+                deg = std::clamp(std::remainder(deg, 360.0), -90.0, 90.0);
+                inGui([&] {
+                    AxesInfo a = self->model()->axesInfo();
+                    (isX ? a.xTickRotation : a.yTickRotation) = deg;
+                    self->editor()->setAxesInfo(a);
+                });
+            },
+            "Tick label rotation in degrees (counter-clockwise, -90..90).");
+    }
     auto axesFlag = [](bool AxesInfo::*field) {
         return std::make_pair(
             [field](FigurePtr self) { return inGui([&] { return self->model()->axesInfo().*field; }); },
@@ -2340,6 +2385,10 @@ Remove a callback with off(event, callback).)doc");
         .def_property("position",
                       [](MarkerH& h) { return inGui([&] { return h.get().position; }); },
                       [](MarkerH& h, double v) { h.edit([&](Marker& m) { m.position = v; }); })
+        .def_property("in_legend",
+                      [](MarkerH& h) { return inGui([&] { return h.get().inLegend; }); },
+                      [](MarkerH& h, bool v) { h.edit([&](Marker& m) { m.inLegend = v; }); },
+                      "List the label in the legend instead of drawing it on the plot.")
         .def_property(
             "span_end",
             [](MarkerH& h) -> py::object {
@@ -2477,26 +2526,10 @@ Remove a callback with off(event, callback).)doc");
             [](AnnotationH& h) { return std::string(inGui([&] { return h.get().axesCoords; }) ? "axes" : "data"); },
             [](AnnotationH& h, const std::string& v) {
                 if (v != "data" && v != "axes") throw py::value_error("coords must be 'data' or 'axes'");
-                h.edit([&](Annotation& a) {
-                    const bool axes = v == "axes";
-                    if (axes == a.axesCoords) return;
-                    // Keep the text where it is on screen: convert the position.
-                    PlotRenderer* r = h.fig->w()->axes(h.ax).renderer;
-                    const QRect box = r->axisRect()->rect();
-                    QCPAxis* xa = r->xAxis();
-                    QCPAxis* ya = r->yAxis();
-                    if (axes) {
-                        a.x = (xa->coordToPixel(a.x) - box.left()) / std::max(1, box.width());
-                        a.y = (box.bottom() - ya->coordToPixel(a.y)) / std::max(1, box.height());
-                    } else {
-                        a.x = xa->pixelToCoord(box.left() + a.x * box.width());
-                        a.y = ya->pixelToCoord(box.bottom() - a.y * box.height());
-                    }
-                    a.axesCoords = axes;
-                });
+                h.edit([&](Annotation& a) { a.axesCoords = v == "axes"; });
             },
             "'data': the position is in data coordinates; 'axes': fractions of the axes box\n"
-            "(switching converts the position, so the text stays in place).")
+            "(switching re-reads the same numbers in the other coordinates).")
         .def_property(
             "arrow_to",
             [](AnnotationH& h) -> py::object {
