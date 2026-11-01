@@ -136,9 +136,15 @@ public:
     // Takes effect in the current replot (it is called from afterLayout).
     void setMaxTicksY(int n);
     void startFresh();
+    void updateAnnotationVisibility();
+    bool legendFits() const;
+    bool m_legendWanted = false;
     const QList<PlotRenderer*>& sharedX() const { return m_shareX; }
     const QList<PlotRenderer*>& sharedY() const { return m_shareY; }
-    void fitTickCounts();
+    bool fitTickCounts();
+    // One round of layout fitting after a layout pass (tick counts, end-label
+    // margins; a twin: frame and right-axis width). True if anything changed.
+    bool settle();
     bool fitEndLabels();
     bool applyEndMargins(int l, int t, int r, int b);
     // The view-fitting state (follow flags, home, current view), saved and

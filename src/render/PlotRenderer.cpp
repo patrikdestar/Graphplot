@@ -535,10 +535,12 @@ PlotRenderer::PlotRenderer(PlotModel* model, QCustomPlot* plot, QCPAxisRect* rec
     // linked panel) stops following the data.
     connect(m_x, qOverload<const QCPRange&>(&QCPAxis::rangeChanged), this, [this] {
         if (!m_autoscaling) m_followX = false;
+        updateAnnotationVisibility();
         emit viewChanged();
     });
     connect(m_y, qOverload<const QCPRange&>(&QCPAxis::rangeChanged), this, [this] {
         if (!m_autoscaling) m_followY = false;
+        updateAnnotationVisibility();
         emit viewChanged();
     });
 
@@ -551,6 +553,9 @@ PlotRenderer::PlotRenderer(PlotModel* model, QCustomPlot* plot, QCPAxisRect* rec
             fitTickCounts();
             if (!fitEndLabels()) break;
         }
+        // A legend taller than its panel (tiny timeline rows) would cover the
+        // neighbours: shown only when it fits.
+        if (m_legend->visible() != (m_legendWanted && legendFits())) m_legend->setVisible(m_legendWanted && legendFits());
         if (m_legendBest && !m_twinHost) placeLegendBest();
     });
 
@@ -583,6 +588,7 @@ void PlotRenderer::setPanelVisible(bool visible)
         QCPAbstractItem* it = m_plot->item(i);
         if (it->clipAxisRect() == m_rect) it->setVisible(visible);
     }
+    updateAnnotationVisibility();
     if (visible) {
         // Re-apply per-object visibility rules (empty labels, inactive region, ...).
         applyStyle();
@@ -1211,7 +1217,8 @@ void PlotRenderer::syncLegend()
     }
     // A twin whose lines the host lists shows no legend of its own (no duplicates).
     const bool listedByHost = m_twinHost && m_twinHost->m_model->axesInfo().legendWithTwin;
-    m_legend->setVisible(m_model->axesInfo().legendVisible && m_legend->itemCount() > 0 && !listedByHost);
+    m_legendWanted = m_model->axesInfo().legendVisible && m_legend->itemCount() > 0 && !listedByHost;
+    m_legend->setVisible(m_legendWanted && legendFits());
     // The host lists this panel's lines: keep it current.
     if (m_twinHost && m_twinHost->m_model->axesInfo().legendWithTwin) m_twinHost->syncLegend();
 }
@@ -1412,6 +1419,7 @@ void PlotRenderer::updateMatrixImage(ObjectId id)
     const int f = m->style.filled && m->nx > 1 && m->ny > 1 ? std::clamp(600 / std::max(1, maxN), 1, 8) : 1;
     const int nx = (m->nx - 1) * f + 1, ny = (m->ny - 1) * f + 1;
     v.refined = m->style.filled;
+    const bool flipX = m->x0 > m->x1, flipY = m->y0 > m->y1;
     auto* data = new QCPColorMapData(nx, ny, QCPRange(m->x0, m->x1), QCPRange(m->y0, m->y1));
     double lo = std::numeric_limits<double>::infinity(), hi = -lo;
     auto at = [m](int ix, int iy) { return m->z[qsizetype(iy) * m->nx + ix]; };
@@ -1426,7 +1434,9 @@ void PlotRenderer::updateMatrixImage(ObjectId id)
                 z = (1 - ty) * ((1 - tx) * at(x0, y0) + tx * at(x0 + 1, y0)) +
                     ty * ((1 - tx) * at(x0, y0 + 1) + tx * at(x0 + 1, y0 + 1));
             }
-            data->setCell(ix, iy, z);
+            // QCPColorMapData keeps its ranges ascending: a grid given with
+            // descending coordinates (ppm, x = 10..0) is stored mirrored.
+            data->setCell(flipX ? nx - 1 - ix : ix, flipY ? ny - 1 - iy : iy, z);
             if (std::isfinite(z)) lo = std::min(lo, z), hi = std::max(hi, z);
         }
     if (!(hi >= lo)) lo = hi = 0;  // no finite value
@@ -1616,9 +1626,10 @@ void PlotRenderer::applyAnnotation(ObjectId id)
     const double anchorY = a->axesCoords ? 1.0 - a->y : a->y;  // the ratio counts from the top
     t->position->setType(anchorType);
     t->position->setCoords(a->x, anchorY);
-    // Text placed relative to the axes box may sit outside it (panel letters,
-    // notes above the frame); text at data points is clipped with the data.
-    t->setClipToAxisRect(!a->axesCoords);
+    // Text is never cut at the frame (as matplotlib): a label may sit beside
+    // or above the data. It is hidden instead when the point it is about
+    // (the arrow target, else its anchor) leaves the view: annotationVisibility().
+    t->setClipToAxisRect(false);
     // Unset size/colour follow the style (annotation.size / annotation.color).
     t->setText(a->text.isEmpty() ? QStringLiteral(" ") : a->text,
                font(a->fontSize > 0 ? a->fontSize : st.annotationSize), st.mathText);
@@ -1646,9 +1657,32 @@ void PlotRenderer::applyAnnotation(ObjectId id)
         QPen pen(color, 1.2);
         pen.setCosmetic(true);
         arrow->setPen(pen);
-        arrow->setVisible(m_panelVisible);
+        arrow->setClipToAxisRect(false);
     }
     t->setPen(hl ? QPen(kHighlight, 1, Qt::DashLine) : QPen(Qt::NoPen));
+    updateAnnotationVisibility();
+}
+
+bool PlotRenderer::legendFits() const
+{
+    const int h = m_rect->rect().height();
+    // Room for the legend plus its inset margins above and below.
+    return h <= 0 || m_legend->minimumOuterSizeHint().height() + 20 <= h;
+}
+
+void PlotRenderer::updateAnnotationVisibility()
+{
+    for (auto it = m_annotations.begin(); it != m_annotations.end(); ++it) {
+        const Annotation* a = m_model->annotation(it.key());
+        if (!a) continue;
+        bool show = m_panelVisible;
+        if (show && !a->axesCoords) {
+            const double px = a->arrow ? a->arrowX : a->x, py = a->arrow ? a->arrowY : a->y;
+            show = m_x->range().contains(px) && m_y->range().contains(py);
+        }
+        it.value()->setVisible(show);
+        if (QCPItemLine* arrow = m_annotationArrows.value(it.key())) arrow->setVisible(show);
+    }
 }
 
 // ---- region / axes ---------------------------------------------------------------------------
@@ -2095,13 +2129,26 @@ void PlotRenderer::setMaxTicksY(int n)
     m_rect->update(QCPLayoutElement::upPreparation);
 }
 
-void PlotRenderer::fitTickCounts()
+bool PlotRenderer::settle()
+{
+    if (m_twinHost) {
+        m_rect->setOuterRect(m_twinHost->m_rect->rect());
+        m_rect->update(QCPLayoutElement::upPreparation);
+        m_rect->update(QCPLayoutElement::upLayout);
+        return measureTwinMargin();
+    }
+    const bool ticks = fitTickCounts();
+    const bool margins = fitEndLabels();
+    return ticks || margins;
+}
+
+bool PlotRenderer::fitTickCounts()
 {
     // Fewer ticks where labels would run together: by label width on x, by
     // panel height on y (small ratio panels). Called after each layout pass;
     // repeats within the pass because fewer ticks can mean wider labels.
     const QRect ar = m_rect->rect();
-    if (ar.width() < 20 || ar.height() < 20) return;
+    if (ar.width() < 20 || ar.height() < 20) return false;
     const Style st = displayStyle();
     // Any automatic ticker (numbers, dates, log); not fixed or text ticks.
     auto adjustable = [](QCPAxis* axis) -> QSharedPointer<QCPAxisTicker> {
@@ -2161,6 +2208,7 @@ void PlotRenderer::fitTickCounts()
         }
     }
     if (changed) m_rect->update(QCPLayoutElement::upPreparation);
+    return changed;
 }
 
 bool PlotRenderer::fitEndLabels()

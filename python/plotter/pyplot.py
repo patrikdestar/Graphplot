@@ -591,6 +591,11 @@ class PltAxes:
                 self._ax.y_reversed = True  # row 0 at the top, y grows downwards
         else:
             left, right, bottom, top = (float(v) for v in extent)
+            # A descending extent shows the axis that way round (as matplotlib).
+            if left > right:
+                self._ax.x_reversed = True
+            if bottom > top:
+                self._ax.y_reversed = True
             dx, dy = (right - left) / nx, (top - bottom) / ny
             x = (left + dx / 2, right - dx / 2)
             y = (bottom + dy / 2, top - dy / 2)
@@ -855,8 +860,9 @@ class PltAxes:
                            label=_legend_label(label))
         if yerr is not None:  # bar_label puts values beyond the error bars
             e = _np.asarray(yerr, dtype=float)
-            hi = e[1] if e.ndim == 2 else e
-            object.__setattr__(group, "_errors", list(_np.broadcast_to(hi, x.shape)))
+            lo, hi = (e[0], e[1]) if e.ndim == 2 else (e, e)
+            # (lower, upper) per bar: a negative bar's label goes past the lower error.
+            object.__setattr__(group, "_errors", list(zip(_np.broadcast_to(lo, x.shape), _np.broadcast_to(hi, x.shape))))
         return group
 
     def barh(self, y, width, height=0.8, left=0.0, color=None, label=None, tick_label=None, xerr=None,
@@ -893,8 +899,9 @@ class PltAxes:
                            label=_legend_label(label), horizontal=True)
         if xerr is not None:
             e = _np.asarray(xerr, dtype=float)
-            hi = e[1] if e.ndim == 2 else e
-            object.__setattr__(group, "_errors", list(_np.broadcast_to(hi, y.shape)))
+            lo, hi = (e[0], e[1]) if e.ndim == 2 else (e, e)
+            # (lower, upper) per bar: a negative bar's label goes past the lower error.
+            object.__setattr__(group, "_errors", list(zip(_np.broadcast_to(lo, y.shape), _np.broadcast_to(hi, y.shape))))
         return group
 
     def step(self, x, y, *args, where="pre", **kw):
@@ -1186,8 +1193,9 @@ class PltAxes:
         for i, r in enumerate(container):
             v = r.get_width() if horizontal else r.get_height()
             text = labels[i] if labels is not None else (fmt % v if "%" in fmt else fmt.format(v))
-            err = float(errors[i]) if errors is not None and i < len(errors) else 0.0
-            end = v + (err if v >= 0 else -err)  # beyond the error bar, as matplotlib
+            lo_err, hi_err = (float(errors[i][0]), float(errors[i][1])) if errors is not None and i < len(errors) \
+                else (0.0, 0.0)
+            end = v + hi_err if v >= 0 else v - lo_err  # beyond the error bar, as matplotlib
             if horizontal:  # at the end of the bar, vertically centred
                 out.append(self.text(r.get_x() + end, r.get_y() + r.get_height() / 2, " " + text if v >= 0 else text + " ",
                                      ha="left" if v >= 0 else "right", va="center", **style))

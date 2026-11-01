@@ -720,6 +720,9 @@ int FigureWindow::createTwinPanel(int host)
     m_axes.push_back(ax);
     m_controller->addTarget(renderer, editor);
     wireAxes(m_axes.back());
+    // The grid's settling step must stay the last afterLayout handler.
+    disconnect(m_plot, &QCustomPlot::afterLayout, this, &FigureWindow::correctGridRatios);
+    connect(m_plot, &QCustomPlot::afterLayout, this, &FigureWindow::correctGridRatios);
     emit panelCreated(int(m_axes.size()) - 1);
     m_plot->replot();
     return int(m_axes.size()) - 1;
@@ -1261,19 +1264,26 @@ void FigureWindow::closeEvent(QCloseEvent* e)
 
 void FigureWindow::correctGridRatios()
 {
-    // QCustomPlot shares space by the cells' outer size (tick and axis labels
-    // included); the ratios are meant for the frames. Each pass sets the
-    // stretch factors to frame target + that row's / column's label space.
+    // Runs after the panels' own afterLayout handlers. Ratios (QCustomPlot
+    // shares space by whole cells; the ratios are meant for the frames) and
+    // each panel's fitting (tick counts, end-label margins, twin margins)
+    // depend on each other: repeat until nothing changes, so the first
+    // export already equals the next ones.
     if (!m_grid) return;
     const GridSpec& g = m_gridSpec;
     const bool rowsOn = g.heightRatios.size() == g.rows && g.rows > 1;
     const bool colsOn = g.widthRatios.size() == g.cols && g.cols > 1;
-    if (!rowsOn && !colsOn) return;
     auto rectAt = [this](int r, int c) -> QCPAxisRect* {
         if (r >= m_grid->rowCount() || c >= m_grid->columnCount()) return nullptr;
         return qobject_cast<QCPAxisRect*>(m_grid->element(r, c));
     };
-    for (int pass = 0; pass < 2; ++pass) {
+    auto relayout = [this] {
+        QCPLayoutGrid* layout = m_plot->plotLayout();
+        layout->update(QCPLayoutElement::upPreparation);
+        layout->update(QCPLayoutElement::upMargins);
+        layout->update(QCPLayoutElement::upLayout);
+    };
+    for (int pass = 0; pass < 4; ++pass) {
         bool changed = false;
         auto fix = [&](bool rows, const QList<double>& ratios, int n) {
             QList<double> inner, margin;
@@ -1302,11 +1312,15 @@ void FigureWindow::correctGridRatios()
         };
         if (rowsOn) fix(true, g.heightRatios, g.rows);
         if (colsOn) fix(false, g.widthRatios, g.cols);
-        if (!changed) break;
-        QCPLayoutGrid* layout = m_plot->plotLayout();
-        layout->update(QCPLayoutElement::upPreparation);
-        layout->update(QCPLayoutElement::upMargins);
-        layout->update(QCPLayoutElement::upLayout);
+        if (changed) relayout();
+        // Panels first, then their twins (which follow the host's frame).
+        bool fitted = false;
+        for (const Axes& a : m_axes)
+            if (a.twinOf < 0 && a.renderer->panelVisible()) fitted |= a.renderer->settle();
+        for (const Axes& a : m_axes)
+            if (a.twinOf >= 0 && a.renderer->panelVisible()) fitted |= a.renderer->settle();
+        if (fitted) relayout();
+        if (!changed && !fitted) break;
     }
 }
 

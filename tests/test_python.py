@@ -1432,6 +1432,33 @@ class PlotterTests(unittest.TestCase):
         finally:
             plt.rcParams["font.size"] = size
 
+    def test_round18_fixes(self):
+        import hashlib
+        import io
+        import plotter.pyplot as plt
+        # Repeated exports are identical (grid ratios, twins, shared grids).
+        fig, ax = plt.subplots(1, 2, gridspec_kw=dict(width_ratios=[1, 3]))
+        ax[0].plot([1, 2], [1, 2])
+        ax[0].twinx().plot([1, 2], [1e6, 2e6])
+        ax[1].plot([1, 2], [3, 4])
+        hashes = set()
+        for _ in range(3):
+            buf = io.BytesIO()
+            fig.savefig(buf)
+            hashes.add(hashlib.md5(buf.getvalue()).hexdigest())
+        self.assertEqual(len(hashes), 1)
+        plt.close("all")
+        # Descending image coordinates are not mirrored; imshow shows them reversed.
+        fig, ax = plt.subplots()
+        z = np.zeros((5, 10))
+        ax.imshow(z, extent=[10, 0, 0, 5], origin="lower")
+        self.assertEqual(ax.get_xlim(), (10.0, 0.0))
+        # bar_label of a negative bar goes past its lower error.
+        b = ax.barh([1, 2], [3, -2], xerr=[[0.1, 0.2], [0.5, 1.0]])
+        labels = ax.bar_label(b)
+        self.assertAlmostEqual(labels[1].position[0], -2.2)
+        plt.close("all")
+
     def test_round6_correctness(self):
         import plotter.pyplot as plt
         f = self.fig
