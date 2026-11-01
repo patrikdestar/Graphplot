@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 // Undoable editing commands (QUndoCommand) operating on a PlotModel.
 //
 // Each command stores only the state it needs to revert itself (e.g. one

@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 // PlotModel: the single source of truth for a figure's content.
 //
 // It owns datasets, markers, annotations, the X-region selection and axis

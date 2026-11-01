@@ -55,7 +55,12 @@ annotate, read the results back, process, and re-plot.
 
 **Interaction**
 - Wheel and rectangle zoom, pan, autoscale, and reset to the home view.
-- X-region selection, markers and text annotations.
+- X-region selection, markers and text annotations. The selected region
+  shows **statistics** of every line (mean ± sd, min/max and where, RMS,
+  integral).
+- Typed axis limits, and **Previous / Next view** history (Alt+Left/Right).
+- Drop data files, Bruker folders or `.gpstyle` files onto a window to open
+  them; copy the figure to the clipboard with Ctrl+Shift+C.
 - Everything is draggable and editable, with undo/redo for every edit
   (mouse, panel or Python).
 
@@ -231,6 +236,7 @@ NumPy, pins them, and adds a derived jerk signal.
 | Move the time window | drag the shaded band in the navigator; drag its edges to resize; wheel to zoom; click to jump; double-click for everything |
 | Zoom / pan time | wheel or drag in any row (zooms time only; Shift+wheel zooms that row's Y) |
 | Time marker | Ctrl+click in a row, or `M` at the cursor; drag to move; right-click to rename/delete; double-click a marker in the Timeline tab to jump to it |
+| Step through markers | `[` / `]` centre the window on the previous / next marker; the navigator label shows Δt from the nearest marker |
 | Rearrange | Timeline tab: drag rows; drag a signal onto another row; tick to hide; edit names and heights; *New row* |
 | Options | Timeline tab / menu: navigator signal, auto-fit Y, clock time |
 
@@ -263,6 +269,8 @@ plt.savefig("plot.pdf")
 | Edit an object | double-click it, or use the Properties / Peaks tabs |
 | **Scroll contour levels** | **Alt + wheel**, or the plain wheel with **Levels** (`L`) on; `*` / `/` = ÷2 / ×2 |
 | Autoscale / reset view | `A` (or double-click the plot) / `Home` |
+| Previous / next view | `Alt+Left` / `Alt+Right` |
+| Copy figure | `Ctrl+Shift+C` (image on the clipboard) |
 | Delete / undo / redo | `Del` / `Ctrl+Z` / `Ctrl+Shift+Z` |
 | Styles | *Style* menu: built-ins, *Edit style…*, load/save `.gpstyle`, *Use as my default style* |
 

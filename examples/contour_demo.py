@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 """2D data: contour plot with scrollable levels (TopSpin-style).
 
 In the window:  Alt + mouse wheel  -> scroll contour levels

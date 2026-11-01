@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 #include "FigureWindow.h"
 
 #include "Icons.h"
@@ -346,6 +347,10 @@ Timeline* FigureWindow::timeline()
         m_timeline->addPin(m_timeline->cursorTime().value_or(0.5 * (a + b)));
     });
     pin->setShortcut(QKeySequence("M"));
+    QAction* prevPin = menu->addAction("Previous time marker", this, [this] { m_timeline->stepPin(-1); });
+    prevPin->setShortcut(QKeySequence("["));
+    QAction* nextPin = menu->addAction("Next time marker", this, [this] { m_timeline->stepPin(+1); });
+    nextPin->setShortcut(QKeySequence("]"));
     QAction* all = menu->addAction("Show whole recording", m_timeline, &Timeline::showAll);
     all->setShortcut(QKeySequence("Shift+Home"));
     QAction* fit = menu->addAction("Auto-fit Y to window");

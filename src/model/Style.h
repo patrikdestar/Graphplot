@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 // Style: every visual setting of a figure, loadable from / savable to a
 // plain-text style file. Nothing about the look of a figure is hard-coded
 // in the renderer; it all comes from here.

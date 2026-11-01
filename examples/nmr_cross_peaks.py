@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 """2D NMR workflow: open a Bruker spectrum, find off-diagonal cross peaks,
 assign them and export the peak list.
 

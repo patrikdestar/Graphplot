@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 // Plain value types describing everything that can live on a plot.
 // These types depend only on QtCore/QtGui value classes (QString, QColor,
 // QVector) so the data model stays independent of widgets and rendering.

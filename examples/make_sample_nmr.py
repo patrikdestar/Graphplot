@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 """Write a synthetic 1H-1H COSY spectrum in Bruker TopSpin processed format.
 
     python examples/make_sample_nmr.py [output_dir]      (default: sample_nmr)

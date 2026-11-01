@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 """matplotlib.pyplot-like interface on top of plotter.
 
 Covers the commonly used part of pyplot so that many existing scripts work

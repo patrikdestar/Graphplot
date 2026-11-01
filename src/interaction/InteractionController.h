@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 // InteractionController: translates mouse/keyboard input on the plot widget
 // into view changes (zoom/pan) and editing requests.
 //

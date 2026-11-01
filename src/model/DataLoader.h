@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 // Reads simple column-oriented text files (CSV, TSV, whitespace separated).
 // The first column is X; each further column becomes one dataset. An
 // optional non-numeric first line supplies dataset names. Lines starting

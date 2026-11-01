@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 """Style control: every visual setting comes from a style, never from code.
 
 Global default (for figures created afterwards)::

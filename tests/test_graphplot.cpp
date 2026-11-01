@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 // Unit and interaction tests. Run headless with QT_QPA_PLATFORM=offscreen
 // (ctest sets this automatically).
 #include "commands/PlotEditor.h"
@@ -1319,6 +1320,21 @@ private slots:
         fwd->trigger();
         QCOMPARE(w->renderer()->viewRange(), (ViewRange{10, 20, 0, 5}));
         QCOMPARE(xMin->value(), 10.0);
+    }
+
+    void featureTimelinePinSteps()
+    {
+        auto f = makeTimeline();
+        f.tl->setWindow(0, 10);  // centre 5
+        QCOMPARE(f.tl->stepPin(+1), kInvalidId);  // no pins yet
+        const ObjectId p30 = f.tl->addPin(30);
+        const ObjectId p60 = f.tl->addPin(60);
+        QCOMPARE(f.tl->stepPin(+1), p30);
+        QCOMPARE(f.tl->window().first + 5, 30.0);
+        QCOMPARE(f.tl->stepPin(+1), p60);  // already centred on p30: go further
+        QCOMPARE(f.tl->stepPin(+1), kInvalidId);
+        QCOMPARE(f.tl->stepPin(-1), p30);
+        f.tl->setCursorTime(32);  // the readout includes the delta (smoke test)
     }
 
     void featureDropOpensFiles()

@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 // QCustomPlot plottable that draws contour lines of a 2D grid.
 //
 // QCustomPlot has a colour-map plottable but no contour plot, so this class

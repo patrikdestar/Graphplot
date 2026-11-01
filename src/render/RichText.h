@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 // Rich text for plot labels: a small LaTeX-like math subset rendered with
 // QTextDocument (vector output in SVG/PDF exports).
 //

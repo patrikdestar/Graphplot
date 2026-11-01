@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 // Draws all peaks (cross + label, optional leader line) in a single pass.
 // One QCustomPlot item per peak would be too slow for hundreds of peaks;
 // this layerable lives on the buffered "objects" layer, so dragging a peak

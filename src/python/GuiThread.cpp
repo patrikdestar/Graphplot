@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 #include "GuiThread.h"
 
 #include "model/Style.h"

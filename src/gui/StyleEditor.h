@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 // StyleEditor: dialog listing every style key with its value and
 // description. Values are edited in place; "Apply"/"OK" push one undoable
 // "Edit style" command. Invalid values are highlighted and not applied.

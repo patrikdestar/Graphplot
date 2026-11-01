@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 """Publication-style plot in the spirit of CERN/LHC experiment figures:
 stacked/filled histograms, data points with Poisson errors, an uncertainty
 band, a ratio panel and experiment labels - all appearance from the

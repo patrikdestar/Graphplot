@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 """The workflow from the project brief: plot, mark, select, process, re-plot.
 
     PYTHONPATH=build/python python examples/demo.py

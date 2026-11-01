@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 // PropertiesPanel: side panel listing datasets, markers, annotations and the
 // region selection, with editors for the selected object and the axes.
 // All edits go through PlotEditor, so they are undoable.

@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 """An ordinary matplotlib script, ported by changing one import line.
 
     PYTHONPATH=build/python python examples/matplotlib_port.py

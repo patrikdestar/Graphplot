@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 // pybind11 module "_plotter" (wrapped by the pure-Python package "plotter").
 //
 // Python objects:
@@ -1457,6 +1458,9 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
     });
     fig.def("_tl_remove_pin", [tl](FigurePtr self, ObjectId id) { inGui([&] { tl(self)->removePin(id); }); });
     fig.def("_tl_jump_to_pin", [tl](FigurePtr self, ObjectId id) { inGui([&] { tl(self)->jumpToPin(id); }); });
+    fig.def("_tl_step_pin", [tl](FigurePtr self, int direction) {
+        return inGui([&] { return tl(self)->stepPin(direction); });
+    });
 
     fig.def("_take_color", [](FigurePtr self) {
         return colorName(inGui([&] { return self->model()->takeNextDatasetColor(); }));

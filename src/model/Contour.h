@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 // Contour line extraction (marching squares) for regular 2D grids.
 //
 // Pure computation on value types - no rendering or GUI dependencies - so it

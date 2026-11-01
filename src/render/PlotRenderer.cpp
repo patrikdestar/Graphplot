@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 #include "PlotRenderer.h"
 
 #include "ContourPlottable.h"
@@ -11,6 +12,16 @@
 namespace gp {
 
 namespace {
+
+// Tick-label number format of a linear axis from the style's "formatter":
+// sci = 1.5x10^3 ("gbc"), plain = 1500 ("g"), auto = 1.5.10^3 only when needed.
+// Log axes keep their own "eb" (powers of ten) format.
+void applyNumberFormat(QCPAxis* axis, const Style& st)
+{
+    if (axis->scaleType() != QCPAxis::stLinear) return;
+    axis->setNumberFormat(st.formatter == "sci" ? "gbc" : st.formatter == "plain" ? "g" : "gbd");
+    axis->setNumberPrecision(st.formatter == "plain" ? 10 : 6);
+}
 
 const QColor kRegionFill(0x2a, 0x78, 0xd6, 38);
 const QColor kRegionEdge(0x2a, 0x78, 0xd6, 160);
@@ -963,7 +974,6 @@ void PlotRenderer::applyStyle()
         pen.setCosmetic(true);
         return pen;
     };
-    const QString fmt = st.formatter == "sci" ? "gbc" : st.formatter == "plain" ? "g" : "gbd";
     for (QCPAxis* axis : m_rect->axes()) {
         const bool isX = axis->orientation() == Qt::Horizontal;
         const TickStyle& ts = isX ? st.xtick : st.ytick;
@@ -982,10 +992,7 @@ void PlotRenderer::applyStyle()
         axis->setSubTicks(ticksOn && ts.minorVisible);
         axis->setTickLabelFont(font(ts.labelSize));
         axis->setTickLabelColor(ts.labelColor);
-        if (axis->scaleType() == QCPAxis::stLinear) {
-            axis->setNumberFormat(fmt);
-            axis->setNumberPrecision(st.formatter == "plain" ? 10 : 6);
-        }
+        applyNumberFormat(axis, st);
         if (auto t = axis->ticker().dynamicCast<StyledTicker>()) {
             t->unicodeMinus = st.unicodeMinus;
             t->setTickCount(std::max(1, ts.count));
@@ -1091,15 +1098,8 @@ void PlotRenderer::applyAxesInfo()
     if (!m_linTickerX) m_linTickerX = m_x->ticker(), m_linTickerY = m_y->ticker();
     setScale(m_x, m_x2, info.xLog, m_linTickerX);
     setScale(m_y, m_y2, info.yLog, m_linTickerY);
-    if (!info.xLog || !info.yLog) {
-        // Restore the style's number format on linear axes.
-        const QString fmt = st.formatter == "sci" ? "gbc" : st.formatter == "plain" ? "g" : "gbd";
-        for (QCPAxis* a : {m_x, m_y})
-            if (a->scaleType() == QCPAxis::stLinear) {
-                a->setNumberFormat(fmt);
-                a->setNumberPrecision(st.formatter == "plain" ? 10 : 6);
-            }
-    }
+    // An axis switched back from log to linear gets the style's format again.
+    for (QCPAxis* a : {m_x, m_y}) applyNumberFormat(a, st);
     m_x->setRangeReversed(info.xReversed);
     m_x2->setRangeReversed(info.xReversed);
     m_y->setRangeReversed(info.yReversed);

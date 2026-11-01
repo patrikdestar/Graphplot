@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 """plotter - interactive scientific plotting (C++/Qt) controlled from Python.
 
 Rendering and mouse interaction run natively in C++/Qt; Python creates
@@ -521,6 +522,16 @@ class Timeline:
     def clear_pins(self) -> None:
         for pid, *_ in self.figure._tl_pins():
             self.figure._tl_remove_pin(pid)
+
+    def next_pin(self):
+        """Centres the window on the next time marker (keyboard: ]); returns it or None."""
+        pid = self.figure._tl_step_pin(1)
+        return TimePin(self, pid) if pid else None
+
+    def prev_pin(self):
+        """Centres the window on the previous time marker (keyboard: [); returns it or None."""
+        pid = self.figure._tl_step_pin(-1)
+        return TimePin(self, pid) if pid else None
 
     # ---- signals and data -------------------------------------------------------------
     def signals(self) -> dict:

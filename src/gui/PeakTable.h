@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 // PeakTable: dock widget listing all peaks with position, intensity, label
 // and comment. Label and comment cells are editable (undoable); selecting a
 // row selects the peak on the plot; double-clicking a position centres the

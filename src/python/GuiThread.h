@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 // Qt <-> Python threading glue.
 //
 // Rules this module enforces:

@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 """Streaming updates from a processing loop (not recorded in undo history).
 
     PYTHONPATH=build/python python examples/live_update.py

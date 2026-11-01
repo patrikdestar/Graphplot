@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 """IPython integration: enables ``%gui plotter``.
 
 IPython's terminal (prompt_toolkit) does not use PyOS_InputHook; it has its

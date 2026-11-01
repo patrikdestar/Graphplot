@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 // Peak picking on 2D grids and peak-list file I/O.
 //
 // Algorithm (the standard approach, as in nmrglue's find_all_thres):

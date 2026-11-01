@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 // Small toolbar icons drawn with QPainter, so the application needs no
 // image resources and the icons stay crisp at any device pixel ratio.
 #pragma once

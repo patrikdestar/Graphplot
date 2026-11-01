@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 // PlotEditor: the single entry point for *editing* a figure.
 //
 // Both the GUI (mouse interaction, property panel) and the Python bindings

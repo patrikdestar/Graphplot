@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 """Tests for the Python API. Run headless:
 
     QT_QPA_PLATFORM=offscreen PYTHONPATH=build/python python -m unittest -v tests/test_python.py
@@ -551,6 +552,11 @@ class PlotterTests(unittest.TestCase):
         self.assertEqual(tl.figure.xlabel, "Time")
         self.assertIn("imu / b", tl.signals())
         self.assertEqual(tl.signal("b").label, "b")
+        p = tl.pin(0.75, "event")
+        tl.window = (0.0, 0.2)
+        self.assertEqual(tl.next_pin().id, p.id)
+        self.assertIsNone(tl.next_pin())
+        tl.remove_pin(p)
         tl.window = (0.25, 1.0)
         data = tl.window_data()
         self.assertEqual(list(data["imu / b"][0]), [0.5, 1.0])

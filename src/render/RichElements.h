@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 // QCustomPlot elements that render rich text (see RichText.h).
 #pragma once
 

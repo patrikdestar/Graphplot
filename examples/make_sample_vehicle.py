@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 """Write synthetic vehicle logs (IMU 200 Hz, GPS 10 Hz, wheel speed 50 Hz) as CSV.
 
     python examples/make_sample_vehicle.py [output_dir]     (default: sample_vehicle)

@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 // Figure export to PNG (raster), SVG and PDF (vector).
 #pragma once
 

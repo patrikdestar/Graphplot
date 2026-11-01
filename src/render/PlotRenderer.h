@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 // PlotRenderer: maps the PlotModel onto QCustomPlot objects.
 //
 // The renderer is a one-way observer: it listens to PlotModel signals and

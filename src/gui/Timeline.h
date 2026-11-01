@@ -134,6 +134,9 @@ public:
     void updatePin(const TimePin& after, std::optional<TimePin> before = std::nullopt);
     void removePin(ObjectId id);
     void jumpToPin(ObjectId id);  // centres the window on the pin
+    // Centres the window on the next (+1) or previous (-1) pin relative to
+    // the window centre; returns the pin id (kInvalidId if there is none).
+    ObjectId stepPin(int direction);
     // Used by the undo commands.
     void applyPin(ObjectId id, const std::optional<TimePin>& state);
 

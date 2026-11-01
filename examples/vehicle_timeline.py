@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 """Vehicle sensor logs on one timeline: IMU, GPS and wheel speeds.
 
     python examples/make_sample_vehicle.py                 # synthetic logs -> sample_vehicle/

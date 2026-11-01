@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 // Reader for Bruker TopSpin processed 2D spectra (pdata/<n>/2rr).
 //
 // File layout (as implemented by TopSpin and documented by nmrglue):

@@ -154,6 +154,7 @@ How panels work:
 | `get_selected_region()` | `(xmin, xmax)` or `None` |
 | `set_selected_region(xmin, xmax)`, `clear_selection()` | change it (undoable) |
 | `region_mask(x)` | boolean mask of `x` inside the region (or `None`) |
+| `region_stats(xmin=None, xmax=None)` | statistics of every visible line in the region (or the given range): `{label: {n, mean, std, min, max, x_at_min, x_at_max, rms, integral}}`. `std` is the sample standard deviation, `integral` the trapezoid rule; NaN gaps are skipped. Raises `ValueError` if no range is given and nothing is selected. |
 | `wait_for_region(timeout=-1)` | keep the window interactive until the user finishes a selection; return it. Returns `None` on timeout or close. |
 | `scale_contour_levels(factor)` | same as the mouse wheel / `*` `/` keys |
 | `on(event, callback)`, `off(event, callback)` | register / remove a callback (see below) |
@@ -218,6 +219,7 @@ What a timeline is:
 | `time_origin` | Unix epoch seconds of t = 0 (`None` for relative data) |
 | `pin(t, label="", color=None)` | add a time marker; returns a `TimePin` |
 | `pins()`, `remove_pin(pin)`, `clear_pins()` | time markers |
+| `next_pin()`, `prev_pin()` | centre the window on the next / previous marker (keys `]` / `[`); return it or `None` |
 | `signals()`, `signal(name)` | `{"row / signal": Line}`; one signal by full or short name |
 | `window_data(window=None)` | `{"row / signal": (t, y)}` inside the visible (or given) window |
 | `export_csv(path, window=True, resample=None)` | CSV of the visible window (`False`: everything; or `(t0, t1)`). `resample=None`: long format, every sample; `resample=dt`: wide format on a common grid (linear interpolation) |

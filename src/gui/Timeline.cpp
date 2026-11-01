@@ -86,6 +86,14 @@ QString fmtValue(double v)
     return QString::number(v, 'g', 5).replace('-', QChar(0x2212));
 }
 
+// Seconds with as many decimals as the resolution needs (typographic minus).
+QString formatSeconds(double s, double resolution)
+{
+    int decimals = 3;
+    if (resolution > 0) decimals = std::clamp(int(std::ceil(-std::log10(resolution))) + 1, 0, 9);
+    return QString::number(s, 'f', decimals).replace('-', QChar(0x2212)) + " s";
+}
+
 }  // namespace
 
 // ============================================================================
@@ -665,9 +673,7 @@ QString Timeline::formatTime(double t, double resolution) const
         const QDateTime dt = QDateTime::fromMSecsSinceEpoch(qint64(std::llround((m_origin + t) * 1000)));
         return dt.toString("hh:mm:ss.zzz");
     }
-    int decimals = 3;
-    if (resolution > 0) decimals = std::clamp(int(std::ceil(-std::log10(resolution))) + 1, 0, 9);
-    return QString::number(t, 'f', decimals).replace('-', QChar(0x2212)) + " s";
+    return formatSeconds(t, resolution);
 }
 
 // ---- cursor ---------------------------------------------------------------------------------------
@@ -735,7 +741,16 @@ void Timeline::updateCursorVisuals()
         m_navCursor->point1->setCoords(t, 0);
         m_navCursor->point2->setCoords(t, 1);
         const double res = (w1 - w0) / 1000.0;
-        m_navTimeLabel->setText(formatTime(t, res), f, false);
+        QString text = formatTime(t, res);
+        // Time from the nearest marker, for measuring durations between events.
+        const TimePin* near = nullptr;
+        for (const TimePin& p : m_pins)
+            if (!near || std::abs(p.t - t) < std::abs(near->t - t)) near = &p;
+        if (near)
+            text += QString("   %1t from %2: %3%4")
+                        .arg(QChar(0x0394), near->label, t >= near->t ? "+" : "",
+                             formatSeconds(t - near->t, res));
+        m_navTimeLabel->setText(text, f, false);
         m_navTimeLabel->position->setCoords(t, 0.0);
     }
     m_cursorLayer->replot();
@@ -795,6 +810,27 @@ void Timeline::jumpToPin(ObjectId id)
             setWindow(p.t - half, p.t + half);
             return;
         }
+}
+
+ObjectId Timeline::stepPin(int direction)
+{
+    if (m_pins.empty()) return kInvalidId;
+    const auto [a, b] = window();
+    const double centre = (a + b) / 2;
+    const double eps = (b - a) * 1e-6;  // "already centred on this pin"
+    const TimePin* target = nullptr;
+    // m_pins is kept sorted by time.
+    if (direction > 0) {
+        for (const TimePin& p : m_pins)
+            if (p.t > centre + eps) { target = &p; break; }
+    } else {
+        for (auto it = m_pins.rbegin(); it != m_pins.rend(); ++it)
+            if (it->t < centre - eps) { target = &*it; break; }
+    }
+    if (!target) return kInvalidId;
+    const ObjectId id = target->id;
+    jumpToPin(id);
+    return id;
 }
 
 void Timeline::rebuildPinVisuals()
