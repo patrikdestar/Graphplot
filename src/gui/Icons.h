@@ -1,0 +1,15 @@
+// Small toolbar icons drawn with QPainter, so the application needs no
+// image resources and the icons stay crisp at any device pixel ratio.
+#pragma once
+
+#include <QIcon>
+
+namespace gp::icons {
+
+enum class Kind {
+    Zoom, Pan, Region, VMarker, HMarker, Annotation, Autoscale, ResetView, Undo, Redo, Export
+};
+
+QIcon make(Kind kind);
+
+}  // namespace gp::icons

@@ -1,0 +1,625 @@
+#include "PropertiesPanel.h"
+
+#include "commands/PlotEditor.h"
+#include "interaction/InteractionController.h"
+#include "model/PlotModel.h"
+
+#include <QCheckBox>
+#include <QColorDialog>
+#include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QFormLayout>
+#include <QGroupBox>
+#include <QHBoxLayout>
+#include <QHeaderView>
+#include <QLabel>
+#include <QLineEdit>
+#include <QPainter>
+#include <QPushButton>
+#include <QSignalBlocker>
+#include <QStackedWidget>
+#include <QTreeWidget>
+#include <QVBoxLayout>
+#include <algorithm>
+#include <limits>
+
+namespace gp {
+
+namespace {
+
+constexpr int kKindRole = Qt::UserRole + 1;
+constexpr int kIdRole = Qt::UserRole + 2;
+
+QIcon swatchIcon(const QColor& c, int w = 16, int h = 10)
+{
+    QPixmap pm(w, h);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(c.darker(130), 1));
+    p.setBrush(c);
+    p.drawRoundedRect(QRectF(0.5, 0.5, w - 1, h - 1), 2, 2);
+    return QIcon(pm);
+}
+
+QDoubleSpinBox* makeCoordSpin()
+{
+    auto* s = new QDoubleSpinBox;
+    s->setRange(-std::numeric_limits<double>::max(), std::numeric_limits<double>::max());
+    s->setDecimals(6);
+    s->setKeyboardTracking(false);  // commit on Enter / focus-out / arrow steps
+    s->setSingleStep(0.1);
+    s->setMinimumWidth(110);
+    return s;
+}
+
+QComboBox* makeLineStyleCombo(bool allowNone)
+{
+    auto* c = new QComboBox;
+    c->addItem("Solid", int(LineStyle::Solid));
+    c->addItem("Dashed", int(LineStyle::Dash));
+    c->addItem("Dotted", int(LineStyle::Dot));
+    c->addItem("Dash-dot", int(LineStyle::DashDot));
+    if (allowNone) c->addItem("None", int(LineStyle::None));
+    return c;
+}
+
+void setComboData(QComboBox* c, int value)
+{
+    const int i = c->findData(value);
+    if (i >= 0) c->setCurrentIndex(i);
+}
+
+QString fmt(double v) { return QString::number(v, 'g', 6); }
+
+}  // namespace
+
+// ---- ColorButton ---------------------------------------------------------------
+
+ColorButton::ColorButton(QWidget* parent) : QToolButton(parent)
+{
+    setIconSize(QSize(28, 14));
+    connect(this, &QToolButton::clicked, this, [this] {
+        const QColor c = QColorDialog::getColor(m_color, this, "Choose colour",
+                                                QColorDialog::ShowAlphaChannel);
+        if (c.isValid() && c != m_color) {
+            setColor(c);
+            emit colorPicked(c);
+        }
+    });
+}
+
+void ColorButton::setColor(const QColor& c)
+{
+    m_color = c;
+    setIcon(swatchIcon(c, 28, 14));
+    setToolTip(c.name(QColor::HexArgb));
+}
+
+// ---- PropertiesPanel -----------------------------------------------------------
+
+PropertiesPanel::PropertiesPanel(PlotEditor* editor, InteractionController* controller,
+                                 QWidget* parent)
+    : QWidget(parent), m_editor(editor), m_model(editor->model()), m_controller(controller)
+{
+    buildUi();
+    rebuildTree();
+    refreshAxes();
+
+    auto structural = [this] { rebuildTree(); };
+    auto changed = [this](ObjectKind kind) {
+        return [this, kind](ObjectId id) {
+            refreshTreeItem({kind, id});
+            if (m_current == ObjectRef{kind, id}) refreshCurrentPage();
+        };
+    };
+    connect(m_model, &PlotModel::datasetAdded, this, structural);
+    connect(m_model, &PlotModel::datasetRemoved, this, structural);
+    connect(m_model, &PlotModel::markerAdded, this, structural);
+    connect(m_model, &PlotModel::markerRemoved, this, structural);
+    connect(m_model, &PlotModel::annotationAdded, this, structural);
+    connect(m_model, &PlotModel::annotationRemoved, this, structural);
+    connect(m_model, &PlotModel::datasetAppearanceChanged, this, changed(ObjectKind::Dataset));
+    connect(m_model, &PlotModel::datasetDataChanged, this, changed(ObjectKind::Dataset));
+    connect(m_model, &PlotModel::markerChanged, this, changed(ObjectKind::Marker));
+    connect(m_model, &PlotModel::annotationChanged, this, changed(ObjectKind::Annotation));
+    connect(m_model, &PlotModel::regionChanged, this, [this] {
+        rebuildTree();
+        if (m_current.kind == ObjectKind::Region) refreshCurrentPage();
+    });
+    connect(m_model, &PlotModel::axesInfoChanged, this, &PropertiesPanel::refreshAxes);
+
+    connect(m_controller, &InteractionController::selectionChanged, this,
+            [this](ObjectRef ref) { showObject(ref); });
+}
+
+void PropertiesPanel::buildUi()
+{
+    auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(6, 6, 6, 6);
+
+    // Axes group
+    auto* axesBox = new QGroupBox("Axes");
+    auto* axesForm = new QFormLayout(axesBox);
+    m_title = new QLineEdit;
+    m_xLabel = new QLineEdit;
+    m_yLabel = new QLineEdit;
+    m_legend = new QCheckBox("Legend");
+    m_grid = new QCheckBox("Grid");
+    auto* checks = new QHBoxLayout;
+    checks->addWidget(m_legend);
+    checks->addWidget(m_grid);
+    checks->addStretch();
+    axesForm->addRow("Title", m_title);
+    axesForm->addRow("X label", m_xLabel);
+    axesForm->addRow("Y label", m_yLabel);
+    axesForm->addRow(checks);
+    for (QLineEdit* e : {m_title, m_xLabel, m_yLabel})
+        connect(e, &QLineEdit::editingFinished, this, &PropertiesPanel::commitAxes);
+    connect(m_legend, &QCheckBox::toggled, this, &PropertiesPanel::commitAxes);
+    connect(m_grid, &QCheckBox::toggled, this, &PropertiesPanel::commitAxes);
+    layout->addWidget(axesBox);
+
+    // Object tree
+    m_tree = new QTreeWidget;
+    m_tree->setHeaderHidden(true);
+    m_tree->setRootIsDecorated(true);
+    m_tree->setUniformRowHeights(true);
+    m_tree->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_tree->setMinimumHeight(160);
+    m_datasetsRoot = new QTreeWidgetItem(m_tree, {"Datasets"});
+    m_markersRoot = new QTreeWidgetItem(m_tree, {"Markers"});
+    m_annotationsRoot = new QTreeWidgetItem(m_tree, {"Annotations"});
+    for (auto* root : {m_datasetsRoot, m_markersRoot, m_annotationsRoot}) {
+        root->setFlags(Qt::ItemIsEnabled);
+        QFont f = root->font(0);
+        f.setBold(true);
+        root->setFont(0, f);
+        root->setExpanded(true);
+    }
+    layout->addWidget(m_tree, 1);
+
+    connect(m_tree, &QTreeWidget::currentItemChanged, this,
+            [this](QTreeWidgetItem* item, QTreeWidgetItem*) {
+                if (m_updatingTree) return;
+                ObjectRef ref;
+                if (item && item->data(0, kKindRole).isValid())
+                    ref = {ObjectKind(item->data(0, kKindRole).toInt()),
+                           item->data(0, kIdRole).toULongLong()};
+                m_controller->setSelection(ref);
+                showObject(ref);
+            });
+    // Checkbox on dataset items toggles visibility (undoable).
+    connect(m_tree, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem* item, int) {
+        if (m_updatingTree || ObjectKind(item->data(0, kKindRole).toInt()) != ObjectKind::Dataset)
+            return;
+        const ObjectId id = item->data(0, kIdRole).toULongLong();
+        if (const Dataset* d = m_model->dataset(id)) {
+            DatasetStyle s = d->style;
+            s.visible = item->checkState(0) == Qt::Checked;
+            m_editor->setDatasetAppearance(id, d->name, s);
+        }
+    });
+
+    m_removeButton = new QPushButton("Remove selected");
+    m_removeButton->setEnabled(false);
+    connect(m_removeButton, &QPushButton::clicked, this, [this] {
+        const ObjectRef ref = m_current;
+        m_controller->setSelection({});
+        m_editor->removeObject(ref);
+    });
+    layout->addWidget(m_removeButton);
+
+    // Property pages
+    m_stack = new QStackedWidget;
+    m_emptyPage = new QLabel("Select an object to edit its properties.");
+    static_cast<QLabel*>(m_emptyPage)->setWordWrap(true);
+    static_cast<QLabel*>(m_emptyPage)->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+    static_cast<QLabel*>(m_emptyPage)->setStyleSheet("color: #7a7974; padding: 6px;");
+    m_datasetPage = buildDatasetPage();
+    m_markerPage = buildMarkerPage();
+    m_annotationPage = buildAnnotationPage();
+    m_regionPage = buildRegionPage();
+    for (QWidget* w : {m_emptyPage, m_datasetPage, m_markerPage, m_annotationPage, m_regionPage})
+        m_stack->addWidget(w);
+    layout->addWidget(m_stack);
+    setMinimumWidth(250);
+}
+
+QWidget* PropertiesPanel::buildDatasetPage()
+{
+    auto* box = new QGroupBox("Dataset");
+    auto* form = new QFormLayout(box);
+    m_dsName = new QLineEdit;
+    m_dsColor = new ColorButton;
+    m_dsWidth = new QDoubleSpinBox;
+    m_dsWidth->setRange(0.1, 20);
+    m_dsWidth->setSingleStep(0.5);
+    m_dsWidth->setKeyboardTracking(false);
+    m_dsLineStyle = makeLineStyleCombo(true);
+    m_dsScatter = new QComboBox;
+    for (ScatterShape s : {ScatterShape::None, ScatterShape::Circle, ScatterShape::Square,
+                           ScatterShape::Triangle, ScatterShape::Diamond, ScatterShape::Cross,
+                           ScatterShape::Plus}) {
+        QString name = scatterShapeName(s);
+        name[0] = name[0].toUpper();
+        m_dsScatter->addItem(name, int(s));
+    }
+    m_dsScatterSize = new QDoubleSpinBox;
+    m_dsScatterSize->setRange(1, 40);
+    m_dsScatterSize->setKeyboardTracking(false);
+    m_dsVisible = new QCheckBox("Visible");
+    m_dsInfo = new QLabel;
+    m_dsInfo->setStyleSheet("color: #52514e;");
+    form->addRow("Name", m_dsName);
+    form->addRow("Colour", m_dsColor);
+    form->addRow("Line width", m_dsWidth);
+    form->addRow("Line style", m_dsLineStyle);
+    form->addRow("Symbol", m_dsScatter);
+    form->addRow("Symbol size", m_dsScatterSize);
+    form->addRow(m_dsVisible);
+    form->addRow(m_dsInfo);
+
+    connect(m_dsName, &QLineEdit::editingFinished, this, [this] { commitDataset(false); });
+    connect(m_dsColor, &ColorButton::colorPicked, this, [this] { commitDataset(false); });
+    connect(m_dsWidth, &QDoubleSpinBox::valueChanged, this, [this] { commitDataset(true); });
+    connect(m_dsLineStyle, &QComboBox::currentIndexChanged, this, [this] { commitDataset(false); });
+    connect(m_dsScatter, &QComboBox::currentIndexChanged, this, [this] { commitDataset(false); });
+    connect(m_dsScatterSize, &QDoubleSpinBox::valueChanged, this, [this] { commitDataset(true); });
+    connect(m_dsVisible, &QCheckBox::toggled, this, [this] { commitDataset(false); });
+    return box;
+}
+
+QWidget* PropertiesPanel::buildMarkerPage()
+{
+    auto* box = new QGroupBox("Marker");
+    auto* form = new QFormLayout(box);
+    m_mkOrientation = new QLabel;
+    m_mkLabel = new QLineEdit;
+    m_mkPosition = makeCoordSpin();
+    m_mkColor = new ColorButton;
+    m_mkLineStyle = makeLineStyleCombo(false);
+    m_mkWidth = new QDoubleSpinBox;
+    m_mkWidth->setRange(0.5, 10);
+    m_mkWidth->setSingleStep(0.5);
+    m_mkWidth->setKeyboardTracking(false);
+    m_mkShowValue = new QCheckBox("Show coordinate");
+    form->addRow("Orientation", m_mkOrientation);
+    form->addRow("Label", m_mkLabel);
+    form->addRow("Position", m_mkPosition);
+    form->addRow("Colour", m_mkColor);
+    form->addRow("Line style", m_mkLineStyle);
+    form->addRow("Line width", m_mkWidth);
+    form->addRow(m_mkShowValue);
+
+    connect(m_mkLabel, &QLineEdit::editingFinished, this, [this] { commitMarker(false); });
+    connect(m_mkPosition, &QDoubleSpinBox::valueChanged, this, [this] { commitMarker(true); });
+    connect(m_mkColor, &ColorButton::colorPicked, this, [this] { commitMarker(false); });
+    connect(m_mkLineStyle, &QComboBox::currentIndexChanged, this, [this] { commitMarker(false); });
+    connect(m_mkWidth, &QDoubleSpinBox::valueChanged, this, [this] { commitMarker(true); });
+    connect(m_mkShowValue, &QCheckBox::toggled, this, [this] { commitMarker(false); });
+    return box;
+}
+
+QWidget* PropertiesPanel::buildAnnotationPage()
+{
+    auto* box = new QGroupBox("Annotation");
+    auto* form = new QFormLayout(box);
+    m_anText = new QLineEdit;
+    m_anText->setPlaceholderText("Use \\n for a line break");
+    m_anX = makeCoordSpin();
+    m_anY = makeCoordSpin();
+    m_anColor = new ColorButton;
+    m_anFontSize = new QDoubleSpinBox;
+    m_anFontSize->setRange(4, 72);
+    m_anFontSize->setKeyboardTracking(false);
+    form->addRow("Text", m_anText);
+    form->addRow("X", m_anX);
+    form->addRow("Y", m_anY);
+    form->addRow("Colour", m_anColor);
+    form->addRow("Font size", m_anFontSize);
+
+    connect(m_anText, &QLineEdit::editingFinished, this, [this] { commitAnnotation(false); });
+    connect(m_anX, &QDoubleSpinBox::valueChanged, this, [this] { commitAnnotation(true); });
+    connect(m_anY, &QDoubleSpinBox::valueChanged, this, [this] { commitAnnotation(true); });
+    connect(m_anColor, &ColorButton::colorPicked, this, [this] { commitAnnotation(false); });
+    connect(m_anFontSize, &QDoubleSpinBox::valueChanged, this, [this] { commitAnnotation(true); });
+    return box;
+}
+
+QWidget* PropertiesPanel::buildRegionPage()
+{
+    auto* box = new QGroupBox("Selected region");
+    auto* form = new QFormLayout(box);
+    m_rgMin = makeCoordSpin();
+    m_rgMax = makeCoordSpin();
+    m_rgWidth = new QLabel;
+    auto* clear = new QPushButton("Clear selection");
+    form->addRow("X min", m_rgMin);
+    form->addRow("X max", m_rgMax);
+    form->addRow("Width", m_rgWidth);
+    form->addRow(clear);
+    connect(m_rgMin, &QDoubleSpinBox::valueChanged, this, &PropertiesPanel::commitRegion);
+    connect(m_rgMax, &QDoubleSpinBox::valueChanged, this, &PropertiesPanel::commitRegion);
+    connect(clear, &QPushButton::clicked, this, [this] { m_editor->clearRegion(); });
+    return box;
+}
+
+// ---- tree ------------------------------------------------------------------------
+
+void PropertiesPanel::rebuildTree()
+{
+    m_updatingTree = true;
+    for (auto* root : {m_datasetsRoot, m_markersRoot, m_annotationsRoot})
+        qDeleteAll(root->takeChildren());
+    if (m_regionItem) {
+        delete m_regionItem;
+        m_regionItem = nullptr;
+    }
+    auto addItem = [](QTreeWidgetItem* root, ObjectKind kind, ObjectId id) {
+        auto* item = new QTreeWidgetItem(root);
+        item->setData(0, kKindRole, int(kind));
+        item->setData(0, kIdRole, QVariant::fromValue<qulonglong>(id));
+        return item;
+    };
+    for (const auto& d : m_model->datasets()) {
+        auto* item = addItem(m_datasetsRoot, ObjectKind::Dataset, d.id);
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+    }
+    for (const auto& m : m_model->markers()) addItem(m_markersRoot, ObjectKind::Marker, m.id);
+    for (const auto& a : m_model->annotations())
+        addItem(m_annotationsRoot, ObjectKind::Annotation, a.id);
+    if (m_model->region().active) {
+        m_regionItem = new QTreeWidgetItem(m_tree);
+        m_regionItem->setData(0, kKindRole, int(ObjectKind::Region));
+        m_regionItem->setData(0, kIdRole, QVariant::fromValue<qulonglong>(0));
+        QFont f = m_regionItem->font(0);
+        f.setBold(true);
+        m_regionItem->setFont(0, f);
+    }
+    for (const auto& d : m_model->datasets()) refreshTreeItem({ObjectKind::Dataset, d.id});
+    for (const auto& m : m_model->markers()) refreshTreeItem({ObjectKind::Marker, m.id});
+    for (const auto& a : m_model->annotations()) refreshTreeItem({ObjectKind::Annotation, a.id});
+    if (m_regionItem) refreshTreeItem({ObjectKind::Region, 0});
+    m_updatingTree = false;
+
+    // Keep showing the current object if it still exists.
+    showObject(m_controller->selection());
+}
+
+QTreeWidgetItem* PropertiesPanel::findItem(const ObjectRef& ref) const
+{
+    if (ref.kind == ObjectKind::Region) return m_regionItem;
+    QTreeWidgetItem* root = ref.kind == ObjectKind::Dataset    ? m_datasetsRoot
+                            : ref.kind == ObjectKind::Marker   ? m_markersRoot
+                            : ref.kind == ObjectKind::Annotation ? m_annotationsRoot
+                                                                 : nullptr;
+    if (!root) return nullptr;
+    for (int i = 0; i < root->childCount(); ++i)
+        if (root->child(i)->data(0, kIdRole).toULongLong() == ref.id) return root->child(i);
+    return nullptr;
+}
+
+void PropertiesPanel::refreshTreeItem(const ObjectRef& ref)
+{
+    QTreeWidgetItem* item = findItem(ref);
+    if (!item) return;
+    const bool wasUpdating = m_updatingTree;
+    m_updatingTree = true;
+    switch (ref.kind) {
+    case ObjectKind::Dataset:
+        if (const Dataset* d = m_model->dataset(ref.id)) {
+            item->setText(0, d->name);
+            item->setIcon(0, swatchIcon(d->style.color));
+            item->setCheckState(0, d->style.visible ? Qt::Checked : Qt::Unchecked);
+            item->setToolTip(0, QString("%1 points").arg(d->x.size()));
+        }
+        break;
+    case ObjectKind::Marker:
+        if (const Marker* m = m_model->marker(ref.id)) {
+            const QString axis = m->orientation == Orientation::Vertical ? "x" : "y";
+            item->setText(0, QString("%1  (%2 = %3)")
+                                 .arg(m->label.isEmpty() ? "Marker" : m->label, axis,
+                                      fmt(m->position)));
+            item->setIcon(0, swatchIcon(m->color));
+        }
+        break;
+    case ObjectKind::Annotation:
+        if (const Annotation* a = m_model->annotation(ref.id)) {
+            QString t = a->text;
+            t.replace('\n', ' ');
+            item->setText(0, t.isEmpty() ? "(empty)" : t);
+            item->setIcon(0, swatchIcon(a->color));
+        }
+        break;
+    case ObjectKind::Region: {
+        const Region& r = m_model->region();
+        item->setText(0, QString("Region  [%1, %2]").arg(fmt(r.xmin), fmt(r.xmax)));
+        break;
+    }
+    case ObjectKind::None: break;
+    }
+    m_updatingTree = wasUpdating;
+}
+
+void PropertiesPanel::showObject(const ObjectRef& refIn)
+{
+    ObjectRef ref = refIn;
+    // Validate (the object may have vanished).
+    if ((ref.kind == ObjectKind::Dataset && !m_model->dataset(ref.id)) ||
+        (ref.kind == ObjectKind::Marker && !m_model->marker(ref.id)) ||
+        (ref.kind == ObjectKind::Annotation && !m_model->annotation(ref.id)) ||
+        (ref.kind == ObjectKind::Region && !m_model->region().active))
+        ref = {};
+    m_current = ref;
+
+    {
+        const bool was = m_updatingTree;
+        m_updatingTree = true;
+        QTreeWidgetItem* item = findItem(ref);
+        m_tree->setCurrentItem(item);
+        if (!item) m_tree->clearSelection();
+        m_updatingTree = was;
+    }
+    m_removeButton->setEnabled(ref.isValid());
+    switch (ref.kind) {
+    case ObjectKind::Dataset: m_stack->setCurrentWidget(m_datasetPage); break;
+    case ObjectKind::Marker: m_stack->setCurrentWidget(m_markerPage); break;
+    case ObjectKind::Annotation: m_stack->setCurrentWidget(m_annotationPage); break;
+    case ObjectKind::Region: m_stack->setCurrentWidget(m_regionPage); break;
+    case ObjectKind::None: m_stack->setCurrentWidget(m_emptyPage); break;
+    }
+    refreshCurrentPage();
+}
+
+void PropertiesPanel::beginEdit(const ObjectRef& ref)
+{
+    showObject(ref);
+    QLineEdit* field = ref.kind == ObjectKind::Annotation ? m_anText
+                       : ref.kind == ObjectKind::Marker   ? m_mkLabel
+                       : ref.kind == ObjectKind::Dataset  ? m_dsName
+                                                          : nullptr;
+    if (field) {
+        field->setFocus(Qt::OtherFocusReason);
+        field->selectAll();
+    }
+}
+
+void PropertiesPanel::refreshCurrentPage()
+{
+    switch (m_current.kind) {
+    case ObjectKind::Dataset: {
+        const Dataset* d = m_model->dataset(m_current.id);
+        if (!d) return;
+        const QSignalBlocker b1(m_dsName), b2(m_dsWidth), b3(m_dsLineStyle), b4(m_dsScatter),
+            b5(m_dsScatterSize), b6(m_dsVisible);
+        if (!m_dsName->hasFocus()) m_dsName->setText(d->name);
+        m_dsColor->setColor(d->style.color);
+        m_dsWidth->setValue(d->style.lineWidth);
+        setComboData(m_dsLineStyle, int(d->style.lineStyle));
+        setComboData(m_dsScatter, int(d->style.scatter));
+        m_dsScatterSize->setValue(d->style.scatterSize);
+        m_dsVisible->setChecked(d->style.visible);
+        double xmin = 0, xmax = 0;
+        if (!d->x.isEmpty()) {
+            xmin = *std::min_element(d->x.begin(), d->x.end());
+            xmax = *std::max_element(d->x.begin(), d->x.end());
+        }
+        m_dsInfo->setText(QString("%1 points, x ∈ [%2, %3]")
+                              .arg(d->x.size())
+                              .arg(fmt(xmin), fmt(xmax)));
+        break;
+    }
+    case ObjectKind::Marker: {
+        const Marker* m = m_model->marker(m_current.id);
+        if (!m) return;
+        const QSignalBlocker b1(m_mkLabel), b2(m_mkPosition), b3(m_mkLineStyle), b4(m_mkWidth),
+            b5(m_mkShowValue);
+        m_mkOrientation->setText(m->orientation == Orientation::Vertical ? "Vertical (x)"
+                                                                         : "Horizontal (y)");
+        if (!m_mkLabel->hasFocus()) m_mkLabel->setText(m->label);
+        m_mkPosition->setValue(m->position);
+        m_mkColor->setColor(m->color);
+        setComboData(m_mkLineStyle, int(m->lineStyle));
+        m_mkWidth->setValue(m->lineWidth);
+        m_mkShowValue->setChecked(m->showValue);
+        break;
+    }
+    case ObjectKind::Annotation: {
+        const Annotation* a = m_model->annotation(m_current.id);
+        if (!a) return;
+        const QSignalBlocker b1(m_anText), b2(m_anX), b3(m_anY), b4(m_anFontSize);
+        if (!m_anText->hasFocus()) {
+            QString t = a->text;
+            m_anText->setText(t.replace('\n', "\\n"));
+        }
+        m_anX->setValue(a->x);
+        m_anY->setValue(a->y);
+        m_anColor->setColor(a->color);
+        m_anFontSize->setValue(a->fontSize);
+        break;
+    }
+    case ObjectKind::Region: {
+        const Region& r = m_model->region();
+        const QSignalBlocker b1(m_rgMin), b2(m_rgMax);
+        m_rgMin->setValue(r.xmin);
+        m_rgMax->setValue(r.xmax);
+        m_rgWidth->setText(fmt(r.xmax - r.xmin));
+        break;
+    }
+    case ObjectKind::None: break;
+    }
+}
+
+void PropertiesPanel::refreshAxes()
+{
+    const AxesInfo& a = m_model->axesInfo();
+    const QSignalBlocker b1(m_title), b2(m_xLabel), b3(m_yLabel), b4(m_legend), b5(m_grid);
+    m_title->setText(a.title);
+    m_xLabel->setText(a.xLabel);
+    m_yLabel->setText(a.yLabel);
+    m_legend->setChecked(a.legendVisible);
+    m_grid->setChecked(a.gridVisible);
+}
+
+// ---- commits -------------------------------------------------------------------------
+
+void PropertiesPanel::commitDataset(bool mergeable)
+{
+    const Dataset* d = m_model->dataset(m_current.id);
+    if (m_current.kind != ObjectKind::Dataset || !d) return;
+    DatasetStyle s = d->style;
+    s.color = m_dsColor->color();
+    s.lineWidth = m_dsWidth->value();
+    s.lineStyle = LineStyle(m_dsLineStyle->currentData().toInt());
+    s.scatter = ScatterShape(m_dsScatter->currentData().toInt());
+    s.scatterSize = m_dsScatterSize->value();
+    s.visible = m_dsVisible->isChecked();
+    m_editor->setDatasetAppearance(d->id, m_dsName->text(), s, mergeable);
+}
+
+void PropertiesPanel::commitMarker(bool mergeable)
+{
+    const Marker* cur = m_model->marker(m_current.id);
+    if (m_current.kind != ObjectKind::Marker || !cur) return;
+    Marker m = *cur;
+    m.label = m_mkLabel->text();
+    m.position = m_mkPosition->value();
+    m.color = m_mkColor->color();
+    m.lineStyle = LineStyle(m_mkLineStyle->currentData().toInt());
+    m.lineWidth = m_mkWidth->value();
+    m.showValue = m_mkShowValue->isChecked();
+    m_editor->updateMarker(m, std::nullopt, mergeable);
+}
+
+void PropertiesPanel::commitAnnotation(bool mergeable)
+{
+    const Annotation* cur = m_model->annotation(m_current.id);
+    if (m_current.kind != ObjectKind::Annotation || !cur) return;
+    Annotation a = *cur;
+    a.text = m_anText->text().replace("\\n", "\n");
+    a.x = m_anX->value();
+    a.y = m_anY->value();
+    a.color = m_anColor->color();
+    a.fontSize = m_anFontSize->value();
+    m_editor->updateAnnotation(a, std::nullopt, mergeable);
+}
+
+void PropertiesPanel::commitRegion()
+{
+    if (m_current.kind != ObjectKind::Region) return;
+    m_editor->setRegion(Region{true, m_rgMin->value(), m_rgMax->value()});
+}
+
+void PropertiesPanel::commitAxes()
+{
+    AxesInfo a = m_model->axesInfo();
+    a.title = m_title->text();
+    a.xLabel = m_xLabel->text();
+    a.yLabel = m_yLabel->text();
+    a.legendVisible = m_legend->isChecked();
+    a.gridVisible = m_grid->isChecked();
+    m_editor->setAxesInfo(a);
+}
+
+}  // namespace gp
