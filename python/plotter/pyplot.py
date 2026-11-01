@@ -430,6 +430,12 @@ class PltAxes:
         return self._ax.plot(xs, ys, color=col, fill=(r, g, b, alpha), style="none",
                              label=None if label is None else str(label))
 
+    def twinx(self):
+        """A second y axis on the right, sharing this panel's x axis."""
+        twin = PltAxes(self.figure, self._ax.twinx())
+        self.figure.axes.append(twin)
+        return twin
+
     def set_aspect(self, *_, **__):
         pass  # the aspect ratio follows the window / figure size
 
@@ -1000,6 +1006,10 @@ axhspan = _ax_call("axhspan")
 fill_betweenx = _ax_call("fill_betweenx")
 minorticks_on = _ax_call("minorticks_on")
 minorticks_off = _ax_call("minorticks_off")
+
+
+def twinx(ax=None):
+    return (ax or gca()).twinx()
 
 
 def figtext(x, y, s, **kw):

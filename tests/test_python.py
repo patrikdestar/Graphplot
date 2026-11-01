@@ -1052,6 +1052,33 @@ class PlotterTests(unittest.TestCase):
         plt.close("all")
         plt.rcParams["font.size"] = 10
 
+    def test_twinx(self):
+        import plotter.pyplot as plt
+        f = self.fig
+        f.plot([0, 1, 2], [0, 1, 2], label="left")
+        t = f.twinx()
+        t.plot([0, 1, 2], [100, 300, 200], label="right")
+        t.ylabel = "Right"
+        self.assertEqual(t.ylim()[1] >= 300, True)
+        host = f.axes[0]
+        self.assertLessEqual(host.ylim()[1], 3)  # the host keeps its own y
+        self.assertEqual(t.xlim(), host.xlim())  # shared x
+        with self.assertRaises(ValueError):
+            t.twinx()  # a twin has no twin
+        with tempfile.TemporaryDirectory() as d:
+            f.save(os.path.join(d, "t.gpfig"))
+            g = plotter.load(os.path.join(d, "t.gpfig"))
+            self.assertEqual(len(g.axes), 2)
+            self.assertEqual(g.axes[1].ylabel, "Right")
+            g.savefig(os.path.join(d, "t.png"))
+            g.close()
+            fig, ax = plt.subplots()
+            ax.plot([0, 1], [0, 1])
+            ax2 = ax.twinx()
+            ax2.plot([0, 1], [10, 20])
+            plt.savefig(os.path.join(d, "p.png"))
+            plt.close("all")
+
     def test_pyplot_compat_round2(self):
         import io
         import plotter.pyplot as plt

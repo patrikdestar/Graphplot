@@ -165,7 +165,11 @@ void RichAxisLabels::draw(QCPPainter* painter)
     }
     if (!m_y.isEmpty()) {
         const QSizeF s = m_y.size();
-        m_y.drawVertical(painter, QPointF(outer.left() + s.height() / 2 + 1, ar.center().y()), m_color);
+        if (m_rightOuter)
+            m_y.drawVertical(painter, QPointF(m_rightOuter->outerRect().right() - s.height() / 2 - 1, ar.center().y()),
+                             m_color);
+        else
+            m_y.drawVertical(painter, QPointF(outer.left() + s.height() / 2 + 1, ar.center().y()), m_color);
     }
     if (!m_title.isEmpty()) {  // in the top margin (reserved by the top axis' label)
         const QSizeF s = m_title.size();

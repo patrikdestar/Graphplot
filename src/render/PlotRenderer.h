@@ -55,6 +55,13 @@ public:
     // owns figure-level elements: header row, padding, background.
     PlotRenderer(PlotModel* model, QCustomPlot* plot, QCPAxisRect* rect, bool primary,
                  QObject* parent = nullptr);
+    // A twin panel (twinx): drawn over `host`'s plot area, sharing its x
+    // axis, with its own y axis on the right. `rect` must already be placed
+    // over the host (see FigureWindow::createTwinPanel).
+    PlotRenderer(PlotModel* model, QCustomPlot* plot, QCPAxisRect* rect, PlotRenderer* host,
+                 QObject* parent = nullptr);
+    PlotRenderer* twinHost() const { return m_twinHost; }
+    PlotRenderer* twin() const { return m_twin; }
     ~PlotRenderer() override;
 
     QCustomPlot* plot() const { return m_plot; }
@@ -238,6 +245,12 @@ private:
     bool m_autoHome = true;
     bool m_regionInExports = false;
     bool m_ownTitle = false;
+    PlotRenderer* m_twinHost = nullptr;   // set for a twin panel
+    PlotRenderer* m_twin = nullptr;       // set on the host of a twin
+    int m_twinMargin = 0;                 // right-margin space the twin's axis needs (host)
+    int m_colorBarWidth = 0;
+    void updateRightPadding();            // colour bar + twin axis space in the right margin
+    void updateTwinMargin();              // twin: tell the host how much room its axis needs
     int m_maxTicksY = 0;
     QList<PlotRenderer*> m_shareX, m_shareY;
     // The view follows the data (re-fits when data is added or changed) until

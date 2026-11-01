@@ -178,6 +178,7 @@ All keys: [STYLE_REFERENCE.md](STYLE_REFERENCE.md). In texts, `$...$` math
 | `subplots(nrows=1, ncols=1, *, sharex, sharey, height_ratios, width_ratios, hspace, wspace, squeeze=True)` | list or grid of `Axes`; existing content stays in panel 0 |
 | `ratio_panel(ratio=0.3, *, ylabel='Ratio')` | `(main, lower)` with shared x and touching frames |
 | `axes`, `gca()`, `sca(ax)` | panels / current panel |
+| `twinx()` (on a Figure: the current panel; on an Axes: that panel) | a second y axis on the right: a new panel drawn over the panel, sharing its x axis; returns its `Axes` (pyplot: `ax.twinx()`) |
 
 How panels work:
 

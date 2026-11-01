@@ -424,6 +424,17 @@ def _ratio_panel(self: Figure, ratio: float = 0.3, *, ylabel: str = "Ratio"):
     return main, lower
 
 
+def _twinx(self, ax=None) -> "Axes":
+    """A second y axis on the right of a panel (matplotlib's twinx): a new
+    panel drawn over it, sharing its x axis. Plot into the returned Axes."""
+    fig = self.figure if isinstance(self, Axes) else self
+    host = self.index if isinstance(self, Axes) else (ax.index if isinstance(ax, Axes) else fig._current())
+    return Axes(fig, fig._twinx(host))
+
+
+Axes.twinx = _twinx
+
+
 def _axes_list(self: Figure):
     return [Axes(self, i) for i in range(self._axes_count())]
 
@@ -830,6 +841,7 @@ Figure.subplots = _subplots
 Figure.ratio_panel = _ratio_panel
 Figure.axes = property(_axes_list)
 Figure.gca = _gca
+Figure.twinx = _twinx
 Figure.sca = lambda self, ax: self._set_current(ax.index if isinstance(ax, Axes) else int(ax))
 Figure.sca.__doc__ = "Make an Axes (or panel index) the current panel for Figure-level calls."
 Figure.errorbar = _errorbar

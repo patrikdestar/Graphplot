@@ -80,6 +80,9 @@ public:
     RichAxisLabels(QCustomPlot* plot, QCPAxisRect* axisRect);
     void setLabels(const QString& x, const QString& y, const QFont& font, const QColor& color,
                    bool math);
+    // Twin panels: the y label is drawn right of `outer`'s frame (the host's
+    // right margin).
+    void setYOnRight(QCPAxisRect* outer) { m_rightOuter = outer; }
     // Panel title above the frame (multi-panel figures; empty = none).
     void setTitle(const QString& title, const QFont& font, const QColor& color, bool math);
     QSizeF titleSize() const { return m_title.size(); }
@@ -94,6 +97,7 @@ private:
     QCPAxisRect* m_axisRect;
     RichTextBlock m_x, m_y, m_title;
     QColor m_color, m_titleColor;
+    QCPAxisRect* m_rightOuter = nullptr;
 };
 
 // Legend entry with a rich-text name.

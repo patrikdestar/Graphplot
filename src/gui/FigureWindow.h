@@ -75,6 +75,7 @@ public:
         PlotModel* model;
         PlotEditor* editor;
         PlotRenderer* renderer;
+        int twinOf = -1;  // twin panels (twinx): the host panel's index
     };
     int axesCount() const { return int(m_axes.size()); }
     const Axes& axes(int i) const { return m_axes[size_t(i)]; }
@@ -87,6 +88,9 @@ public:
     QUndoStack* undoStack() const { return m_stack; }
     // Creates an empty panel (not placed in the layout); returns its index.
     int createPanel();
+    // A twin panel over `host` (matplotlib's twinx): same x axis and plot
+    // area, its own y axis on the right. Returns its index, or -1.
+    int createTwinPanel(int host);
     // The layout grid holding the panels (created on first use).
     void ensureGrid();
     QCPLayoutGrid* panelGrid() const { return m_grid; }

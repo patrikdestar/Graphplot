@@ -122,6 +122,63 @@ PlotRenderer::PlotRenderer(PlotModel* model, QCustomPlot* plot, QObject* parent)
 {
 }
 
+PlotRenderer::PlotRenderer(PlotModel* model, QCustomPlot* plot, QCPAxisRect* rect, PlotRenderer* host,
+                           QObject* parent)
+    : PlotRenderer(model, plot, rect, false, parent)
+{
+    m_twinHost = host;
+    host->m_twin = this;
+    // The data's y axis is the right one; the twin's own x axes and left
+    // axis are invisible (the host draws the frame, grid and x axis).
+    std::swap(m_y, m_y2);
+    for (QCPAxis* a : {m_x, m_x2, m_y2}) a->setVisible(false);
+    m_y->setVisible(true);
+    m_y->setTickLabels(true);
+    m_rect->setBackground(Qt::NoBrush);
+    m_x->setRange(host->m_x->range());
+    // The twin follows the host's x range (and vice versa), and autoscaling
+    // either fits both panels' x data.
+    connect(host->m_x, qOverload<const QCPRange&>(&QCPAxis::rangeChanged), m_x,
+            qOverload<const QCPRange&>(&QCPAxis::setRange));
+    connect(m_x, qOverload<const QCPRange&>(&QCPAxis::rangeChanged), host->m_x,
+            qOverload<const QCPRange&>(&QCPAxis::setRange));
+    host->m_shareX << this;
+    m_shareX << host;
+    m_axisLabels->setYOnRight(host->m_rect);  // its label sits right of its tick labels
+    // Not part of any layout: after each layout pass, cover the host's plot area.
+    connect(m_plot, &QCustomPlot::afterLayout, this, [this] {
+        m_rect->setOuterRect(m_twinHost->m_rect->rect());
+        m_rect->update(QCPLayoutElement::upPreparation);  // tick positions and labels
+        m_rect->update(QCPLayoutElement::upLayout);       // its legend and axes
+    });
+    connect(m_plot, &QCustomPlot::beforeReplot, this, &PlotRenderer::updateTwinMargin);
+    applyStyle();
+    applyAxesInfo();
+}
+
+void PlotRenderer::updateTwinMargin()
+{
+    if (!m_twinHost || !m_panelVisible) return;
+    // Tick labels and label of the right axis need room in the host's right margin.
+    // Width of the right axis: outward ticks, tick labels and the axis label.
+    const QFontMetrics fm(m_y->tickLabelFont());
+    int labels = 0;
+    for (const QString& t : m_y->tickVectorLabels()) labels = std::max(labels, fm.horizontalAdvance(t));
+    if (labels == 0) labels = fm.horizontalAdvance("0.000");  // before the first layout
+    const int need = std::max(0, m_y->tickLengthOut()) + m_y->tickLabelPadding() + labels + 6 +
+                     int(std::ceil(m_axisLabels->ySize().height()));
+    if (need != m_twinHost->m_twinMargin) {
+        m_twinHost->m_twinMargin = need;
+        m_twinHost->updateRightPadding();
+        m_plot->replot(QCustomPlot::rpQueuedReplot);
+    }
+}
+
+void PlotRenderer::updateRightPadding()
+{
+    m_y2->setPadding(m_colorBarWidth + m_twinMargin);
+}
+
 PlotRenderer::PlotRenderer(PlotModel* model, QCustomPlot* plot, QCPAxisRect* rect, bool primary,
                            QObject* parent)
     : QObject(parent), m_model(model), m_plot(plot), m_rect(rect), m_primary(primary)
@@ -225,6 +282,7 @@ void PlotRenderer::setPanelVisible(bool visible)
     // Axes, plottables and the inset legend follow the axis rect's visibility.
     m_rect->setVisible(visible);
     m_axisLabels->setVisible(visible);
+    if (m_twin) m_twin->setPanelVisible(visible);  // a twin shows / hides with its host
     m_peaks->setVisible(visible);
     if (m_colorBar) m_colorBar->setVisible(false);  // re-shown by updateColorBar()
     for (int i = 0; i < m_plot->itemCount(); ++i) {
@@ -888,10 +946,9 @@ void PlotRenderer::updateColorBar()
             break;
         }
     if (!shown) {
-        if (m_colorBar && m_colorBar->visible()) {
-            m_colorBar->setVisible(false);
-            m_y2->setPadding(0);
-        }
+        if (m_colorBar && m_colorBar->visible()) m_colorBar->setVisible(false);
+        m_colorBarWidth = 0;
+        updateRightPadding();
         return;
     }
     if (!m_colorBar) {
@@ -903,7 +960,8 @@ void PlotRenderer::updateColorBar()
     m_colorBar->set(img->gradient(), img->dataRange(), shown->name, font(st.ytick.labelSize), st.axesEdge,
                     st.ytick.labelColor, st.mathText);
     m_colorBar->setVisible(m_panelVisible);
-    m_y2->setPadding(m_colorBar->requiredWidth());  // room in the right margin (applyStyle resets it to 0)
+    m_colorBarWidth = m_colorBar->requiredWidth();  // room in the right margin
+    updateRightPadding();
 }
 
 void PlotRenderer::updateMatrixImage(ObjectId id)
@@ -1139,7 +1197,7 @@ void PlotRenderer::applyStyle()
         const int pad = int(std::lround(st.figurePadding));
         p->plotLayout()->setMargins(QMargins(pad, pad, pad, pad));
     }
-    m_rect->setBackground(st.axesFace);
+    m_rect->setBackground(m_twinHost ? QBrush(Qt::NoBrush) : QBrush(st.axesFace));  // a twin is see-through
     QPen diagPen(st.axesEdge, 1, Qt::DashLine);  // the y = x line follows the frame colour
     diagPen.setCosmetic(true);
     m_diagonal->setPen(diagPen);
@@ -1194,7 +1252,12 @@ void PlotRenderer::applyStyle()
     lg->setBorderPen(st.legendFrame ? QPen(st.legendEdge) : QPen(Qt::NoPen));
     lg->setBrush(st.legendFrame ? QBrush(st.legendFace) : QBrush(Qt::NoBrush));
     lg->setRowSpacing(st.legendFrame ? 0 : 2);
-    m_rect->insetLayout()->setInsetAlignment(0, locToAlignment(st.legendLoc));
+    Qt::Alignment legendAlign = locToAlignment(st.legendLoc);
+    if (m_twinHost) {  // the twin's legend on the other side, so the two do not overlap
+        if (legendAlign & Qt::AlignRight) legendAlign = (legendAlign & ~Qt::AlignRight) | Qt::AlignLeft;
+        else if (legendAlign & Qt::AlignLeft) legendAlign = (legendAlign & ~Qt::AlignLeft) | Qt::AlignRight;
+    }
+    m_rect->insetLayout()->setInsetAlignment(0, legendAlign);
 
     // In-frame label (e.g. "**CMS** *Simulation*")
     const Qt::Alignment ia = locToAlignment(st.labelInsideLoc);

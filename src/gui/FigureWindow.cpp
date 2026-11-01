@@ -324,21 +324,34 @@ void FigureWindow::setGrid(const GridSpec& spec)
         }
     }
     ensureGrid();
+    // Grid cells hold the ordinary panels in creation order; twin panels
+    // (twinx) are drawn over their host and follow it.
+    auto cells = [this] {
+        QList<int> out;
+        for (size_t i = 0; i < m_axes.size(); ++i)
+            if (m_axes[i].twinOf < 0) out << int(i);
+        return out;
+    };
     // Create the missing panels (existing ones keep their content).
-    while (int(m_axes.size()) < rows * cols) createPanel();
+    while (cells().size() < rows * cols) createPanel();
+    const QList<int> cell = cells();
     // Place panels row-major.
-    for (const Axes& ax : m_axes)
-        if (m_grid->elements(false).contains(ax.renderer->axisRect())) m_grid->take(ax.renderer->axisRect());
+    for (int i : cell)
+        if (m_grid->elements(false).contains(m_axes[size_t(i)].renderer->axisRect()))
+            m_grid->take(m_axes[size_t(i)].renderer->axisRect());
     m_grid->simplify();
-    for (size_t i = 0; i < m_axes.size(); ++i) {
-        const bool inGrid = int(i) < rows * cols;
+    for (int k = 0; k < cell.size(); ++k) {
+        PlotRenderer* r = m_axes[size_t(cell[k])].renderer;
+        const bool inGrid = k < rows * cols;
         // Panels beyond a smaller grid keep their content (undo, Python
         // handles) but must not be drawn at their old position.
-        m_axes[i].renderer->setPanelVisible(inGrid);
+        r->setPanelVisible(inGrid);
         // Several panels: each shows its own title; the header the suptitle.
-        m_axes[i].renderer->setOwnTitle(rows * cols > 1);
-        if (inGrid) m_grid->addElement(int(i) / cols, int(i) % cols, m_axes[i].renderer->axisRect());
+        r->setOwnTitle(rows * cols > 1);
+        if (inGrid) m_grid->addElement(k / cols, k % cols, r->axisRect());
     }
+    auto cellRect = [&](int k) { return k < cell.size() ? m_axes[size_t(cell[k])].renderer->axisRect() : nullptr; };
+    auto cellRenderer = [&](int k) { return k < cell.size() ? m_axes[size_t(cell[k])].renderer : nullptr; };
     if (spec.heightRatios.size() == rows) m_grid->setRowStretchFactors(spec.heightRatios);
     if (spec.widthRatios.size() == cols) m_grid->setColumnStretchFactors(spec.widthRatios);
     m_grid->setRowSpacing(spec.hspace >= 0 ? spec.hspace : 8);
@@ -351,13 +364,13 @@ void FigureWindow::setGrid(const GridSpec& spec)
         auto* g = new QCPMarginGroup(m_plot);
         m_marginGroups << g;
         for (int r = 0; r < rows; ++r)
-            if (auto* rect = axesRect(r * cols + c)) rect->setMarginGroup(QCP::msLeft | QCP::msRight, g);
+            if (auto* rect = cellRect(r * cols + c)) rect->setMarginGroup(QCP::msLeft | QCP::msRight, g);
     }
     for (int r = 0; r < rows; ++r) {
         auto* g = new QCPMarginGroup(m_plot);
         m_marginGroups << g;
         for (int c = 0; c < cols; ++c)
-            if (auto* rect = axesRect(r * cols + c)) rect->setMarginGroup(QCP::msTop | QCP::msBottom, g);
+            if (auto* rect = cellRect(r * cols + c)) rect->setMarginGroup(QCP::msTop | QCP::msBottom, g);
     }
 
     // Shared axes: link ranges; inner panels drop duplicate tick labels.
@@ -379,9 +392,9 @@ void FigureWindow::setGrid(const GridSpec& spec)
         }
         return -1;
     };
-    const int n = std::min(rows * cols, int(m_axes.size()));
+    const int n = std::min(rows * cols, int(cell.size()));
     for (int i = 0; i < n; ++i) {
-        PlotRenderer* r = m_axes[size_t(i)].renderer;
+        PlotRenderer* r = cellRenderer(i);
         const int row = i / cols, col = i % cols;
         const bool hideX = (spec.sharex == GridSpec::Share::All || spec.sharex == GridSpec::Share::Column) &&
                            row < rows - 1;
@@ -399,8 +412,8 @@ void FigureWindow::setGrid(const GridSpec& spec)
         rect->setAutoMargins(autoSides);
         rect->setMargins(fixed);
         const int lx = leader(spec.sharex, row, col), ly = leader(spec.sharey, row, col);
-        if (lx >= 0 && lx != i) link(axesRenderer(lx)->xAxis(), r->xAxis());
-        if (ly >= 0 && ly != i) link(axesRenderer(ly)->yAxis(), r->yAxis());
+        if (lx >= 0 && lx != i) link(cellRenderer(lx)->xAxis(), r->xAxis());
+        if (ly >= 0 && ly != i) link(cellRenderer(ly)->yAxis(), r->yAxis());
     }
     // Autoscaling a linked axis fits all panels that share it (the union).
     for (int i = 0; i < n; ++i) {
@@ -410,11 +423,12 @@ void FigureWindow::setGrid(const GridSpec& spec)
             if (j == i) continue;
             const int r2 = j / cols, c2 = j % cols;
             if (leader(spec.sharex, row, col) >= 0 && leader(spec.sharex, row, col) == leader(spec.sharex, r2, c2))
-                xs << m_axes[size_t(j)].renderer;
+                xs << cellRenderer(j);
             if (leader(spec.sharey, row, col) >= 0 && leader(spec.sharey, row, col) == leader(spec.sharey, r2, c2))
-                ys << m_axes[size_t(j)].renderer;
+                ys << cellRenderer(j);
         }
-        m_axes[size_t(i)].renderer->setSharedWith(xs, ys);
+        if (PlotRenderer* twin = cellRenderer(i)->twin()) xs << twin;  // its twin shares x too
+        cellRenderer(i)->setSharedWith(xs, ys);
     }
     m_gridSpec = spec;
     m_plot->replot();
@@ -628,6 +642,34 @@ void FigureWindow::ensureGrid()
     m_grid = new QCPLayoutGrid;
     outer->addElement(row, col, m_grid);
     m_grid->addElement(0, 0, first);
+}
+
+int FigureWindow::createTwinPanel(int host)
+{
+    if (host < 0 || host >= axesCount() || m_axes[size_t(host)].twinOf >= 0) return -1;
+    PlotRenderer* hostRenderer = m_axes[size_t(host)].renderer;
+    if (hostRenderer->twin()) return -1;  // one twin per panel
+    // The twin's axis rect covers exactly the host's plot area (the renderer
+    // keeps it there after every layout pass); no margins of its own.
+    auto* rect = new QCPAxisRect(m_plot, true);
+    rect->setAutoMargins(QCP::msNone);
+    rect->setMargins(QMargins());
+    rect->setMinimumMargins(QMargins());
+    auto* model = new PlotModel(this);
+    model->setStyle(m_axes[size_t(host)].model->style());
+    AxesInfo info = model->axesInfo();
+    info.gridVisible = false;  // the host draws the grid
+    model->setAxesInfo(info);
+    auto* editor = new PlotEditor(model, m_stack, this);
+    auto* renderer = new PlotRenderer(model, m_plot, rect, hostRenderer, this);
+    Axes ax{model, editor, renderer};
+    ax.twinOf = host;
+    m_axes.push_back(ax);
+    m_controller->addTarget(renderer, editor);
+    wireAxes(m_axes.back());
+    emit panelCreated(int(m_axes.size()) - 1);
+    m_plot->replot();
+    return int(m_axes.size()) - 1;
 }
 
 int FigureWindow::createPanel()

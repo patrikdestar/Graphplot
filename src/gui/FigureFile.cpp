@@ -110,8 +110,9 @@ bool FigureWindow::saveFigure(const QString& fileName, QString* error) const
     QJsonArray panelArray;
     for (int i : panels) {
         const Axes& ax = m_axes[size_t(i)];
-        panelArray << QJsonObject{{"model", modelToJson(*ax.model)},
-                                  {"view", viewToJson(ax.renderer->viewRange())}};
+        QJsonObject panel{{"model", modelToJson(*ax.model)}, {"view", viewToJson(ax.renderer->viewRange())}};
+        if (ax.twinOf >= 0) panel["twinOf"] = ax.twinOf;
+        panelArray << panel;
     }
     root["panels"] = panelArray;
 
@@ -243,7 +244,12 @@ bool FigureWindow::loadFigure(const QString& fileName, QString* error)
             spec.sharey = shareFrom(g["sharey"]);
             setGrid(spec);
         }
-        while (axesCount() < panels.size()) createPanel();  // panels hidden by a smaller grid
+        // Panels hidden by a smaller grid, and twin panels (over their host).
+        for (qsizetype i = axesCount(); i < panels.size(); ++i) {
+            const int host = panels[i].toObject()["twinOf"].toInt(-1);
+            if (host >= 0 && host < axesCount() ? createTwinPanel(host) < 0 : (createPanel(), false))
+                return fail(QString("Panel %1: invalid twin").arg(i + 1));
+        }
         for (qsizetype i = 0; i < panels.size(); ++i) {
             target << int(i);
             QString err;

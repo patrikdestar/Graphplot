@@ -1681,6 +1681,19 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         return self->alive() && inGui([&] { return self->w()->isVisible(); });
     });
     fig.def("_axes_count", [](FigurePtr self) { return inGui([&] { return self->w()->axesCount(); }); });
+    fig.def("_twinx", [](FigurePtr self, int host) {
+        const int i = inGui([&] {
+            if (self->w()->hasTimeline()) throw py::value_error("timeline rows have no twin axes");
+            const int t = self->w()->createTwinPanel(host);
+            self->connectCallbacks();
+            return t;
+        });
+        if (i < 0) throw py::value_error("this panel cannot get a twin (it is one, or already has one)");
+        return i;
+    });
+    fig.def("_twin_of", [](FigurePtr self, int i) {
+        return inGui([&] { return i >= 0 && i < self->w()->axesCount() ? self->w()->axes(i).twinOf : -1; });
+    });
     fig.def("_current", [](FigurePtr self) { return inGui([&] { return self->w()->currentAxes(); }); });
     // Target panel of this figure for calls from the current Python thread
     // (-1: the current panel). Thread-local: no locking needed.
