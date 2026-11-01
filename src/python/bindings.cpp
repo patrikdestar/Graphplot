@@ -21,6 +21,7 @@
 #include "gui/PeakTable.h"
 #include "gui/Timeline.h"
 #include "model/Contour.h"
+#include "model/DataExport.h"
 #include "model/PeakPicker.h"
 #include "model/Statistics.h"
 #include "model/Style.h"
@@ -1092,6 +1093,44 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
             inGui([&] { self->editor()->setRegion(Region{true, xmin, xmax}); });
         },
         py::arg("xmin"), py::arg("xmax"));
+    fig.def(
+        "save",
+        [](FigurePtr self, const std::string& filename) {
+            const QString fn = toPath(filename);
+            QString err;
+            if (!inGui([&] { return self->w()->saveFigure(fn, &err); })) throw std::runtime_error(err.toStdString());
+        },
+        py::arg("filename"),
+        "Save everything (data, peaks with labels/comments, markers, annotations, region, panels,\n"
+        "styles, timeline) as a .gpfig file; reopen with plotter.load() or File > Open figure.");
+    fig.def("_load", [](FigurePtr self, const std::string& filename) {
+        const QString fn = toPath(filename);
+        QString err;
+        if (!inGui([&] {
+                const bool ok = self->w()->loadFigure(fn, &err);
+                self->connectCallbacks();  // panels created by the file
+                return ok;
+            }))
+            throw std::runtime_error(err.toStdString());
+    });
+    fig.def("_has_timeline", [](FigurePtr self) { return inGui([&] { return self->w()->hasTimeline(); }); });
+    fig.def(
+        "export_data",
+        [](FigurePtr self, const std::string& filename, bool region) {
+            const QString fn = toPath(filename);
+            QString err;
+            const bool ok = inGui([&] {
+                const Region r = self->model()->region();
+                if (region && !r.active) {
+                    err = "no region is selected";
+                    return false;
+                }
+                return writeDataCsv(*self->model(), fn, region ? std::optional<Region>(r) : std::nullopt, &err);
+            });
+            if (!ok) throw std::runtime_error(err.toStdString());
+        },
+        py::arg("filename"), py::kw_only(), py::arg("region") = false,
+        "Write the visible 1D data of the current panel as CSV (region=True: only the selected X region).");
     fig.def(
         "region_stats",
         [](FigurePtr self, const py::object& xmin, const py::object& xmax) {

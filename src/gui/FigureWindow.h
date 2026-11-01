@@ -88,6 +88,14 @@ public:
     QList<QCPMarginGroup*>& marginGroups() { return m_marginGroups; }
 
     bool openDataFile(const QString& fileName, QString* error = nullptr);
+    // Figure files (.gpfig): everything needed to continue working later -
+    // all panels with their data, peaks, markers, annotations, region, axes
+    // and style, the panel grid and views, and the timeline (rows, markers,
+    // window). loadFigure() expects an empty window (see isEmpty()).
+    bool saveFigure(const QString& fileName, QString* error = nullptr) const;
+    bool loadFigure(const QString& fileName, QString* error = nullptr);
+    bool isEmpty() const;  // no data or objects in any panel
+    QString figureFileName() const { return m_figureFile; }
     bool openMatrixFile(const QString& fileName, QString* error = nullptr);
     // Opens a Bruker processed 2D spectrum (pdata dir, 2rr file or experiment
     // dir) with ppm axes, NMR axis orientation and nucleus axis labels.
@@ -122,6 +130,15 @@ private:
     void onOpenMatrix();
     void onOpenBruker();
     void onOpenTimeSeries();
+    void openTimeSeries(const QStringList& files);
+    void onOpenFigure();
+    void onSaveFigure(bool saveAs);
+    void onExportData(bool regionOnly);
+    // Opens a .gpfig here if this window is empty, else in a new window.
+    void openFigureFile(const QString& path);
+    // "Open recent": remembered files (kind: data, matrix, timeseries, bruker, figure).
+    void addRecent(const QString& kind, const QStringList& paths);
+    void fillRecentMenu(QMenu* menu);
     void updateLevelStatus();
     void updateRegionLabel();
     void limitPlainKeyShortcuts();
@@ -170,6 +187,7 @@ private:
     QAction* m_levelsAction = nullptr;
     QString m_lastDir;
     QSize m_figureSize;
+    QString m_figureFile;  // last saved / opened .gpfig
     Timeline* m_timeline = nullptr;
     struct ViewHistory {
         QList<ViewRange> back, forward;

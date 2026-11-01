@@ -49,7 +49,7 @@ from . import style
 
 __all__ = [
     "style", "figure", "Axes", "timeline", "Timeline", "TimelineRow", "TimePin", "show", "pause", "figures", "close_all",
-    "theme", "themes", "tooltips",
+    "theme", "themes", "tooltips", "load",
     "Figure", "Line", "Contour", "Marker", "Annotation", "Peak",
 ]
 
@@ -183,7 +183,7 @@ def _accept_pathlike(name: str, keyword: str) -> None:
 
 
 for _name in ("open_bruker", "export_peaks", "import_peaks", "use_style", "save_style",
-              "savefig", "screenshot"):
+              "savefig", "screenshot", "save", "export_data"):
     # The keyword name of the path argument, read from the native signature.
     _doc = getattr(Figure, _name).__doc__ or ""
     _kw = _doc.split("(self: plotter._plotter.Figure, ", 1)[-1].split(":", 1)[0]
@@ -744,6 +744,22 @@ class Timeline:
 
     def __repr__(self):
         return f"<Timeline rows={[r.name for r in self.rows]}>"
+
+
+def load(path) -> "Figure | Timeline":
+    """Open a figure saved with fig.save() / File > Save figure (.gpfig).
+
+    Returns a Timeline for timeline figures, otherwise a Figure. The window is
+    not shown until you call show()."""
+    import os
+
+    fig = figure()
+    try:
+        fig._load(os.fspath(path))
+    except Exception:
+        fig.close()
+        raise
+    return Timeline(fig) if fig._has_timeline() else fig
 
 
 def timeline(title: str | None = None, size: tuple[int, int] = (1200, 800)) -> Timeline:

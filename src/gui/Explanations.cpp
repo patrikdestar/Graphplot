@@ -69,6 +69,9 @@ const QHash<QString, QString>& table()
         {"Selected region/X max", "End of the selected X region. Drag its edges in the plot or type here."},
         {"Selected region/Width", "Width of the selected region."},
         {"Selected region/Clear selection", "Remove the region selection (undo with Ctrl+Z)."},
+        {"Selected region/Copy statistics",
+         "Copy the statistics table (n, mean, sd, min, max, rms, integral per dataset) to the clipboard,\n"
+         "tab-separated, ready to paste into a spreadsheet."},
 
         // ---- Peak -------------------------------------------------------------------------
         {"Peak/Label", "Assignment shown on the plot, e.g. H3/C5. Supports $math$."},
@@ -110,6 +113,13 @@ const QHash<QString, QString>& table()
         {"action/Open 2D matrix…", "Open a text grid of z values (one row per y) as a contour plot."},
         {"action/Open time series (CSV)…", "Open sensor logs (time + signal columns) as stacked timeline rows."},
         {"action/Open Bruker 2D spectrum…", "Open a processed TopSpin 2D spectrum (experiment or pdata folder)."},
+        {"action/Open figure…", "Open a saved figure (.gpfig) with all its data, peaks, markers and settings."},
+        {"action/Save figure", "Save everything in this window (data, peaks with labels and comments, markers,\n"
+                               "annotations, region, panels, styles, timeline) as a .gpfig file to continue later."},
+        {"action/Save figure as…", "Save the figure under a new name."},
+        {"action/Export data (CSV)…", "Save the visible 1D data of the current panel as a CSV table\n"
+                                      "(one column per dataset when they share x, otherwise one row per point)."},
+        {"action/Export region data (CSV)…", "Like Export data, but only the points inside the selected X region."},
         {"action/Export…", "Save the figure as PNG, SVG or PDF (100 figure pixels per inch)."},
         {"action/Copy figure to clipboard", "Copy the figure as an image, ready to paste into a document."},
         {"action/Close", "Close this window."},

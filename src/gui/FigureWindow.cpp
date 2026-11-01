@@ -3,6 +3,7 @@
 
 #include "Appearance.h"
 #include "Explanations.h"
+#include "model/DataExport.h"
 
 #include "Icons.h"
 #include "PeakTable.h"
@@ -32,6 +33,7 @@
 #include <QStatusBar>
 #include <QToolBar>
 #include <QSignalBlocker>
+#include <QSettings>
 #include <QClipboard>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -217,17 +219,21 @@ void FigureWindow::openPaths(const QStringList& paths)
             QStringList errs;
             applyStyle(path, &errs);
             err = errs.join("; ");
+        } else if (fi.suffix().compare("gpfig", Qt::CaseInsensitive) == 0) {
+            openFigureFile(path);  // reports its own errors
         } else if (fi.isDir() || fi.fileName() == "2rr") {
-            if (openBruker(path, &err) != kInvalidId) err.clear();
+            if (openBruker(path, &err) != kInvalidId) err.clear(), addRecent("bruker", {path});
         } else if (m_timeline) {
             logs << path;  // loaded together below (one time origin, one undo step)
         } else if (openDataFile(path, &err)) {
             err.clear();
+            addRecent("data", {path});
         }
         if (!err.isEmpty()) errors << fi.fileName() + ": " + err;
     }
     QString err;
     if (!logs.isEmpty() && !m_timeline->loadCsv(logs, false, &err)) errors << err;
+    else if (!logs.isEmpty()) addRecent("timeseries", logs);
     if (!errors.isEmpty()) QMessageBox::warning(this, "Open", errors.join("\n"));
 }
 
@@ -413,6 +419,11 @@ void FigureWindow::onOpenTimeSeries()
         "Data files (*.csv *.txt *.tsv *.dat);;All files (*)");
     if (files.isEmpty()) return;
     m_lastDir = QFileInfo(files.front()).absolutePath();
+    openTimeSeries(files);
+}
+
+void FigureWindow::openTimeSeries(const QStringList& files)
+{
     // A figure that already holds other plots opens the logs in a new window.
     FigureWindow* target = this;
     const bool empty = m_axes.size() == 1 && m_model->datasets().empty() && m_model->matrices().empty();
@@ -424,6 +435,126 @@ void FigureWindow::onOpenTimeSeries()
     QString err;
     if (!target->timeline()->loadCsv(files, false, &err))
         QMessageBox::warning(target, "Open time series", err);
+    else
+        addRecent("timeseries", files);
+}
+
+// ---- figure files, data export, recent files -------------------------------------
+
+void FigureWindow::openFigureFile(const QString& path)
+{
+    FigureWindow* target = this;
+    if (!isEmpty()) {
+        target = new FigureWindow;
+        target->setAttribute(Qt::WA_DeleteOnClose);
+    }
+    QString err;
+    if (!target->loadFigure(path, &err)) {
+        QMessageBox::warning(this, "Open figure", err);
+        if (target != this) target->close();
+        return;
+    }
+    target->show();
+    target->raise();
+    addRecent("figure", {path});
+}
+
+void FigureWindow::onOpenFigure()
+{
+    const QString fn = QFileDialog::getOpenFileName(this, "Open figure", m_lastDir,
+                                                    "Graphplot figures (*.gpfig);;All files (*)");
+    if (fn.isEmpty()) return;
+    m_lastDir = QFileInfo(fn).absolutePath();
+    openFigureFile(fn);
+}
+
+void FigureWindow::onSaveFigure(bool saveAs)
+{
+    QString fn = m_figureFile;
+    if (saveAs || fn.isEmpty()) {
+        const QString suggestion =
+            fn.isEmpty() ? QDir(m_lastDir.isEmpty() ? QDir::homePath() : m_lastDir).filePath("figure.gpfig") : fn;
+        fn = QFileDialog::getSaveFileName(this, "Save figure", suggestion, "Graphplot figures (*.gpfig)");
+        if (fn.isEmpty()) return;
+        if (QFileInfo(fn).suffix().isEmpty()) fn += ".gpfig";
+        m_lastDir = QFileInfo(fn).absolutePath();
+    }
+    QString err;
+    if (!saveFigure(fn, &err)) {
+        QMessageBox::warning(this, "Save figure", err);
+        return;
+    }
+    m_stack->setClean();
+    addRecent("figure", {fn});
+    statusBar()->showMessage("Saved " + QFileInfo(fn).fileName(), 3000);
+}
+
+void FigureWindow::onExportData(bool regionOnly)
+{
+    const Region r = m_model->region();
+    if (regionOnly && !r.active) {
+        QMessageBox::information(this, "Export data", "Select an X region first (Region tool, R).");
+        return;
+    }
+    QString fn = QFileDialog::getSaveFileName(this, regionOnly ? "Export region data" : "Export data",
+                                              QDir(m_lastDir).filePath("data.csv"), "CSV files (*.csv)");
+    if (fn.isEmpty()) return;
+    if (QFileInfo(fn).suffix().isEmpty()) fn += ".csv";
+    m_lastDir = QFileInfo(fn).absolutePath();
+    QString err;
+    if (!writeDataCsv(*m_model, fn, regionOnly ? std::optional<Region>(r) : std::nullopt, &err))
+        QMessageBox::warning(this, "Export data", err);
+    else
+        statusBar()->showMessage("Data written to " + QFileInfo(fn).fileName(), 3000);
+}
+
+void FigureWindow::addRecent(const QString& kind, const QStringList& paths)
+{
+    QStringList abs;
+    for (const QString& p : paths) abs << QFileInfo(p).absoluteFilePath();
+    const QString entry = kind + "|" + abs.join(';');
+    QSettings settings("Graphplot", "Graphplot");
+    QStringList list = settings.value("recentFiles").toStringList();
+    list.removeAll(entry);
+    list.prepend(entry);
+    while (list.size() > 12) list.removeLast();
+    settings.setValue("recentFiles", list);
+}
+
+void FigureWindow::fillRecentMenu(QMenu* menu)
+{
+    menu->clear();
+    QSettings settings("Graphplot", "Graphplot");
+    const QStringList list = settings.value("recentFiles").toStringList();
+    static const QHash<QString, QString> kinds = {{"data", "data"},          {"matrix", "2D matrix"},
+                                                  {"timeseries", "time series"}, {"bruker", "Bruker"},
+                                                  {"figure", "figure"}};
+    for (const QString& entry : list) {
+        const QString kind = entry.section('|', 0, 0);
+        const QStringList paths = entry.section('|', 1).split(';', Qt::SkipEmptyParts);
+        if (!kinds.contains(kind) || paths.isEmpty()) continue;
+        QStringList names;
+        for (const QString& p : paths) names << QFileInfo(p).fileName();
+        QAction* a = menu->addAction(QString("%1  (%2)").arg(names.join(", "), kinds.value(kind)));
+        a->setToolTip(paths.join("\n"));
+        a->setEnabled(QFileInfo::exists(paths.front()));
+        connect(a, &QAction::triggered, this, [this, kind, paths] {
+            QString err;
+            bool ok = true;
+            if (kind == "figure") openFigureFile(paths.front());
+            else if (kind == "timeseries") openTimeSeries(paths);
+            else if (kind == "bruker") ok = openBruker(paths.front(), &err) != kInvalidId;
+            else if (kind == "matrix") ok = openMatrixFile(paths.front(), &err);
+            else ok = openDataFile(paths.front(), &err);
+            if (!ok) QMessageBox::warning(this, "Open", err);
+            else if (kind != "figure" && kind != "timeseries") addRecent(kind, paths);
+        });
+    }
+    if (menu->isEmpty()) menu->addAction("(no recent files)")->setEnabled(false);
+    menu->addSeparator();
+    connect(menu->addAction("Clear the list"), &QAction::triggered, this, [] {
+        QSettings("Graphplot", "Graphplot").remove("recentFiles");
+    });
 }
 
 void FigureWindow::ensureGrid()
@@ -483,10 +614,21 @@ void FigureWindow::buildActions()
     openTs->setShortcut(QKeySequence("Ctrl+T"));
     QAction* bruker = file->addAction("Open &Bruker 2D spectrum…", this, &FigureWindow::onOpenBruker);
     bruker->setShortcut(QKeySequence("Ctrl+B"));
+    QAction* openFig = file->addAction("Open &figure…", this, &FigureWindow::onOpenFigure);
+    openFig->setShortcut(QKeySequence("Ctrl+Shift+O"));
+    QMenu* recent = file->addMenu("Open &recent");
+    connect(recent, &QMenu::aboutToShow, this, [this, recent] { fillRecentMenu(recent); });
+    file->addSeparator();
+    QAction* save = file->addAction("&Save figure", this, [this] { onSaveFigure(false); });
+    save->setShortcut(QKeySequence::Save);
+    QAction* saveAs = file->addAction("Save figure &as…", this, [this] { onSaveFigure(true); });
+    saveAs->setShortcut(QKeySequence("Ctrl+Shift+S"));
     QAction* exportAct = file->addAction("&Export…", this,
                                          &FigureWindow::onExport);
     icons::set(exportAct, icons::Kind::Export);
     exportAct->setShortcut(QKeySequence("Ctrl+E"));
+    file->addAction("Export &data (CSV)…", this, [this] { onExportData(false); });
+    file->addAction("Export region data (CSV)…", this, [this] { onExportData(true); });
     QAction* copyAct = file->addAction("&Copy figure to clipboard", this, &FigureWindow::copyToClipboard);
     copyAct->setShortcut(QKeySequence("Ctrl+Shift+C"));
     file->addSeparator();
@@ -864,6 +1006,7 @@ void FigureWindow::onOpenBruker()
     m_lastDir = QFileInfo(dir).absolutePath();
     QString err;
     if (openBruker(dir, &err) == kInvalidId) QMessageBox::warning(this, "Open Bruker spectrum", err);
+    else addRecent("bruker", {dir});
 }
 
 void FigureWindow::onOpenMatrix()
@@ -874,6 +1017,7 @@ void FigureWindow::onOpenMatrix()
     m_lastDir = QFileInfo(fn).absolutePath();
     QString err;
     if (!openMatrixFile(fn, &err)) QMessageBox::warning(this, "Open 2D matrix", err);
+    else addRecent("matrix", {fn});
 }
 
 void FigureWindow::updateLevelStatus()
@@ -898,6 +1042,7 @@ void FigureWindow::onOpen()
     m_lastDir = QFileInfo(fn).absolutePath();
     QString err;
     if (!openDataFile(fn, &err)) QMessageBox::warning(this, "Open data", err);
+    else addRecent("data", {fn});
 }
 
 void FigureWindow::setFigureSize(const QSize& size)

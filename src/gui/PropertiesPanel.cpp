@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 #include "PropertiesPanel.h"
 
+#include "model/DataExport.h"
 #include "render/DisplayTheme.h"
 
 #include "commands/PlotEditor.h"
@@ -26,6 +27,8 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QClipboard>
+#include <QGuiApplication>
 #include <QDoubleValidator>
 #include <QStackedWidget>
 #include <QTreeWidget>
@@ -480,7 +483,15 @@ QWidget* PropertiesPanel::buildRegionPage()
     m_rgStats->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_rgStats->setWordWrap(true);
     form->addRow(m_rgStats);
-    form->addRow(clear);
+    auto* copy = new QPushButton("Copy statistics");
+    auto* buttons = new QHBoxLayout;
+    buttons->addWidget(copy);
+    buttons->addWidget(clear);
+    form->addRow(buttons);
+    connect(copy, &QPushButton::clicked, this, [this] {
+        const Region r = m_model->region();
+        if (r.active) QGuiApplication::clipboard()->setText(statisticsTsv(*m_model, r.xmin, r.xmax));
+    });
     connect(m_rgMin, &QDoubleSpinBox::valueChanged, this, &PropertiesPanel::commitRegion);
     connect(m_rgMax, &QDoubleSpinBox::valueChanged, this, &PropertiesPanel::commitRegion);
     connect(clear, &QPushButton::clicked, this, [this] { m_editor->clearRegion(); });

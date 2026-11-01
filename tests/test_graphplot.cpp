@@ -5,6 +5,7 @@
 #include "gui/Appearance.h"
 #include "gui/FigureWindow.h"
 #include "gui/Timeline.h"
+#include "model/DataExport.h"
 #include "model/DataLoader.h"
 #include "model/PlotModel.h"
 #include "qcustomplot.h"
@@ -1504,6 +1505,131 @@ private slots:
         missing.removeDuplicates();
         for (const QString& m : missing) qWarning("no hover explanation: %s", qPrintable(m));
         QVERIFY2(missing.isEmpty(), qPrintable("no hover explanation:\n  " + missing.join("\n  ")));
+    }
+
+    // ---- figure files and data export -----------------------------------------------
+    void figureFileRoundTrip()
+    {
+        auto w = makeWindow();  // panel 0: the ramp
+        PlotEditor* ed = w->editor();
+        Dataset d = ramp("with errors", 5);
+        d.yErrLow = d.yErrHigh = {0.1, 0.2, 0.3, 0.4, 0.5};
+        d.y[2] = std::nan("");  // NaN survives the trip
+        d.style.color = QColor(10, 20, 30, 200);
+        ed->addDataset(d);
+        const ObjectId m = ed->addMatrix(peaks(21));
+        Peak p;
+        p.matrixId = m;
+        p.x = 0.3;
+        p.label = "H3/C5";
+        p.comment = "dd, J = 7.2 Hz\nsecond line, \"quoted\"";
+        ed->addPeak(p);
+        Marker mk;
+        mk.position = 42;
+        mk.label = "edge";
+        ed->addMarker(mk);
+        Annotation an;
+        an.x = 1, an.y = 2, an.text = "$\\alpha$ note";
+        ed->addAnnotation(an);
+        ed->setRegion(Region{true, 10, 20});
+        AxesInfo info = w->model()->axesInfo();
+        info.xLabel = "ppm";
+        info.xReversed = true;
+        w->model()->setAxesInfo(info);
+        Style st = w->model()->style();
+        st.fontSize = 13;
+        w->model()->setStyle(st);
+        GridSpec g;
+        g.rows = 2;
+        g.sharex = true;
+        w->setGrid(g);
+        w->axes(1).editor->addDataset(ramp("lower", 3));
+        w->renderer()->setViewRange({5, 50, -1, 60});
+
+        QTemporaryDir dir;
+        const QString fn = dir.filePath("f.gpfig");
+        QString err;
+        QVERIFY2(w->saveFigure(fn, &err), qPrintable(err));
+
+        FigureWindow back;
+        QVERIFY2(back.loadFigure(fn, &err), qPrintable(err));
+        QCOMPARE(back.axesCount(), 2);
+        const PlotModel* a = back.axes(0).model;
+        QCOMPARE(a->datasets().size(), size_t(2));
+        const Dataset& e = a->datasets()[1];
+        QCOMPARE(e.name, QString("with errors"));
+        QCOMPARE(e.yErrHigh, d.yErrHigh);
+        QVERIFY(std::isnan(e.y[2]));
+        QCOMPARE(e.style.color, d.style.color);
+        QCOMPARE(a->matrices().size(), size_t(1));
+        QCOMPARE(a->matrices()[0].z, peaks(21).z);
+        QCOMPARE(a->peaks()[0].comment, p.comment);
+        QCOMPARE(a->peaks()[0].matrixId, a->matrices()[0].id);
+        QCOMPARE(a->markers()[0].label, QString("edge"));
+        QCOMPARE(a->annotations()[0].text, an.text);
+        QCOMPARE(a->region().xmax, 20.0);
+        QCOMPARE(a->axesInfo().xLabel, QString("ppm"));
+        QVERIFY(a->axesInfo().xReversed);
+        QCOMPARE(a->style().fontSize, 13.0);
+        QCOMPARE(back.axes(1).model->datasets()[0].name, QString("lower"));
+        QCOMPARE(back.axes(0).renderer->viewRange().xmin, 5.0);
+        QVERIFY(!back.undoStack()->canUndo());  // a fresh history
+        // Not into a window that holds data; not from a foreign file.
+        QVERIFY(!w->loadFigure(fn, &err));
+        QFile junk(dir.filePath("junk.gpfig"));
+        QVERIFY(junk.open(QIODevice::WriteOnly));
+        junk.write("{\"hello\": 1}");
+        junk.close();
+        FigureWindow empty;
+        QVERIFY(!empty.loadFigure(junk.fileName(), &err));
+    }
+
+    void timelineFigureRoundTrip()
+    {
+        auto f = makeTimeline();
+        f.tl->addPin(30, "brake");
+        f.tl->setRowHeight(f.gps, 2.5);
+        f.tl->setWindow(20, 40);
+        f.tl->setNavigatorSignal({f.gps, f.speed});
+        QTemporaryDir dir;
+        const QString fn = dir.filePath("t.gpfig");
+        QString err;
+        QVERIFY2(f.w->saveFigure(fn, &err), qPrintable(err));
+        FigureWindow back;
+        QVERIFY2(back.loadFigure(fn, &err), qPrintable(err));
+        QVERIFY(back.hasTimeline());
+        Timeline* tl = back.timeline();
+        QCOMPARE(tl->rows().size(), 2);
+        QCOMPARE(tl->rowName(tl->rows()[1]), QString("GPS"));
+        QCOMPARE(tl->rowHeight(tl->rows()[1]), 2.5);
+        QCOMPARE(int(tl->pins().size()), 1);
+        QCOMPARE(tl->pins()[0].label, QString("brake"));
+        QCOMPARE(tl->window(), (QPair<double, double>(20, 40)));
+        QCOMPARE(tl->signalName(tl->navigatorSignal()), QString("GPS / speed"));
+    }
+
+    void dataExportCsv()
+    {
+        PlotModel m;
+        Dataset a = ramp("a", 4), b = ramp("b", 4, 2.0);
+        m.insertDataset(a);
+        m.insertDataset(b);
+        QTemporaryDir dir;
+        QString err;
+        QVERIFY(writeDataCsv(m, dir.filePath("wide.csv"), std::nullopt, &err));
+        QFile wide(dir.filePath("wide.csv"));
+        QVERIFY(wide.open(QIODevice::ReadOnly));
+        QCOMPARE(QString(wide.readAll()), QString("x,a,b\n0,0,0\n1,1,2\n2,2,4\n3,3,6\n"));
+        Dataset c = ramp("c", 2);
+        c.x = {0.5, 1.5};
+        m.insertDataset(c);  // different x: long format
+        QVERIFY(writeDataCsv(m, dir.filePath("long.csv"), Region{true, 1, 2}, &err));
+        QFile lng(dir.filePath("long.csv"));
+        QVERIFY(lng.open(QIODevice::ReadOnly));
+        const QStringList lines = QString(lng.readAll()).trimmed().split('\n');
+        QCOMPARE(lines.front(), QString("dataset,x,y"));
+        QCOMPARE(lines.size(), 1 + 2 + 2 + 1);  // a: x=1,2; b: x=1,2; c: x=1.5
+        QVERIFY(statisticsTsv(m, 0, 3).startsWith("dataset\tn\tmean"));
     }
 
     void auditRound3()

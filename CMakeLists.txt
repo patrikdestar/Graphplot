@@ -41,6 +41,8 @@ add_library(graphplot_model STATIC
   src/model/Style.h src/model/Style.cpp
   src/model/TimeSeriesLoader.h src/model/TimeSeriesLoader.cpp
   src/model/Statistics.h src/model/Statistics.cpp
+  src/model/ModelJson.h src/model/ModelJson.cpp
+  src/model/DataExport.h src/model/DataExport.cpp
   src/commands/Commands.h src/commands/Commands.cpp
   src/commands/PlotEditor.h src/commands/PlotEditor.cpp)
 target_include_directories(graphplot_model PUBLIC src)
@@ -65,7 +67,7 @@ add_library(graphplot_ui STATIC
   src/gui/StyleEditor.h src/gui/StyleEditor.cpp
   src/gui/Timeline.h src/gui/Timeline.cpp
   src/gui/TimelinePanel.h src/gui/TimelinePanel.cpp
-  src/gui/FigureWindow.h src/gui/FigureWindow.cpp)
+  src/gui/FigureWindow.h src/gui/FigureWindow.cpp src/gui/FigureFile.cpp)
 target_link_libraries(graphplot_ui PUBLIC graphplot_model qcustomplot Qt6::Widgets Qt6::Svg)
 
 foreach(t graphplot_model graphplot_ui)

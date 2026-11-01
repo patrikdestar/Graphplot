@@ -713,6 +713,33 @@ class PlotterTests(unittest.TestCase):
         finally:
             plotter.theme(before)
 
+    def test_save_load_and_export_data(self):
+        import pathlib
+        f = self.fig
+        f.plot([0, 1, 2], [1, 2, 3], label="a", yerr=0.1)
+        pk_fig = plotter.figure()
+        y, x = np.mgrid[0:21, 0:21]
+        pk_fig.contour(np.exp(-((x - 7) ** 2 + (y - 9) ** 2) / 4.0))
+        p = pk_fig.add_peak(7, 9, label="H1", comment="note, with comma")
+        f.set_selected_region(0.5, 2)
+        with tempfile.TemporaryDirectory() as d:
+            f.save(pathlib.Path(d) / "a.gpfig")
+            pk_fig.save(os.path.join(d, "p.gpfig"))
+            g = plotter.load(os.path.join(d, "a.gpfig"))
+            self.assertEqual(list(g.line("a").y), [1.0, 2.0, 3.0])
+            self.assertEqual(g.get_selected_region(), (0.5, 2.0))
+            q = plotter.load(os.path.join(d, "p.gpfig"))
+            self.assertEqual(q.peaks()[0].comment, "note, with comma")
+            g.export_data(os.path.join(d, "a.csv"))
+            self.assertEqual(open(os.path.join(d, "a.csv")).read().splitlines()[1], "0,1,0.1,0.1")
+            g.export_data(os.path.join(d, "r.csv"), region=True)
+            self.assertEqual(len(open(os.path.join(d, "r.csv")).read().splitlines()), 3)
+            with self.assertRaises(RuntimeError):
+                plotter.load(os.path.join(d, "a.csv"))  # not a figure file
+            g.close()
+            q.close()
+        pk_fig.close()
+
     def test_pyplot_compat_round2(self):
         import io
         import plotter.pyplot as plt
