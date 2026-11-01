@@ -256,7 +256,7 @@ QJsonValue ticksToJson(bool custom, const QVector<double>& pos, const QStringLis
 QJsonObject axesToJson(const AxesInfo& a)
 {
     return {{"xTicks", ticksToJson(a.customXTicks, a.xTicks, a.xTickLabels)},
-            {"yTicks", ticksToJson(a.customYTicks, a.yTicks, a.yTickLabels)},{"title", a.title},       {"xLabel", a.xLabel},       {"yLabel", a.yLabel},
+            {"yTicks", ticksToJson(a.customYTicks, a.yTicks, a.yTickLabels)},{"title", a.title}, {"suptitle", a.suptitle},       {"xLabel", a.xLabel},       {"yLabel", a.yLabel},
             {"legend", a.legendVisible}, {"grid", a.gridVisible},  {"xReversed", a.xReversed},
             {"yReversed", a.yReversed}, {"diagonal", a.showDiagonal}, {"peakLabels", a.showPeakLabels},
             {"xLog", a.xLog},         {"yLog", a.yLog}};
@@ -283,6 +283,7 @@ AxesInfo axesFromJson(const QJsonObject& o)
 {
     AxesInfo a;
     a.title = o["title"].toString();
+    a.suptitle = o["suptitle"].toString();
     a.xLabel = o["xLabel"].toString();
     a.yLabel = o["yLabel"].toString();
     a.legendVisible = o["legend"].toBool(true);

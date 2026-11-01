@@ -1433,6 +1433,19 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
     auto [yg, ys] = axesProp(&AxesInfo::yLabel);
     fig.def_property("title", tg, ts);
     fig.def_property("xlabel", xg, xs);
+    fig.def_property(
+        "suptitle",
+        [](FigurePtr self) {
+            return inGui([&] { return self->w()->axes(0).model->axesInfo().suptitle.toStdString(); });
+        },
+        [](FigurePtr self, const Text& t) {
+            inGui([&] {
+                AxesInfo a = self->w()->axes(0).model->axesInfo();
+                a.suptitle = QString::fromStdString(t);
+                self->w()->axes(0).editor->setAxesInfo(a);
+            });
+        },
+        "Figure-wide title above all panels (each panel's own title is `title`).");
     // Custom ticks: positions and optional labels; None = automatic ticks.
     for (const bool isX : {true, false}) {
         fig.def(

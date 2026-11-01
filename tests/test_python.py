@@ -943,6 +943,19 @@ class PlotterTests(unittest.TestCase):
         plt.show()  # offscreen: must not block
         plt.close("all")
 
+    def test_panel_titles_and_suptitle(self):
+        f = self.fig
+        a, b = f.subplots(1, 2)
+        a.title, b.title = "left", "right"
+        f.suptitle = "Both"
+        self.assertEqual((a.title, b.title, f.suptitle), ("left", "right", "Both"))
+        with tempfile.TemporaryDirectory() as d:
+            f.save(os.path.join(d, "t.gpfig"))
+            g = plotter.load(os.path.join(d, "t.gpfig"))
+            self.assertEqual(g.suptitle, "Both")
+            self.assertEqual(g.axes[1].title, "right")
+            g.close()
+
     def test_pyplot_compat_round2(self):
         import io
         import plotter.pyplot as plt

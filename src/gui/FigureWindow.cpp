@@ -325,6 +325,8 @@ void FigureWindow::setGrid(const GridSpec& spec)
         // Panels beyond a smaller grid keep their content (undo, Python
         // handles) but must not be drawn at their old position.
         m_axes[i].renderer->setPanelVisible(inGrid);
+        // Several panels: each shows its own title; the header the suptitle.
+        m_axes[i].renderer->setOwnTitle(rows * cols > 1);
         if (inGrid) m_grid->addElement(int(i) / cols, int(i) % cols, m_axes[i].renderer->axisRect());
     }
     if (spec.heightRatios.size() == rows) m_grid->setRowStretchFactors(spec.heightRatios);

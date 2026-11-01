@@ -52,6 +52,8 @@ public:
                   const QString& left, const QString& right, const QFont& sideFont,
                   const QColor& sideColor, bool math);
     bool isEmpty() const { return m_title.isEmpty() && m_left.isEmpty() && m_right.isEmpty(); }
+    // Centre the title over the whole figure instead of the first panel's frame.
+    void setCentreOnFigure(bool on) { m_centreOnFigure = on; }
 
 protected:
     QSize minimumOuterSizeHint() const override;
@@ -65,6 +67,7 @@ private:
 
     QCPAxisRect* m_axisRect;
     RichTextBlock m_title, m_left, m_right;
+    bool m_centreOnFigure = false;
     QColor m_titleColor, m_sideColor;
 };
 
@@ -77,6 +80,9 @@ public:
     RichAxisLabels(QCustomPlot* plot, QCPAxisRect* axisRect);
     void setLabels(const QString& x, const QString& y, const QFont& font, const QColor& color,
                    bool math);
+    // Panel title above the frame (multi-panel figures; empty = none).
+    void setTitle(const QString& title, const QFont& font, const QColor& color, bool math);
+    QSizeF titleSize() const { return m_title.size(); }
     QSizeF xSize() const { return m_x.size(); }
     QSizeF ySize() const { return m_y.size(); }
 
@@ -86,8 +92,8 @@ protected:
 
 private:
     QCPAxisRect* m_axisRect;
-    RichTextBlock m_x, m_y;
-    QColor m_color;
+    RichTextBlock m_x, m_y, m_title;
+    QColor m_color, m_titleColor;
 };
 
 // Legend entry with a rich-text name.

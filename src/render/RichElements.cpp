@@ -118,9 +118,11 @@ void HeaderElement::draw(QCPPainter* painter)
                      m_sideColor);
     // When stacked, the left label and title move up one line.
     const double lift = stacked() ? m_right.size().height() + 2 : 0;
+    // A figure-wide title (multi-panel figures) is centred over the figure.
+    const double centre = m_centreOnFigure ? mRect.center().x() : ar.center().x();
     if (!m_title.isEmpty())
         m_title.draw(painter,
-                     QPointF(ar.center().x() - m_title.size().width() / 2,
+                     QPointF(centre - m_title.size().width() / 2,
                              bottom - lift - m_title.size().height()),
                      m_titleColor);
 }
@@ -138,6 +140,12 @@ void RichAxisLabels::setLabels(const QString& x, const QString& y, const QFont& 
     m_x.set(x, font, math);
     m_y.set(y, font, math);
     m_color = color;
+}
+
+void RichAxisLabels::setTitle(const QString& title, const QFont& font, const QColor& color, bool math)
+{
+    m_title.set(title, font, math);
+    m_titleColor = color;
 }
 
 void RichAxisLabels::applyDefaultAntialiasingHint(QCPPainter* painter) const
@@ -158,6 +166,10 @@ void RichAxisLabels::draw(QCPPainter* painter)
     if (!m_y.isEmpty()) {
         const QSizeF s = m_y.size();
         m_y.drawVertical(painter, QPointF(outer.left() + s.height() / 2 + 1, ar.center().y()), m_color);
+    }
+    if (!m_title.isEmpty()) {  // in the top margin (reserved by the top axis' label)
+        const QSizeF s = m_title.size();
+        m_title.draw(painter, QPointF(ar.center().x() - s.width() / 2, outer.top() + 1), m_titleColor);
     }
 }
 

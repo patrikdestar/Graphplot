@@ -111,6 +111,9 @@ public:
     void setPanelVisible(bool visible);
     bool panelVisible() const { return m_panelVisible; }
     void setRegionLabelVisible(bool on) { m_regionLabelOn = on; applyRegion(); }
+    // Multi-panel figures: the panel draws its title above its own frame (and
+    // the figure header shows the suptitle); single panels use the header.
+    void setOwnTitle(bool on);
     // Draw the region also in exports (default: no, it is a selection aid).
     void setRegionInExports(bool on) { m_regionInExports = on; }
 
@@ -218,6 +221,7 @@ private:
     bool m_hasHome = false;
     bool m_autoHome = true;
     bool m_regionInExports = false;
+    bool m_ownTitle = false;
     bool m_panelVisible = true;
     bool m_regionLabelOn = true;
     ViewRange m_home;

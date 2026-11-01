@@ -592,7 +592,7 @@ class _PltFigure:
         return ax
 
     def suptitle(self, s, **_):
-        self._fig.axes[0].title = str(s)
+        self._fig.suptitle = str(s)
 
     def tight_layout(self, *_, **__):
         pass  # layout is automatic

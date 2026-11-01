@@ -226,7 +226,8 @@ is released, not during a drag.
 | `set_xlim(a, b)`, `set_ylim(a, b)` | set limits; `a > b` also reverses the axis (as in matplotlib), `a < b` keeps the direction; equal or non-finite limits raise `ValueError` |
 | `autoscale(x=True, y=True)` | fit the data |
 | `reset_view()`, `set_home_view()` | home view (also the `Home` key) |
-| `title`, `xlabel`, `ylabel` | read/write properties |
+| `title`, `xlabel`, `ylabel` | read/write properties; in multi-panel figures each panel draws its own title above its frame |
+| `suptitle` | figure-wide title above all panels (`plt.suptitle` / `fig.suptitle` in pyplot) |
 | `set_xticks(ticks, labels=None)`, `set_yticks(...)` | custom tick positions and optional text labels; `[]` hides the ticks, `None` restores automatic ticks (saved in figure files) |
 | `get_xticks()`, `get_yticks()` | `(positions, labels)` of custom ticks, or `None` |
 | `legend(visible=True)`, `grid(visible=True)` | toggles |

@@ -1158,12 +1158,25 @@ void PlotRenderer::applyStyle()
     applyAxesInfo();
 }
 
+void PlotRenderer::setOwnTitle(bool on)
+{
+    if (on == m_ownTitle) return;
+    m_ownTitle = on;
+    applyAxesInfo();
+    updateHeader();
+    replot();
+}
+
 void PlotRenderer::updateHeader()
 {
     if (!m_primary) return;  // one header per figure
     const AxesInfo& info = m_model->axesInfo();
     const Style st = displayStyle();
-    m_header->setTexts(info.title, font(st.titleSize, st.titleBold), st.titleColor, st.labelTopLeft,
+    // The header carries the figure title: the suptitle, or (single panel)
+    // the panel's own title.
+    const QString title = !info.suptitle.isEmpty() ? info.suptitle : m_ownTitle ? QString() : info.title;
+    m_header->setCentreOnFigure(m_ownTitle);
+    m_header->setTexts(title, font(st.titleSize, st.titleBold), st.titleColor, st.labelTopLeft,
                        st.labelTopRight, font(st.labelSize), st.labelColor, st.mathText);
     QCPLayoutGrid* layout = m_plot->plotLayout();
     const bool inLayout = layout->hasElement(0, 0) && layout->element(0, 0) == m_header;
@@ -1188,6 +1201,14 @@ void PlotRenderer::applyAxesInfo()
     m_x->setLabel(info.xLabel.isEmpty() ? QString() : QStringLiteral(" "));
     m_y->setLabel(info.yLabel.isEmpty() ? QString() : QStringLiteral(" "));
     m_x->setLabelPadding(int(std::lround(st.labelPad + std::max(0.0, m_axisLabels->xSize().height() - lineH))));
+    // Panel title above the frame: the top axis' label reserves the space.
+    const QFont tf = font(st.titleSize, st.titleBold);
+    const bool ownTitle = m_ownTitle && !info.title.isEmpty();
+    m_axisLabels->setTitle(ownTitle ? info.title : QString(), tf, st.titleColor, st.mathText);
+    m_x2->setLabelFont(tf);
+    m_x2->setLabel(ownTitle ? QStringLiteral(" ") : QString());
+    m_x2->setLabelPadding(int(std::lround(
+        4 + std::max(0.0, m_axisLabels->titleSize().height() - QFontMetricsF(tf).height()))));
     m_y->setLabelPadding(int(std::lround(st.labelPad + std::max(0.0, m_axisLabels->ySize().height() - lineH))));
     m_x->grid()->setVisible(info.gridVisible);
     m_y->grid()->setVisible(info.gridVisible);

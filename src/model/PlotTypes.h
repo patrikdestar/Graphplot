@@ -139,6 +139,7 @@ struct Region {
 
 struct AxesInfo {
     QString title;
+    QString suptitle;  // figure-wide title (multi-panel figures; used from the first panel)
     QString xLabel;
     QString yLabel;
     bool legendVisible = true;
