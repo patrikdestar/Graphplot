@@ -453,12 +453,14 @@ def _to_seconds(t):
 
     import datetime as _dt
 
-    a = np.asarray(t)
+    a = np.atleast_1d(np.asarray(t))
     if a.dtype.kind in "Mm":  # datetime64 -> Unix epoch seconds, timedelta64 -> seconds
         ns = a.astype("datetime64[ns]" if a.dtype.kind == "M" else "timedelta64[ns]")
         out = ns.astype(np.int64) / 1e9
         out[np.isnat(ns)] = np.nan  # NaT is a gap, not year -292
         return out, a.dtype.kind == "M"
+    if a.dtype == object and a.size and not hasattr(a.flat[0], "timestamp") and hasattr(a.flat[0], "toordinal"):
+        return _to_seconds(a.astype("datetime64[ns]"))  # datetime.date: midnight UTC
     if a.dtype == object and a.size and hasattr(a.flat[0], "timestamp"):
         def seconds(x):
             if x is None or x != x:  # None / NaT

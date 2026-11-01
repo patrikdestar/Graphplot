@@ -1068,6 +1068,73 @@ class PlotterTests(unittest.TestCase):
             f.save(path)
             self.assertTrue(plotter.load(path).x_time)
 
+    def test_round8_fixes(self):
+        import datetime as dt
+        import io
+        import plotter.pyplot as plt
+        # Shared partners follow data again after zoom + autoscale.
+        fig, (a1, a2) = plt.subplots(2, 1, sharex=True)
+        a1.plot([0, 1, 2], [0, 1, 2])
+        l2 = a2.plot([0, 1, 2], [0, 1, 2])[0]
+        a1.set_xlim(0, 1)
+        a1._ax.autoscale()
+        l2.append([3, 10], [1, 1])
+        self.assertGreaterEqual(a2.get_xlim()[1], 10)
+        plt.close("all")
+        # Dates: one undo step, reset by clear, date objects, scalar append.
+        f = plotter.figure()
+        f.plot(np.arange("2024-01-01", "2024-01-03", dtype="datetime64[h]"), np.arange(48.0))
+        f.undo()
+        self.assertFalse(f.x_time)
+        g = plotter.figure()
+        line = g.plot([dt.date(2024, 1, d) for d in range(1, 4)], [1, 2, 3])
+        self.assertTrue(g.x_time)
+        line.append(np.datetime64("2024-01-05"), 4.0)
+        line.append(dt.datetime(2024, 1, 6), 5.0)
+        self.assertEqual(len(line.x), 5)
+        g.clear()
+        g.plot([1, 2], [1, 2])
+        self.assertFalse(g.x_time)
+        # pyplot calls accept dates everywhere.
+        t = np.arange("2024-01-01", "2024-01-04", dtype="datetime64[h]")
+        ax = plt.gca()
+        ax.plot(t, np.arange(72.0))
+        ax.fill_between(t, np.arange(72.0))
+        span = ax.axvspan(t[10], t[20], facecolor="green", alpha=1, label="night")
+        self.assertAlmostEqual(span.span_end - span.position, 36000.0)
+        ref = ax.axvline(dt.datetime(2024, 1, 2), color="k", label="start")
+        self.assertEqual(ref.style, "solid")
+        ax.set_xlim(dt.datetime(2024, 1, 1), dt.datetime(2024, 1, 4))
+        self.assertEqual(ax.get_xlim()[0], 1704067200.0)
+        ax.annotate("x", xy=(t[30], 30), xytext=(t[10], 50), arrowprops={})
+        labels = [l.label for l in ax._ax.lines() if l.label]
+        self.assertIn("night", labels)  # in the legend, as matplotlib
+        self.assertIn("start", labels)
+        # Twin legend via handles, marker shapes, scatter sizes / colours, ragged hist.
+        fig, a = plt.subplots()
+        l1, = a.plot([0, 1], [0, 1], label="exp")
+        b = a.twinx()
+        lb, = b.plot([0, 1], [1, 0], "rv", label="sin", mfc="none")
+        a.legend(handles=[l1, lb])
+        self.assertIn("sin", [l.label for l in a._ax.lines()])
+        self.assertEqual(lb.marker, "triangle_down")
+        a.scatter([1, 2, 3], [1, 2, 3], s=[10, 100, 400], c=["red", "green", "blue"])
+        a.hist([np.arange(10.0), np.arange(5.0)], bins=4)
+        a.barh(["x", "y"], [1, 2], color=["r", "g"], xerr=[0.1, 0.2])
+        lb.set_ydata([2, 3])
+        self.assertEqual(list(lb.get_ydata()), [2, 3])
+        buf = io.StringIO()
+        plt.savefig(buf, format="svg")
+        self.assertIn("<svg", buf.getvalue())
+        self.assertIsInstance(plt.style.available, list)
+        with self.assertRaises(ValueError):
+            plt.style.use("no-such-style")
+        x = np.linspace(-1, 1, 10)
+        c = a.contour(x, x, np.outer(x, x), [-0.5, 0.5])
+        with self.assertRaises(RuntimeError):
+            plt.colorbar(c)
+        plt.close("all")
+
     def test_round6_correctness(self):
         import plotter.pyplot as plt
         f = self.fig

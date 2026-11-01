@@ -17,7 +17,10 @@ using ObjectId = quint64;
 constexpr ObjectId kInvalidId = 0;
 
 enum class LineStyle { Solid, Dash, Dot, DashDot, None };
-enum class ScatterShape { None, Circle, Square, Triangle, Cross, Plus, Diamond };
+enum class ScatterShape {
+    None, Circle, Square, Triangle, Cross, Plus, Diamond,
+    TriangleDown, TriangleLeft, TriangleRight, Star, Pentagon, Hexagon, Point
+};
 enum class Orientation { Vertical, Horizontal };
 // Step drawing (matplotlib names): Pre = jump before the point, Post = value
 // holds until the next point (histograms from bin edges), Mid = centred.
@@ -40,6 +43,7 @@ struct DatasetStyle {
     ScatterShape scatter = ScatterShape::None;
     double scatterSize = 0.0;  // <= 0: style default (lines.markersize)
     QColor markerEdge;         // symbol outline: invalid = the line colour, transparent = none
+    QColor markerFace;         // symbol fill: invalid = the line colour, transparent = hollow
     StepMode step = StepMode::None;
     QColor fillColor;          // invalid = no fill; otherwise fill to y = 0 or to fillTo
     ObjectId fillTo = kInvalidId;  // fill the band between this dataset and another one

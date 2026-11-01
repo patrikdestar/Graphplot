@@ -88,6 +88,13 @@ ScatterShape parseScatterShape(const QString& sIn, bool* ok)
     if (s == "x" || s == "cross") return ScatterShape::Cross;
     if (s == "+" || s == "plus") return ScatterShape::Plus;
     if (s == "d" || s == "diamond") return ScatterShape::Diamond;
+    if (s == "v" || s == "triangle_down") return ScatterShape::TriangleDown;
+    if (s == "<" || s == "triangle_left") return ScatterShape::TriangleLeft;
+    if (s == ">" || s == "triangle_right") return ScatterShape::TriangleRight;
+    if (s == "*" || s == "star") return ScatterShape::Star;
+    if (s == "p" || s == "pentagon") return ScatterShape::Pentagon;
+    if (s == "h" || s == "hexagon") return ScatterShape::Hexagon;
+    if (s == "." || s == "point") return ScatterShape::Point;
     if (ok) *ok = false;
     return ScatterShape::None;
 }
@@ -102,6 +109,13 @@ QString scatterShapeName(ScatterShape s)
     case ScatterShape::Cross: return "cross";
     case ScatterShape::Plus: return "plus";
     case ScatterShape::Diamond: return "diamond";
+    case ScatterShape::TriangleDown: return "triangle_down";
+    case ScatterShape::TriangleLeft: return "triangle_left";
+    case ScatterShape::TriangleRight: return "triangle_right";
+    case ScatterShape::Star: return "star";
+    case ScatterShape::Pentagon: return "pentagon";
+    case ScatterShape::Hexagon: return "hexagon";
+    case ScatterShape::Point: return "point";
     }
     return "none";
 }

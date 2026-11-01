@@ -31,18 +31,75 @@ software; figure sizes are converted at 100 pixels per inch.
 from __future__ import annotations
 
 import os as _os
+import re as _re
 import numpy as _np
 
 import plotter as _plotter
-from plotter import style  # noqa: F401  (plt.style.use works as in matplotlib)
+from plotter import style as _style
+
+
+class _StyleModule:
+    """plt.style as in matplotlib: style.use(name or list), style.available (a list)."""
+
+    def __getattr__(self, name):
+        return getattr(_style, name)
+
+    @property
+    def available(self):
+        return _style.available()
+
+    def use(self, style):
+        names = [style] if isinstance(style, (str, _os.PathLike)) else list(style)
+        ignored = []
+        for name in names:
+            if name == "default":
+                name = "default" if "default" in _style.available() else _style.available()[0]
+            looks_like_file = isinstance(name, _os.PathLike) or _os.sep in str(name) or "." in str(name)
+            if str(name) not in _style.available() and not looks_like_file:
+                raise ValueError(f"unknown style {name!r}; available: {', '.join(_style.available())} "
+                                 "(or a .gpstyle file)")
+            ignored += _style.use(str(name))
+        return ignored
+
+
+style = _StyleModule()
 
 _DPI = 100  # pixels per inch for figsize conversions
 _current: "_PltFigure | None" = None
 
 _FMT_COLORS = set("bgrcmykw")
-_FMT_MARKERS = {".": "o", "o": "o", "s": "s", "^": "^", "v": "^", "D": "d", "d": "d",
-                "x": "x", "+": "+", "*": "d", "p": "s", "h": "d"}
+_FMT_MARKERS = {".": ".", "o": "o", "s": "s", "^": "^", "v": "v", "<": "<", ">": ">", "D": "d", "d": "d",
+                "x": "x", "+": "+", "*": "*", "p": "p", "h": "h", "H": "h", "8": "h"}
 _FMT_LINES = ["--", "-.", "-", ":"]
+
+
+def _is_dates(v):
+    """datetime64 / datetime / pandas Timestamp values (scalars or arrays)."""
+    if hasattr(v, "dtype") and getattr(v.dtype, "kind", "") == "M":
+        return True
+    try:
+        a = _np.asarray(v)
+    except Exception:  # noqa: BLE001
+        return False
+    if a.dtype.kind == "M":
+        return True
+    if a.dtype != object or a.size == 0:
+        return False
+    first = a.flat[0]
+    return hasattr(first, "timestamp") or (hasattr(first, "year") and hasattr(first, "toordinal"))
+
+
+def _nums(v):
+    """Numbers as a float array; dates become Unix seconds (as plot() does)."""
+    if _is_dates(v):
+        shape = _np.shape(_np.asarray(v))
+        return _plotter._to_seconds(v)[0].reshape(shape)
+    return _np.asarray(v, dtype=float)
+
+
+def _num(v):
+    """One number; a date becomes Unix seconds."""
+    return float(_nums(v).reshape(-1)[0]) if _is_dates(v) else float(v)
 
 
 def _parse_fmt(fmt: str):
@@ -174,10 +231,18 @@ class PltAxes:
         """plot(y), plot(x, y), plot(x, y, fmt), plot(x1, y1, fmt1, x2, y2, ...)"""
         lines = []
         args = list(args)
+        face = kw.pop("markerfacecolor", kw.pop("mfc", None))
+        edge = kw.pop("markeredgecolor", kw.pop("mec", None))
+        for k in ("markeredgewidth", "mew", "markevery", "solid_capstyle", "dash_capstyle", "antialiased"):
+            kw.pop(k, None)  # accepted; drawn with plotter's defaults
         while args:
             if len(args) == 1 or isinstance(args[1], str):
                 y = args.pop(0)
-                x = _np.arange(len(_np.asarray(y)))
+                # A pandas Series / DataFrame is plotted against its index (as matplotlib).
+                x = y.index if hasattr(y, "index") and hasattr(y, "values") and not callable(
+                    getattr(y, "index")) else _np.arange(len(_np.asarray(y)))
+                if hasattr(x, "to_numpy"):
+                    x = x.to_numpy()
             else:
                 x, y = args.pop(0), args.pop(0)
             fmt = args.pop(0) if args and isinstance(args[0], str) else ""
@@ -192,55 +257,93 @@ class PltAxes:
             y = _np.asarray(y)
             # A 2-D y plots one line per column (as in matplotlib).
             for col in (y.T if y.ndim == 2 else [y]):
-                lines.append(self._ax.plot(x, col, **_common(dict(opts), self._ax)))
+                line = self._ax.plot(x, col, **_common(dict(opts), self._ax))
+                if face is not None:
+                    line.markerfacecolor = "none" if face == "none" else _mpl_color(face)
+                if edge is not None:
+                    line.markeredgecolor = "none" if edge == "none" else _mpl_color(edge)
+                lines.append(line)
         return lines
 
     def scatter(self, x, y, s=None, c=None, marker="o", cmap=None, vmin=None, vmax=None, **kw):
+        """Points; c may be one colour, a colour per point, or values to colour-map;
+        s may be one area or one area per point (in points², as matplotlib)."""
         kw.pop("linewidths", None)  # the outline is 1 px
         edge = kw.pop("edgecolors", kw.pop("edgecolor", None))
         edge = None if edge in (None, "face") else ("none" if edge == "none" else _mpl_color(edge))
+        if "color" in kw and c is None:
+            c = kw.pop("color")
+        x = _np.atleast_1d(self._xs(x)).astype(float).ravel()
+        y = _np.atleast_1d(_np.asarray(y, dtype=float)).ravel()
+        npts = x.size
+        sym = _FMT_MARKERS.get(marker, marker if marker else "o")
+        label = kw.pop("label", None)
+        opts = _common(kw, self._ax)
+        opts = {k: v for k, v in opts.items() if k not in ("style", "marker", "color")}
+
+        # Per-point colours (keys into `palette`), or one colour for all.
+        keys, palette, single = None, None, None
         if c is not None:
-            arr = _np.asarray(c)
-            npts = _np.size(x)
-            # One number per point is colour-mapped, also for 3 or 4 points (a
-            # tuple stays an RGB(A) colour).
-            if arr.dtype.kind in "fiu" and arr.ndim == 1 and arr.size == npts and not isinstance(c, tuple):
-                # One value per point: colour-mapped in 32 steps (one dataset per
-                # step, sharing the label of the first).
-                x, y, v = (_np.asarray(a, dtype=float) for a in (x, y, arr))
+            arr = _np.asarray(c, dtype=object) if not isinstance(c, str) else None
+            numeric = arr is not None and _np.asarray(c).dtype.kind in "fiu"
+            if numeric and _np.asarray(c).ndim == 1 and _np.size(c) == npts and not isinstance(c, tuple):
+                v = _np.asarray(c, dtype=float)
                 keep = _np.isfinite(v)  # points without a value are not drawn (matplotlib: "bad" colour)
                 x, y, v = x[keep], y[keep], v[keep]
+                if s is not None and _np.ndim(s) > 0:
+                    s = _np.asarray(s, dtype=float)[keep]
                 if v.size == 0:
                     return None
                 lo = _np.nanmin(v) if vmin is None else vmin
                 hi = _np.nanmax(v) if vmax is None else vmax
-                steps = 32
-                colours = _plotter._plotter._colormap_colors(cmap or "viridis", steps)
-                idx = _np.clip(((v - lo) / ((hi - lo) or 1) * (steps - 1)).round(), 0, steps - 1).astype(int)
-                size = None if s is None else float(_np.sqrt(_np.mean(s)))
-                label = kw.pop("label", None)
-                opts = _common(kw, self._ax)
-                first = None
-                for k in sorted(set(idx.tolist())):
-                    m = idx == k
-                    line = self._ax.plot(x[m], y[m], style="none", marker=_FMT_MARKERS.get(marker, "o"),
-                                         markersize=size, color=colours[k],
-                                         label=str(label) if (first is None and label is not None) else None,
-                                         **{kk: vv for kk, vv in opts.items() if kk not in ("style", "marker", "color")})
-                    if edge is not None:
-                        line.markeredgecolor = edge
-                    first = first or line
-                return first
+                steps = 32  # colour-mapped in 32 steps
+                palette = _plotter._plotter._colormap_colors(cmap or "viridis", steps)
+                keys = _np.clip(((v - lo) / ((hi - lo) or 1) * (steps - 1)).round(), 0, steps - 1).astype(int)
+            elif numeric and _np.asarray(c).ndim == 2 and _np.asarray(c).shape[0] == npts:
+                rgba = [tuple(float(t) for t in row) for row in _np.asarray(c, dtype=float)]
+                palette = sorted(set(rgba))
+                index = {col: i for i, col in enumerate(palette)}
+                keys = _np.array([index[col] for col in rgba])
+            elif (isinstance(c, (list, tuple, _np.ndarray)) and len(c) == npts and npts > 1
+                  and all(isinstance(t, str) for t in c)):
+                names = [_mpl_color(t) for t in c]
+                palette = sorted(set(names))
+                index = {col: i for i, col in enumerate(palette)}
+                keys = _np.array([index[col] for col in names])
             else:
-                kw["color"] = c
-        size = None if s is None else float(_np.sqrt(_np.mean(s)))
-        opts = _common(kw, self._ax)
-        line = self._ax.plot(x, y, style="none", marker=_FMT_MARKERS.get(marker, "o"),
-                             markersize=size, **{k: v for k, v in opts.items()
-                                                 if k not in ("style", "marker")})
-        if edge is not None:
-            line.markeredgecolor = edge
-        return line
+                single = _mpl_color(c)
+        # Per-point sizes: grouped into at most 12 sizes.
+        size_keys, sizes = None, None
+        if s is not None and _np.ndim(s) > 0 and _np.size(s) == x.size and x.size > 1:
+            diam = _np.sqrt(_np.maximum(_np.asarray(s, dtype=float), 0))
+            lo, hi = _np.nanmin(diam), _np.nanmax(diam)
+            nsz = 12 if hi > lo else 1
+            size_keys = _np.clip(((diam - lo) / ((hi - lo) or 1) * (nsz - 1)).round(), 0, nsz - 1).astype(int)
+            sizes = [float(lo + (hi - lo) * k / max(1, nsz - 1)) for k in range(nsz)]
+        size = None if s is None or sizes is not None else float(_np.sqrt(_np.mean(s)))
+
+        def draw(mask, color, msize, lab):
+            line = self._ax.plot(x[mask], y[mask], style="none", marker=sym, markersize=msize,
+                                 color=color, label=lab, **opts)
+            if edge is not None:
+                line.markeredgecolor = edge
+            return line
+
+        if keys is None and size_keys is None:
+            color = single if single is not None else self._ax._take_color()
+            return draw(_np.ones(x.size, bool), color, size, None if label is None else str(label))
+        if keys is None:
+            keys, palette = _np.zeros(x.size, int), [single if single is not None else self._ax._take_color()]
+        if size_keys is None:
+            size_keys = _np.zeros(x.size, int)
+        first = None
+        for ck in sorted(set(keys.tolist())):
+            for sk in sorted(set(size_keys[keys == ck].tolist())):
+                m = (keys == ck) & (size_keys == sk)
+                line = draw(m, palette[ck], sizes[sk] if sizes else size,
+                            str(label) if (first is None and label is not None) else None)
+                first = first or line
+        return first
 
     def errorbar(self, x, y, yerr=None, xerr=None, fmt="", **kw):
         kw.pop("capsize", None)  # cap size comes from the style ('errorbar.capsize')
@@ -266,9 +369,10 @@ class PltAxes:
     def _hist(self, x, bins, range, density, weights, histtype, **kw):  # noqa: A002
         # Several datasets (a list of arrays or a 2-D array, one per column):
         # one histogram each, with shared bins, like matplotlib.
-        many = (isinstance(x, (list, tuple)) and len(x) > 0 and _np.ndim(x[0]) > 0) or _np.ndim(x) == 2
+        many = (isinstance(x, (list, tuple)) and len(x) > 0 and _np.ndim(x[0]) > 0) or (
+            not isinstance(x, (list, tuple)) and _np.ndim(x) == 2)
         if many:
-            data = list(_np.asarray(x).T) if _np.ndim(x) == 2 and not isinstance(x, (list, tuple)) else list(x)
+            data = list(x) if isinstance(x, (list, tuple)) else list(_np.asarray(x).T)
             if _np.ndim(bins) == 0:
                 finite = _np.concatenate([_np.asarray(d, dtype=float).ravel() for d in data])
                 finite = finite[_np.isfinite(finite)]
@@ -315,7 +419,8 @@ class PltAxes:
             color = kw.pop("facecolor")
         if kw:
             raise TypeError(f"unsupported keyword(s): {', '.join(sorted(kw))}")
-        y1 = _np.asarray(y1, dtype=float) + 0 * _np.asarray(x, dtype=float)
+        x = self._xs(x)
+        y1 = _np.asarray(y1, dtype=float) + 0 * x
         y2 = _np.broadcast_to(_np.asarray(y2, dtype=float), y1.shape)
         if where is not None:
             # Outside `where` the band collapses to zero height.
@@ -381,7 +486,7 @@ class PltAxes:
             levels = args.pop()
         z = args[0] if len(args) == 1 else args[2]
         if levels is None or isinstance(levels, numbers.Integral):
-            levels = self._nice_levels(z, int(levels) if levels is not None else 7)
+            levels = self._nice_levels(z, (int(levels) if levels is not None else 7) + 1)
         c = self.contour(*args, levels=list(levels), **kw)
         c.filled = True
         c.contours = False
@@ -453,26 +558,31 @@ class PltAxes:
     def colorbar(self, mappable=None, label=None, **kw):
         """Show the colour bar of an image (default: the last one drawn in this panel)."""
         m = mappable if mappable is not None else getattr(self, "_last_image", None)
+        if m is not None and hasattr(type(m), "image") and not m.image:
+            raise RuntimeError("colorbar: this contour is drawn as lines only, without a colour scale; "
+                               "use contourf / imshow for a colour bar")
         if m is None or not hasattr(type(m), "colorbar"):
             raise RuntimeError("colorbar: colour bars are drawn for images (imshow / pcolormesh / "
-                               "contourf / contour); a scatter's colours have no colour bar here")
+                               "contourf); a scatter's colours have no colour bar here")
         m.colorbar = True
         if label is not None:
             m.label = str(label)
+        elif _re.fullmatch(r"2D data \d+", m.label or ""):
+            m.label = ""  # an automatic name is not a useful colour-bar label (matplotlib: none)
         return m
 
     def hlines(self, y, xmin, xmax, colors=None, linestyles="-", label=None, **kw):
         """Horizontal segments from xmin to xmax at each y (one dataset)."""
         y = _np.atleast_1d(_np.asarray(y, dtype=float))
-        x0 = _np.broadcast_to(_np.asarray(xmin, dtype=float), y.shape)
-        x1 = _np.broadcast_to(_np.asarray(xmax, dtype=float), y.shape)
+        x0 = _np.broadcast_to(self._xs(xmin), y.shape)
+        x1 = _np.broadcast_to(self._xs(xmax), y.shape)
         xs = _np.column_stack([x0, x1, _np.full_like(y, _np.nan)]).ravel()
         ys = _np.column_stack([y, y, _np.full_like(y, _np.nan)]).ravel()
         return self.plot(xs, ys, color=colors, linestyle=linestyles, label=label, **kw)[0]
 
     def vlines(self, x, ymin, ymax, colors=None, linestyles="-", label=None, **kw):
         """Vertical segments from ymin to ymax at each x (one dataset)."""
-        x = _np.atleast_1d(_np.asarray(x, dtype=float))
+        x = _np.atleast_1d(self._xs(x))
         y0 = _np.broadcast_to(_np.asarray(ymin, dtype=float), x.shape)
         y1 = _np.broadcast_to(_np.asarray(ymax, dtype=float), x.shape)
         xs = _np.column_stack([x, x, _np.full_like(x, _np.nan)]).ravel()
@@ -482,17 +592,24 @@ class PltAxes:
     def axvspan(self, xmin, xmax, ymin=0, ymax=1, alpha=0.25, color=None, label=None, **kw):
         """Shaded vertical band from xmin to xmax, always the full panel height
         (not data: it does not change the autoscaled view)."""
-        return self._span(xmin, xmax, "v", alpha, color, label)
+        return self._span(self._x1(xmin), self._x1(xmax), "v", alpha, color, label, kw)
 
     def axhspan(self, ymin, ymax, xmin=0, xmax=1, alpha=0.25, color=None, label=None, **kw):
         """Shaded horizontal band from ymin to ymax, always the full panel width."""
-        return self._span(ymin, ymax, "h", alpha, color, label)
+        return self._span(ymin, ymax, "h", alpha, color, label, kw)
 
-    def _span(self, a, b, orientation, alpha, color, label):
+    def _span(self, a, b, orientation, alpha, color, label, kw):
+        color = kw.pop("facecolor", kw.pop("fc", color))
+        for k in ("edgecolor", "ec", "linewidth", "lw", "zorder", "hatch"):
+            kw.pop(k, None)
+        if kw:
+            raise TypeError(f"unsupported keyword(s): {', '.join(sorted(kw))}")
         col = _mpl_color(color) if color is not None else "#9c9ca1"
         r, g, bl, _ = _plotter._plotter._rgba(col)
-        return self._ax.marker(float(a), orientation, color=(r, g, bl, float(alpha)),
-                               label="" if label is None else str(label), span_to=float(b))
+        rgba = (r, g, bl, min(float(alpha), 254 / 255))  # fully opaque would mean "default 25 %"
+        m = self._ax.marker(float(a), orientation, color=rgba, span_to=float(b))
+        self._legend_proxy(label, color=rgba, fill=rgba, style="none")
+        return m
 
     def fill_betweenx(self, y, x1, x2=0, alpha=0.3, color=None, label=None, **kw):
         """Area between two curves x1(y) and x2(y) (a closed, filled outline)."""
@@ -520,6 +637,15 @@ class PltAxes:
         return self._ax.plot(xs, ys, color=col, fill=(r, g, b, alpha), style="none",
                              label=None if label is None else str(label))
 
+    def _xs(self, v):
+        """x values as numbers; dates switch the panel to date tick labels."""
+        if _is_dates(v) and not self._ax.x_time:
+            self._ax.x_time = True
+        return _nums(v)
+
+    def _x1(self, v):
+        return float(self._xs(v).reshape(-1)[0]) if _is_dates(v) else float(v)
+
     def twinx(self):
         """A second y axis on the right, sharing this panel's x axis."""
         twin = PltAxes(self.figure, self._ax.twinx())
@@ -535,16 +661,35 @@ class PltAxes:
     def minorticks_off(self):
         self.figure._fig.set_style({"xtick.minor.visible": False, "ytick.minor.visible": False})
 
+    @staticmethod
+    def _line_opts(kw):
+        # As matplotlib: solid, in 'C0' unless given, without using up a cycle colour.
+        opts = {k: v for k, v in _common(kw).items() if k in ("color", "label", "style", "width")}
+        opts.setdefault("style", "-")
+        if opts.get("color") is None:
+            opts["color"] = "C0"
+        return opts
+
+    def _legend_proxy(self, label, **style):
+        """matplotlib lists labelled reference lines and spans in the legend:
+        an empty dataset with that look stands in for them there."""
+        if label:
+            self._ax.plot([], [], label=str(label), **style)
+
+    def _ref_line(self, pos, orientation, kw):
+        opts = self._line_opts(kw)
+        label = opts.pop("label", None)
+        m = self._ax.marker(pos, orientation, show_value=False, **opts)
+        self._legend_proxy(label, color=opts["color"], style=opts["style"],
+                           **({"width": opts["width"]} if "width" in opts else {}))
+        return m
+
     def axvline(self, x=0, ymin=0, ymax=1, **kw):
         # ymin / ymax (partial lines) are accepted; markers always span the panel.
-        opts = _common(kw)
-        return self._ax.marker(x, "v", show_value=False, **{k: v for k, v in opts.items()
-                                                            if k in ("color", "label", "style", "width")})
+        return self._ref_line(self._x1(x), "v", kw)
 
     def axhline(self, y=0, xmin=0, xmax=1, **kw):
-        opts = _common(kw)
-        return self._ax.marker(y, "h", show_value=False, **{k: v for k, v in opts.items()
-                                                            if k in ("color", "label", "style", "width")})
+        return self._ref_line(float(y), "h", kw)
 
     @property
     def transAxes(self):  # noqa: N802 - matplotlib name
@@ -558,7 +703,8 @@ class PltAxes:
         coords = "axes" if isinstance(transform, tuple) and transform[:1] == ("axes",) else "data"
         ha = ha or horizontalalignment or "left"
         va = va or verticalalignment or "baseline"
-        return self._ax.annotate(str(s), float(x), float(y), fontsize=fontsize or kw.get("size"),
+        x = float(x) if coords == "axes" else self._x1(x)
+        return self._ax.annotate(str(s), x, float(y), fontsize=fontsize or kw.get("size"),
                                  color=_mpl_color(color), ha=ha, va=va, coords=coords)
 
     def annotate(self, text, xy, xytext=None, arrowprops=None, ha=None, va=None, **kw):
@@ -578,7 +724,9 @@ class PltAxes:
             warnings.warn(f"plotter: coordinates {place!r} are not supported; using data coordinates",
                           stacklevel=2)
             place = "data"
-        arrow = tuple(float(v) for v in xy) if arrowprops is not None and xytext is not None else None
+        arrow = (self._x1(xy[0]), float(xy[1])) if arrowprops is not None and xytext is not None else None
+        if place == "data":
+            x = self._x1(x)
         if arrow is not None and kw.get("xycoords", "data") != "data":
             raise ValueError("the arrow target xy must be in 'data' coordinates")
         return self._ax.annotate(str(text), float(x), float(y), fontsize=fontsize, color=color,
@@ -614,7 +762,9 @@ class PltAxes:
         if xs and isinstance(xs[0], str):
             tick_label = tick_label or xs
             xs = list(range(len(xs)))
-        x = _np.asarray(xs, dtype=float)
+        x = _np.atleast_1d(self._xs(x)) if _is_dates(x) else _np.asarray(xs, dtype=float)
+        if _is_dates(width):  # timedelta widths
+            width = _np.asarray(width).astype("timedelta64[ns]").astype(_np.int64) / 1e9
         h = _np.broadcast_to(_np.asarray(height, dtype=float), x.shape)
         w = _np.broadcast_to(_np.asarray(width, dtype=float), x.shape)
         b = _np.broadcast_to(_np.asarray(bottom, dtype=float), x.shape)
@@ -637,7 +787,8 @@ class PltAxes:
             self._ax.set_xticks(list(x), [str(t) for t in _np.atleast_1d(tick_label)])
         return line
 
-    def barh(self, y, width, height=0.8, left=0.0, color=None, label=None, tick_label=None, **kw):
+    def barh(self, y, width, height=0.8, left=0.0, color=None, label=None, tick_label=None, xerr=None,
+             align="center", edgecolor=None, capsize=None, **kw):
         """Horizontal bars (filled). y may be numbers or category names."""
         ys0 = list(_np.atleast_1d(y))
         if ys0 and isinstance(ys0[0], str):
@@ -647,12 +798,21 @@ class PltAxes:
         wd = _np.broadcast_to(_np.asarray(width, dtype=float), y.shape)
         ht = _np.broadcast_to(_np.asarray(height, dtype=float), y.shape)
         lf = _np.broadcast_to(_np.asarray(left, dtype=float), y.shape)
-        xs, ys = self._bar_outline(y - ht / 2, ht, wd, lf, False)
-        opts = _common(dict(kw, **({"label": label} if label is not None else {}),
-                            **({"color": color} if color is not None else {})), self._ax)
-        opts["style"] = "none"
-        opts["color"] = opts.get("color") or self._ax._take_color()
-        line = self._ax.plot(xs, ys, fill=opts["color"], **opts)
+        bottom = y - ht / 2 if align == "center" else y
+        if isinstance(color, (list, tuple)) and color and not isinstance(color[0], (int, float)):
+            # One colour per bar: one filled shape per bar.
+            out = [self.barh(yi, wi, hi, li, color=ci, label=label if i == 0 else None, align=align, **kw)
+                   for i, (yi, wi, hi, li, ci) in enumerate(zip(y, wd, ht, lf, color))]
+            line = out[0]
+        else:
+            xs, ys = self._bar_outline(bottom, ht, wd, lf, False)
+            opts = _common(dict(kw, **({"label": label} if label is not None else {}),
+                                **({"color": color} if color is not None else {})), self._ax)
+            opts["style"] = "none"
+            opts["color"] = opts.get("color") or self._ax._take_color()
+            line = self._ax.plot(xs, ys, fill=opts["color"], **opts)
+        if xerr is not None:
+            self._ax.plot(lf + wd, bottom + ht / 2, xerr=xerr, style="none", color="k")
         if tick_label is not None:
             self._ax.set_yticks(list(y), [str(t) for t in _np.atleast_1d(tick_label)])
         return line
@@ -733,8 +893,9 @@ class PltAxes:
         if isinstance(first, (tuple, list)):
             first, second = first
         cur = self._get_lim(axis)
-        first = cur[0] if first is None else float(first)
-        second = cur[1] if second is None else float(second)
+        conv = self._x1 if axis == "x" else float
+        first = cur[0] if first is None else conv(first)
+        second = cur[1] if second is None else conv(second)
         setattr(self._ax, axis + "_reversed", first > second)
         getattr(self._ax, "set_" + axis + "lim")(min(first, second), max(first, second))
         self._fixed_limits.add(axis)  # later plots no longer re-fit this axis
@@ -800,15 +961,27 @@ class PltAxes:
                      5: "right", 6: "center left", 7: "center right", 8: "lower center",
                      9: "upper center", 10: "center"}
 
-    def legend(self, *args, loc=None, frameon=None, fontsize=None, labels=None, **__):
-        """legend(), legend(labels), legend(handles, labels).
+    def legend(self, *args, loc=None, frameon=None, fontsize=None, labels=None, handles=None, **__):
+        """legend(), legend(labels), legend(handles, labels), legend(handles=[...]).
 
-        Note: the legend position and font are figure-wide style settings, so
-        the last call sets them for every panel."""
+        Handles from another panel (e.g. a twinx axis) are listed in this
+        panel's legend and left out of their own. The legend font and frame
+        are figure-wide style settings; the position is per panel."""
         if len(args) == 2:
             handles, labels = args
+        elif len(args) == 1 and labels is None and args[0] and not isinstance(_np.atleast_1d(args[0])[0], str):
+            handles = args[0]
+        if handles is not None:
+            handles = [h[0] if isinstance(h, (list, tuple)) else h for h in handles]
+            labels = list(labels) if labels is not None else [h.label for h in handles]
+            own = self._ax.lines()
             for h, lab in zip(handles, labels):
                 h.label = str(lab)
+                if hasattr(h, "_panel") and h not in own:
+                    # Shown here through a stand-in with the same look.
+                    self._ax.plot([], [], label=str(lab), color=h.color, style=h.style, width=h.width,
+                                  marker=None if h.marker == "none" else h.marker)
+                    h.label = ""  # not repeated in its own panel's legend
         elif len(args) == 1 or labels is not None:
             labels = labels if labels is not None else args[0]
             for h, lab in zip(self._ax.lines(), labels):
@@ -879,6 +1052,7 @@ class _PltFigure:
         bbox_inches, transparent, facecolor, ... are accepted and ignored."""
         scale = (dpi or _DPI) / _DPI
         if hasattr(fname, "write"):  # file object: export to a temporary file, copy the bytes
+            import io
             import os
             import tempfile
             ext = (format or "png").lower()
@@ -887,7 +1061,9 @@ class _PltFigure:
             try:
                 self._fig.savefig(tmp, width=self._size[0], height=self._size[1], scale=scale)
                 with open(tmp, "rb") as f:
-                    fname.write(f.read())
+                    data = f.read()
+                # Text streams (io.StringIO for SVG) get text, binary ones bytes.
+                fname.write(data.decode("utf-8") if isinstance(fname, io.TextIOBase) else data)
             finally:
                 os.remove(tmp)
             return
@@ -1151,13 +1327,25 @@ class _RcParams(dict):
             "legend.frameon": "legend.frameon", "xtick.labelsize": "xtick.labelsize",
             "ytick.labelsize": "ytick.labelsize", "xtick.direction": "xtick.direction",
             "ytick.direction": "ytick.direction", "xtick.minor.visible": "xtick.minor.visible",
-            "ytick.minor.visible": "ytick.minor.visible"}
+            "ytick.minor.visible": "ytick.minor.visible", "axes.prop_cycle": "axes.prop_cycle"}
 
     # matplotlib's named font sizes, relative to font.size.
     _SIZES = {"xx-small": 0.579, "x-small": 0.694, "small": 0.833, "medium": 1.0,
               "large": 1.2, "x-large": 1.44, "xx-large": 1.728, "smaller": 0.833, "larger": 1.2}
 
     def _convert(self, key, value):
+        if key == "axes.prop_cycle":  # cycler(color=[...]) or a list of colours
+            colors = value.by_key().get("color") if hasattr(value, "by_key") else value
+            if not colors:
+                raise ValueError("axes.prop_cycle: only colour cycles are supported")
+            out = []
+            for c in colors:
+                c = _mpl_color(c)
+                if not isinstance(c, str):
+                    r, g, b, a = _plotter._plotter._rgba(c)
+                    c = "#%02x%02x%02x" % (round(r * 255), round(g * 255), round(b * 255))
+                out.append(c)
+            return ",".join(out)
         if key == "font.family" and not isinstance(value, str):
             value = list(value)[0] if len(value) else "sans-serif"  # first family of a list
         if key.endswith("size") and isinstance(value, str) and value.lower() in self._SIZES:
@@ -1300,3 +1488,50 @@ def close(fig=None):
     fig._fig.close()
     if fig is _current:
         _current = None
+
+
+# ---- matplotlib Line2D methods on plotter's Line handles ------------------------------
+def _add_line2d_methods():
+    Line = _plotter._plotter.Line
+
+    def set_data(self, x, y=None, **kw):  # also matplotlib's set_data((x, y))
+        if y is None:
+            x, y = x
+        self.set_data_native(x, y, **kw)
+
+    methods = {
+        "get_xdata": lambda self, orig=True: self.x,
+        "get_ydata": lambda self, orig=True: self.y,
+        "get_data": lambda self, orig=True: (self.x, self.y),
+        "set_xdata": lambda self, x: self.set_data_native(x, self.y),
+        "set_ydata": lambda self, y: self.set_data_native(self.x, y),
+        "get_color": lambda self: self.color,
+        "set_color": lambda self, c: setattr(self, "color", _mpl_color(c)),
+        "get_label": lambda self: self.label,
+        "set_label": lambda self, s: setattr(self, "label", "" if s is None else str(s)),
+        "get_linestyle": lambda self: self.style,
+        "set_linestyle": lambda self, ls: setattr(self, "style", ls),
+        "get_linewidth": lambda self: self.width,
+        "set_linewidth": lambda self, w: setattr(self, "width", float(w)),
+        "get_visible": lambda self: self.visible,
+        "set_visible": lambda self, v: setattr(self, "visible", bool(v)),
+        "set_marker": lambda self, m: setattr(self, "marker", _FMT_MARKERS.get(m, m)),
+        "set_markerfacecolor": lambda self, c: setattr(self, "markerfacecolor",
+                                                       "none" if c == "none" else _mpl_color(c)),
+        "set_markeredgecolor": lambda self, c: setattr(self, "markeredgecolor",
+                                                       "none" if c == "none" else _mpl_color(c)),
+    }
+    if not hasattr(Line, "set_data_native"):
+        Line.set_data_native = Line.set_data
+        Line.set_data = set_data
+    for name, fn in methods.items():
+        if not hasattr(Line, name):
+            setattr(Line, name, fn)
+
+
+_add_line2d_methods()
+
+
+def subplots_adjust(*args, **kw):
+    """Accepted for compatibility (the layout is automatic)."""
+    gcf().subplots_adjust(*args, **kw)

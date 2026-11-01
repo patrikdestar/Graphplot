@@ -402,8 +402,10 @@ void InteractionController::mouseMove(QMouseEvent* e)
     }
     case Drag::Marker: {
         Marker m = m_dragStartMarker;
-        if (m.orientation == Orientation::Vertical) m.position += data.x() - m_pressData.x();
-        else m.position += data.y() - m_pressData.y();
+        const double delta = m.orientation == Orientation::Vertical ? data.x() - m_pressData.x()
+                                                                     : data.y() - m_pressData.y();
+        m.position += delta;
+        m.spanEnd += delta;  // a band moves as a whole
         if (model->marker(m.id)) m_editor->previewMarker(m);
         break;
     }

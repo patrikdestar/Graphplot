@@ -98,13 +98,16 @@ QString toPath(const std::string& p)
 // toVector turns into Unix seconds; plotting them gives date tick labels.
 bool isDateLike(const py::handle& obj)
 {
-    if (py::hasattr(obj, "dt") || (py::hasattr(obj, "tz") && py::hasattr(obj, "tz_convert"))) return true;
+    // pandas (also tz-aware) datetime data has a dtype of kind 'M'; timedeltas ('m') are durations.
+    if (py::hasattr(obj, "dtype") && py::hasattr(obj.attr("dtype"), "kind") &&
+        py::str(obj.attr("dtype").attr("kind")).cast<std::string>() == "M")
+        return true;
     try {
         py::array a = py::module_::import("numpy").attr("asarray")(obj);
         if (a.dtype().kind() == 'M') return true;
         if (a.dtype().kind() == 'O' && a.size() > 0) {
             py::object first = a.attr("ravel")()[py::int_(0)];
-            return py::hasattr(first, "timestamp");
+            return py::hasattr(first, "timestamp") || (py::hasattr(first, "year") && py::hasattr(first, "toordinal"));
         }
     } catch (const py::error_already_set&) {
     }
@@ -133,6 +136,9 @@ QVector<double> toVector(const py::handle& obj, const char* what)
     // Object arrays of datetime objects (e.g. tz-aware timestamps): use timestamp().
     if (auto raw = py::array::ensure(obj); raw && raw.dtype().kind() == 'O' && raw.size() > 0) {
         py::object first = raw.attr("ravel")()[py::int_(0)];
+        // datetime.date (no time of day): midnight UTC, via numpy.
+        if (!py::hasattr(first, "timestamp") && py::hasattr(first, "year") && py::hasattr(first, "toordinal"))
+            return toVector(raw.attr("astype")("datetime64[ns]"), what);
         if (py::hasattr(first, "timestamp")) {
             QVector<double> v;
             for (py::handle item : raw.attr("ravel")()) {
@@ -316,7 +322,7 @@ ScatterShape toScatter(const py::handle& obj)
     const std::string s = obj.cast<std::string>();
     bool ok = false;
     const ScatterShape sh = parseScatterShape(QString::fromStdString(s), &ok);
-    if (!ok) throw py::value_error("unknown marker symbol '" + s + "' (use o, s, ^, d, x, +)");
+    if (!ok) throw py::value_error("unknown marker symbol '" + s + "' (use o s ^ v < > d p h * . x +)");
     return sh;
 }
 
@@ -951,12 +957,17 @@ PYBIND11_MODULE(_plotter, mod)
                     }
                 }
                 const bool first = self->model()->datasets().empty() && self->model()->matrices().empty();
-                if (first && xIsDate && !self->model()->axesInfo().xTime) {
+                // The first data decides between date and number labels (as in
+                // matplotlib); one undo step together with the data.
+                const bool switchTime = first && xIsDate != self->model()->axesInfo().xTime;
+                if (switchTime) {
+                    ed->undoStack()->beginMacro("Plot");
                     AxesInfo info = self->model()->axesInfo();
-                    info.xTime = true;  // datetime x: date tick labels, as in matplotlib
+                    info.xTime = xIsDate;
                     ed->setAxesInfo(info);
                 }
                 const ObjectId nid = ed->addDataset(d);
+                if (switchTime) ed->undoStack()->endMacro();
                 if (first) {
                     self->renderer()->autoscale();
                     self->renderer()->captureHomeView();
@@ -976,7 +987,7 @@ label     dataset name shown in the legend
 color     name ('blue', 'C3', '#ff8800') or (r, g, b[, a]) tuple; default: next palette colour
 width     line width in pixels (default: style 'lines.linewidth')
 style     '-', '--', ':', '-.' or 'none'
-marker    point symbol: 'o', 's', '^', 'd', 'x', '+' or None
+marker    point symbol: 'o', 's', '^', 'v', '<', '>', 'd', 'p', 'h', '*', '.', 'x', '+' or None
 replace   if True and a dataset with the same label exists, update it in place
 step      None, 'pre', 'post' (histograms from bin edges) or 'mid'
 fill      True (line colour, translucent) or a colour: fill down to y = 0, or to fill_to
@@ -1995,6 +2006,16 @@ Remove a callback with off(event, callback).)doc");
 
     // ---- Line ------------------------------------------------------------------------------
     py::class_<Line>(mod, "Line", "Handle to a 1D dataset.")
+        // Two handles to the same dataset compare equal (e.g. in legend(handles=...)).
+        .def("__eq__", [](const Line& a, const py::object& b) {
+            if (!py::isinstance<Line>(b)) return false;
+            const Line& o = b.cast<const Line&>();
+            return a.fig == o.fig && a.ax == o.ax && a.id == o.id;
+        })
+        .def("__hash__", [](const Line& h) {
+            return std::hash<const void*>()(h.fig.get()) ^ (std::hash<qint64>()(qint64(h.id)) * 31) ^ size_t(h.ax);
+        })
+        .def_property_readonly("_panel", [](const Line& h) { return h.ax; })
         .def_property_readonly("x", [](Line& h) { return toNumpy(inGui([&] { return h.get().x; })); })
         .def_property_readonly("y", [](Line& h) { return toNumpy(inGui([&] { return h.get().y; })); })
         .def_property("label",
@@ -2043,6 +2064,20 @@ Remove a callback with off(event, callback).)doc");
                 h.setStyle([&](QString&, DatasetStyle& s) { s.markerEdge = c; });
             },
             "Outline colour of the symbols: None = the line colour, 'none' = no outline.")
+        .def_property(
+            "markerfacecolor",
+            [](Line& h) -> py::object {
+                const QColor c = inGui([&] { return h.get().style.markerFace; });
+                if (!c.isValid()) return py::none();
+                return py::str(colorName(c));
+            },
+            [](Line& h, const py::object& v) {
+                // None = the line colour; 'none' = hollow.
+                const bool none = py::isinstance<py::str>(v) && v.cast<std::string>() == "none";
+                const QColor c = none ? QColor(Qt::transparent) : toColor(v, "markerfacecolor");
+                h.setStyle([&](QString&, DatasetStyle& s) { s.markerFace = c; });
+            },
+            "Fill colour of the symbols: None = the line colour, 'none' = hollow symbols.")
         .def_property("visible",
                       [](Line& h) { return inGui([&] { return h.get().style.visible; }); },
                       [](Line& h, bool v) { h.setStyle([&](QString&, DatasetStyle& s) { s.visible = v; }); })
@@ -2078,9 +2113,15 @@ Remove a callback with off(event, callback).)doc");
             [](Line& h, const py::object& x, const py::object& y, const py::object& maxPoints) {
                 // One point (two numbers) or sequences of points.
                 const auto vec = [](const py::object& v, const char* what) {
-                    if (py::isinstance<py::float_>(v) || py::isinstance<py::int_>(v) ||
-                        (py::hasattr(v, "ndim") && v.attr("ndim").cast<int>() == 0))
-                        return QVector<double>{v.cast<double>()};
+                    // A single value (number, date, 0-d array): a one-element list,
+                    // so dates are converted like everywhere else.
+                    const bool scalar = !py::hasattr(v, "__len__") ||
+                                        (py::hasattr(v, "ndim") && v.attr("ndim").cast<int>() == 0);
+                    if (scalar) {
+                        py::list one;
+                        one.append(v);
+                        return toVector(one, what);
+                    }
                     return toVector(v, what);
                 };
                 const QVector<double> xv = vec(x, "x"), yv = vec(y, "y");
@@ -2299,6 +2340,23 @@ Remove a callback with off(event, callback).)doc");
         .def_property("position",
                       [](MarkerH& h) { return inGui([&] { return h.get().position; }); },
                       [](MarkerH& h, double v) { h.edit([&](Marker& m) { m.position = v; }); })
+        .def_property(
+            "span_end",
+            [](MarkerH& h) -> py::object {
+                const Marker m = inGui([&] { return h.get(); });
+                if (!m.span) return py::none();
+                return py::float_(m.spanEnd);
+            },
+            [](MarkerH& h, const py::object& v) {
+                const bool on = !v.is_none();
+                const double end = on ? v.cast<double>() : 0.0;
+                if (on && !std::isfinite(end)) throw py::value_error("span_end must be finite");
+                h.edit([&](Marker& m) {
+                    m.span = on;
+                    if (on) m.spanEnd = end;
+                });
+            },
+            "Other edge of a band (axvspan / axhspan), or None for a plain line.")
         .def_property_readonly("orientation", [](MarkerH& h) {
             return inGui([&] { return h.get().orientation; }) == Orientation::Vertical ? "v" : "h";
         })
@@ -2419,9 +2477,26 @@ Remove a callback with off(event, callback).)doc");
             [](AnnotationH& h) { return std::string(inGui([&] { return h.get().axesCoords; }) ? "axes" : "data"); },
             [](AnnotationH& h, const std::string& v) {
                 if (v != "data" && v != "axes") throw py::value_error("coords must be 'data' or 'axes'");
-                h.edit([&](Annotation& a) { a.axesCoords = v == "axes"; });
+                h.edit([&](Annotation& a) {
+                    const bool axes = v == "axes";
+                    if (axes == a.axesCoords) return;
+                    // Keep the text where it is on screen: convert the position.
+                    PlotRenderer* r = h.fig->w()->axes(h.ax).renderer;
+                    const QRect box = r->axisRect()->rect();
+                    QCPAxis* xa = r->xAxis();
+                    QCPAxis* ya = r->yAxis();
+                    if (axes) {
+                        a.x = (xa->coordToPixel(a.x) - box.left()) / std::max(1, box.width());
+                        a.y = (box.bottom() - ya->coordToPixel(a.y)) / std::max(1, box.height());
+                    } else {
+                        a.x = xa->pixelToCoord(box.left() + a.x * box.width());
+                        a.y = ya->pixelToCoord(box.bottom() - a.y * box.height());
+                    }
+                    a.axesCoords = axes;
+                });
             },
-            "'data': the position is in data coordinates; 'axes': fractions of the axes box.")
+            "'data': the position is in data coordinates; 'axes': fractions of the axes box\n"
+            "(switching converts the position, so the text stays in place).")
         .def_property(
             "arrow_to",
             [](AnnotationH& h) -> py::object {

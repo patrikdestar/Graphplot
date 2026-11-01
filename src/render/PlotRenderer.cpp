@@ -56,30 +56,61 @@ public:
     void generate(const QCPRange& range, const QLocale& locale, QChar formatChar, int precision,
                   QVector<double>& ticks, QVector<double>* subTicks, QVector<QString>* tickLabels) override
     {
-        const double span = range.size();
-        setDateTimeFormat(span > 3 * 365 * 86400.0 ? "yyyy"
-                          : span > 90 * 86400.0    ? "yyyy-MM"
-                          : span > 3 * 86400.0     ? "yyyy-MM-dd"
-                          : span > 86400.0         ? "MM-dd hh:mm"
-                          : span > 120             ? "hh:mm"
-                          : span > 2               ? "hh:mm:ss"
-                                                   : "ss.zzz");
-        QCPAxisTickerDateTime::generate(range, locale, formatChar, precision, ticks, subTicks, tickLabels);
+        QCPAxisTickerDateTime::generate(range, locale, formatChar, precision, ticks, subTicks, nullptr);
+        if (!tickLabels) return;
+        // The label format follows the tick step (not the visible span), so
+        // neighbouring ticks never get the same label.
+        const double step = ticks.size() > 1 ? ticks[1] - ticks[0] : range.size();
+        const bool manyDays = range.size() > 86400.0;
+        const char* fmt = step >= 360 * 86400.0 ? "yyyy"
+                          : step >= 27 * 86400.0 ? "yyyy-MM"
+                          : step >= 86400.0      ? "yyyy-MM-dd"
+                          : step >= 60           ? (manyDays ? "MM-dd hh:mm" : "hh:mm")
+                          : step >= 1            ? "hh:mm:ss"
+                                                 : "ss.zzz";
+        tickLabels->clear();
+        for (double t : ticks)
+            tickLabels->push_back(QDateTime::fromMSecsSinceEpoch(qint64(std::llround(t * 1000.0)), QTimeZone::utc())
+                                      .toString(QString::fromLatin1(fmt)));
     }
 };
 
-QCPScatterStyle::ScatterShape toScatterShape(ScatterShape s)
+// A regular polygon (or star) path; QCustomPlot draws custom paths scaled
+// by size / 6, so a radius of 3 gives about the size of the built-in symbols.
+QPainterPath polygonPath(int corners, double rotationDeg, double innerRatio = 0.0)
+{
+    QPainterPath path;
+    const int n = innerRatio > 0 ? 2 * corners : corners;
+    for (int k = 0; k < n; ++k) {
+        const double r = (innerRatio > 0 && k % 2) ? 3.2 * innerRatio : 3.2;
+        const double a = (rotationDeg - 90.0 + 360.0 * k / n) * M_PI / 180.0;
+        const QPointF p(r * std::cos(a), r * std::sin(a));
+        if (k == 0) path.moveTo(p);
+        else path.lineTo(p);
+    }
+    path.closeSubpath();
+    return path;
+}
+
+QCPScatterStyle makeScatterStyle(ScatterShape s, const QPen& pen, const QBrush& brush, double size)
 {
     switch (s) {
-    case ScatterShape::None: return QCPScatterStyle::ssNone;
-    case ScatterShape::Circle: return QCPScatterStyle::ssCircle;
-    case ScatterShape::Square: return QCPScatterStyle::ssSquare;
-    case ScatterShape::Triangle: return QCPScatterStyle::ssTriangle;
-    case ScatterShape::Cross: return QCPScatterStyle::ssCross;
-    case ScatterShape::Plus: return QCPScatterStyle::ssPlus;
-    case ScatterShape::Diamond: return QCPScatterStyle::ssDiamond;
+    case ScatterShape::None: return QCPScatterStyle(QCPScatterStyle::ssNone, pen, brush, size);
+    case ScatterShape::Circle: return QCPScatterStyle(QCPScatterStyle::ssCircle, pen, brush, size);
+    case ScatterShape::Square: return QCPScatterStyle(QCPScatterStyle::ssSquare, pen, brush, size);
+    case ScatterShape::Triangle: return QCPScatterStyle(polygonPath(3, 0), pen, brush, size);
+    case ScatterShape::Cross: return QCPScatterStyle(QCPScatterStyle::ssCross, pen, brush, size);
+    case ScatterShape::Plus: return QCPScatterStyle(QCPScatterStyle::ssPlus, pen, brush, size);
+    case ScatterShape::Diamond: return QCPScatterStyle(QCPScatterStyle::ssDiamond, pen, brush, size);
+    case ScatterShape::TriangleDown: return QCPScatterStyle(polygonPath(3, 180), pen, brush, size);
+    case ScatterShape::TriangleLeft: return QCPScatterStyle(polygonPath(3, 270), pen, brush, size);
+    case ScatterShape::TriangleRight: return QCPScatterStyle(polygonPath(3, 90), pen, brush, size);
+    case ScatterShape::Star: return QCPScatterStyle(polygonPath(5, 0, 0.45), pen, brush, size);
+    case ScatterShape::Pentagon: return QCPScatterStyle(polygonPath(5, 0), pen, brush, size);
+    case ScatterShape::Hexagon: return QCPScatterStyle(polygonPath(6, 0), pen, brush, size);
+    case ScatterShape::Point: return QCPScatterStyle(QCPScatterStyle::ssDisc, pen, brush, std::max(2.0, size * 0.45));
     }
-    return QCPScatterStyle::ssNone;
+    return QCPScatterStyle(QCPScatterStyle::ssNone, pen, brush, size);
 }
 
 // Tick labels: optional real minus sign ("−") as in typeset documents.
@@ -491,6 +522,11 @@ void PlotRenderer::autoscale(bool doX, bool doY)
     if (doX) partners += m_shareX;
     if (doY) partners += m_shareY;
     for (PlotRenderer* p : partners) p->m_autoscaling = true;
+    // ...and they follow their data again, like this panel.
+    if (doX)
+        for (PlotRenderer* p : m_shareX) p->m_followX = true;
+    if (doY)
+        for (PlotRenderer* p : m_shareY) p->m_followY = true;
     struct PartnerGuard {
         QList<PlotRenderer*>& list;
         ~PartnerGuard()
@@ -514,11 +550,14 @@ void PlotRenderer::autoscale(bool doX, bool doY)
     if (doX) {
         // Curves (spectra, time series) span x exactly; points drawn with
         // symbols or error bars get a small margin so the edge ones are whole.
-        bool points = false;
-        for (const auto& d : m_model->datasets())
-            points |= d.style.visible && (d.style.scatter != ScatterShape::None || !d.xErrLow.isEmpty() ||
-                                          !d.yErrLow.isEmpty());
-        pad(xmin, xmax, points ? 0.03 : 0.0, xLog);
+        // Filled shapes without an outline (bars) get matplotlib's 5 % margin.
+        bool points = false, shapes = false;
+        for (const auto& d : m_model->datasets()) {
+            if (!d.style.visible) continue;
+            points |= d.style.scatter != ScatterShape::None || !d.xErrLow.isEmpty() || !d.yErrLow.isEmpty();
+            shapes |= d.style.fillColor.isValid() && d.style.lineStyle == LineStyle::None && !d.x.isEmpty();
+        }
+        pad(xmin, xmax, shapes ? 0.05 : points ? 0.03 : 0.0, xLog);
         r.xmin = xmin;
         r.xmax = xmax;
     }
@@ -599,10 +638,15 @@ ObjectRef PlotRenderer::hitTestObject(const QPointF& px, double tol) const
         const MarkerVisual v = m_markers.value(it->id);
         if (!v.line) continue;
         double d;
-        if (it->orientation == Orientation::Vertical)
-            d = std::abs(px.x() - m_x->coordToPixel(it->position));
-        else
-            d = std::abs(px.y() - m_y->coordToPixel(it->position));
+        const bool vert = it->orientation == Orientation::Vertical;
+        const double p = vert ? px.x() : px.y();
+        const double a = vert ? m_x->coordToPixel(it->position) : m_y->coordToPixel(it->position);
+        d = std::abs(p - a);
+        if (it->span) {  // anywhere on the band, but behind thin lines nearby (tol / 2)
+            const double b = vert ? m_x->coordToPixel(it->spanEnd) : m_y->coordToPixel(it->spanEnd);
+            if (p >= std::min(a, b) && p <= std::max(a, b)) d = std::min(d, tol / 2);
+            else d = std::min(d, std::abs(p - b));
+        }
         if (v.label && v.label->visible()) {
             const double dl = v.label->selectTest(px, false);
             if (dl >= 0 && dl <= textTol) d = std::min(d, std::min(dl, tol));
@@ -818,7 +862,9 @@ void PlotRenderer::applyDatasetAppearance(ObjectId id)
     // Filled symbols (open symbols like x/+ ignore the brush).
     const QColor edge = s.markerEdge.isValid() ? ink(s.markerEdge) : color;
     QPen edgePen(edge.alpha() == 0 ? QColor(Qt::transparent) : edge, 1.0);
-    const QCPScatterStyle scatter(toScatterShape(s.scatter), edgePen, QBrush(color), s.scatterSize);
+    const QColor face = s.markerFace.isValid() ? ink(s.markerFace) : color;
+    const QBrush faceBrush = face.alpha() == 0 ? QBrush(Qt::NoBrush) : QBrush(face);
+    const QCPScatterStyle scatter = makeScatterStyle(s.scatter, edgePen, faceBrush, s.scatterSize);
     // A QCPCurve (unsorted x) with NaN / inf points must not be filled: Qt's
     // polygon filler never finishes on such paths (the line is still drawn).
     bool fillable = true;
@@ -975,8 +1021,7 @@ void PlotRenderer::applyImageAppearance(const Matrix& m, MatrixVisual& v)
         range = QCPRange(v.lo, v.hi > v.lo ? v.hi : v.lo + 1);
     }
     if (s.filled) {
-        // contourf: one flat colour per band between consecutive levels, the
-        // colours spread evenly over the map (as matplotlib does).
+        // contourf: one flat colour per band between consecutive levels.
         std::vector<double> lv = contourLevels(s);
         std::sort(lv.begin(), lv.end());
         lv.erase(std::unique(lv.begin(), lv.end()), lv.end());
@@ -987,7 +1032,8 @@ void PlotRenderer::applyImageAppearance(const Matrix& m, MatrixVisual& v)
             banded.clearColorStops();
             banded.setLevelCount(1000);
             for (int i = 0; i < bands; ++i) {
-                const QColor c = g.color(bands > 1 ? double(i) / (bands - 1) : 0.5, QCPRange(0, 1));
+                // The colour at the band's middle value, as matplotlib.
+                const QColor c = g.color(0.5 * (lv[i] + lv[i + 1]), QCPRange(lo, hi));
                 const double p0 = (lv[i] - lo) / (hi - lo), p1 = (lv[i + 1] - lo) / (hi - lo);
                 banded.setColorStopAt(p0, c);
                 banded.setColorStopAt(std::max(p0, p1 - 1e-4), c);
@@ -1440,7 +1486,7 @@ void PlotRenderer::applyLegendLoc(const Style& st)
     // The panel's own position, else the style's.
     const QString loc = m_model->axesInfo().legendLoc;
     Qt::Alignment legendAlign = locToAlignment(loc.isEmpty() ? st.legendLoc : loc);
-    if (m_twinHost) {  // the twin's legend on the other side, so the two do not overlap
+    if (m_twinHost && loc.isEmpty()) {  // the twin's legend on the other side, so the two do not overlap
         if (legendAlign & Qt::AlignRight) legendAlign = (legendAlign & ~Qt::AlignRight) | Qt::AlignLeft;
         else if (legendAlign & Qt::AlignLeft) legendAlign = (legendAlign & ~Qt::AlignLeft) | Qt::AlignRight;
     }

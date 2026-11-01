@@ -350,7 +350,9 @@ QWidget* PropertiesPanel::buildDatasetPage()
     m_dsLineStyle = makeLineStyleCombo(true);
     m_dsScatter = new QComboBox;
     for (ScatterShape s : {ScatterShape::None, ScatterShape::Circle, ScatterShape::Square,
-                           ScatterShape::Triangle, ScatterShape::Diamond, ScatterShape::Cross,
+                           ScatterShape::Triangle, ScatterShape::TriangleDown, ScatterShape::TriangleLeft,
+                           ScatterShape::TriangleRight, ScatterShape::Diamond, ScatterShape::Pentagon,
+                           ScatterShape::Hexagon, ScatterShape::Star, ScatterShape::Point, ScatterShape::Cross,
                            ScatterShape::Plus}) {
         QString name = scatterShapeName(s);
         name[0] = name[0].toUpper();

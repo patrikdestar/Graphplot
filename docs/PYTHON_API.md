@@ -323,9 +323,9 @@ import plotter.pyplot as plt
 | Supported | Not supported |
 |---|---|
 | `figure`, `subplots` (incl. `gridspec_kw` height ratios / hspace), `subplot(211)`, `fig.add_subplot`, `clf`, `cla`, `suptitle`, `get_fignums`, `ion`/`ioff`/`draw` (no-ops), `fig.set_size_inches`, `fig.legend`, `gcf`, `gca`, `sca`, `close` (figure, number, name or `'all'`), `show`, `pause`, `savefig(dpi=, format=)` to a path (no extension: `.png`) or a binary file object; `.png`, `.jpg`, `.svg`, `.pdf` | non-uniform `pcolormesh` grids (a clear error) |
-| `plot` with format strings (`'r--o'`, `'C1--'`, several x/y/fmt groups), `step`, `bar` (categories, colour lists, `yerr`), `barh` (categories), `semilogx`/`semilogy`/`loglog`, `axis([...])`, `hlines`/`vlines`, `axvspan`/`axhspan` (bands that always cover the full height / width), `fill_betweenx`, `scatter` (incl. `c=values, cmap=`, `edgecolors=`), `errorbar(fmt=)`, `hist` (one or several datasets; `step`, `stepfilled`/`bar`, `errorbar`, `log=True`), `stairs`; datetime x values get date tick labels | polar and 3D axes |
+| `plot` with format strings (`'r--o'`, `'C1--'`, several x/y/fmt groups), `step`, `bar` (categories, colour lists, `yerr`), `barh` (categories), `semilogx`/`semilogy`/`loglog`, `axis([...])`, `hlines`/`vlines`, `axvspan`/`axhspan` (bands that always cover the full height / width), `fill_betweenx`, `scatter` (`c=` values + `cmap`, colour names or RGBA rows per point; `s=` per-point areas; `edgecolors=`), `errorbar(fmt=)`, `hist` (one or several datasets; `step`, `stepfilled`/`bar`, `errorbar`, `log=True`), `stairs`; datetime x values (`datetime64`, `datetime`, `date`, pandas timestamps, a pandas Series' index) get date tick labels and work in every call (`axvline`, `axvspan`, `fill_between`, `bar`, `xlim`, `text`, `annotate`, …); markers `o s ^ v < > d D p h * . x +`, `mfc`/`mec` (incl. `'none'`); `Line` handles have `set_data`/`set_xdata`/`set_ydata`/`get_*`/`set_color`/`set_label`/… for animation code | polar and 3D axes |
 | `fill_between` (incl. `where=`), `contour` (single colour: negative levels dashed), `contourf` (flat colour bands between round levels), `imshow` (origin, extent, cmap, vmin/vmax), `pcolormesh` (uniform grids, edges or centres), `colorbar(mappable, label=)`, `axhline`, `axvline`, `text` (incl. `transform=ax.transAxes`: stays in place when the view changes), `annotate` (`xycoords`/`textcoords` `'data'` or `'axes fraction'`; `'offset points'` puts the text at `xy`), `twinx` | RGB images |
-| `xlabel`, `ylabel`, `title`, `xlim`, `ylim`, `xscale`, `yscale`, `legend(labels, loc=name or code (per panel), frameon=, fontsize=)`, `ax.set(...)`, `xticks`/`yticks`, `minorticks_on`/`off` (figure-wide), `figtext`, `rcParams` (common keys map to style keys; named sizes like `'large'`, font lists, invalid values raise), `ax.set_xticks`/`set_xticklabels`, `grid`, `plt.style.use`; colours `'C0'`…, `'tab:blue'`…, `'0.5'`, basic names with matplotlib's exact values | other `rcParams` keys (kept, not used; see `plotter.style.set`) |
+| `xlabel`, `ylabel`, `title`, `xlim`, `ylim`, `xscale`, `yscale`, `legend(labels, handles=, loc=name or code (per panel), frameon=, fontsize=)` (handles from a `twinx` axis are listed too; labelled `axhline`/`axvline`/`axvspan` appear), `ax.set(...)`, `xticks`/`yticks`, `minorticks_on`/`off` (figure-wide), `figtext`, `rcParams` (common keys map to style keys; named sizes like `'large'`, font lists, invalid values raise), `ax.set_xticks`/`set_xticklabels`, `grid`, `plt.style.use`; colours `'C0'`… (the n-th colour of the current cycle, i.e. plotter's palette unless `axes.prop_cycle` is set), `'tab:blue'`…, `'0.5'`, basic names (`'red'`, `'k'`, …) with matplotlib's exact values; `rcParams['axes.prop_cycle'] = cycler(color=[...])`; `plt.style.available` / `plt.style.use(name or list)` | other `rcParams` keys (kept, not used; see `plotter.style.set`) |
 
 Axes methods use the matplotlib names (`set_xlabel`, `set_xlim`,
 `set_yscale`, `invert_xaxis`, `get_xlim`, `autoscale`, …). `suptitle` sets the
@@ -341,6 +341,13 @@ Differences from matplotlib:
 - The legend position is per panel; the legend font size and frame are
   figure-wide style settings.
 - Masked arrays are drawn with gaps; NaT / NaN values are gaps too.
+- `axhline` / `axvline` / `axvspan` always span the whole panel (`xmin`/`xmax`,
+  `ymin`/`ymax` fractions are accepted and ignored).
+- Accepted but without effect: `set_aspect`, `axis('equal')`, `set_title(loc=)`,
+  `fontweight`, `legend(ncols=)`, `savefig(transparent=)`, `rcParams['savefig.dpi']`,
+  `bar(edgecolor=)`, `errorbar(ecolor=)`, `markevery`, `subplots_adjust`.
+  `yscale('symlog')` is drawn linear. `contour(..., cmap=)` lines use the
+  positive / negative colours (use `contourf` for a colour scale).
 - `contour` with a level count uses geometric levels (NMR convention); give a
   list for exact levels. `contourf` uses evenly spaced round levels.
 - `hspace` / `wspace` (fractions of the panel size in matplotlib) are converted
@@ -356,7 +363,8 @@ removed object raises `KeyError`. Setting a property is an undoable edit.
 - **Read-only:** `x`, `y` (NumPy copies), `yerr` (`(low, high)` or `None`),
   `exists`.
 - **Properties:** `label`, `color`, `width`, `style`, `marker`,
-  `markeredgecolor` (`None` = the line colour, `'none'` = no outline), `visible`,
+  `markeredgecolor` (`None` = the line colour, `'none'` = no outline),
+  `markerfacecolor` (`None` = the line colour, `'none'` = hollow), `visible`,
   `step`, `fill`.
 - `set_data(x, y, *, undoable=False)`: by default, streaming updates do not
   fill the undo history.
@@ -390,7 +398,8 @@ removed object raises `KeyError`. Setting a property is an undoable edit.
 
 ### `Marker`
 
-- **Properties:** `position`, `label`, `color`, `style`, `width`.
+- **Properties:** `position`, `label`, `color`, `style`, `width`, `span_end`
+  (other edge of a band, `None` for a plain line).
 - **Read-only:** `orientation` (`'v'` or `'h'`).
 - `remove()`.
 
