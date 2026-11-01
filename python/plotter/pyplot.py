@@ -150,6 +150,7 @@ class PltAxes:
     def __init__(self, fig: "_PltFigure", axes: "_plotter.Axes"):
         self.figure = fig
         self._ax = axes
+        self._fixed_limits = set()  # axes whose limits the script set explicitly
         # As in matplotlib: a legend only where legend() is called.
         if not axes.lines() and not axes.contours():
             axes.legend(False)
@@ -385,19 +386,26 @@ class PltAxes:
         """Marker for axes-fraction coordinates in text(..., transform=ax.transAxes)."""
         return ("axes", self)
 
-    def text(self, x, y, s, fontsize=None, color=None, **kw):
+    def text(self, x, y, s, fontsize=None, color=None, ha=None, va=None, horizontalalignment=None,
+             verticalalignment=None, **kw):
         transform = kw.pop("transform", None)
         if isinstance(transform, tuple) and transform[:1] == ("axes",):
             # Axes fraction -> data coordinates of the current view.
             (x0, x1), (y0, y1) = self.get_xlim(), self.get_ylim()
             x, y = x0 + x * (x1 - x0), y0 + y * (y1 - y0)
-        kw.pop("ha", None)
-        kw.pop("va", None)
-        return self._ax.annotate(str(s), x, y, fontsize=fontsize, color=_mpl_color(color))
+        ha = ha or horizontalalignment or "left"
+        va = va or verticalalignment or "baseline"
+        return self._ax.annotate(str(s), x, y, fontsize=fontsize, color=_mpl_color(color), ha=ha, va=va)
 
-    def annotate(self, text, xy, xytext=None, **kw):
+    def annotate(self, text, xy, xytext=None, arrowprops=None, ha=None, va=None, **kw):
+        """Text at xytext (or xy); with arrowprops an arrow from the text to xy."""
         x, y = xytext if xytext is not None else xy
-        return self.text(x, y, text, **{k: v for k, v in kw.items() if k in ("fontsize", "color")})
+        fontsize = kw.get("fontsize", kw.get("size"))
+        color = _mpl_color(kw.get("color"))
+        arrow = tuple(float(v) for v in xy) if arrowprops is not None and xytext is not None else None
+        return self._ax.annotate(str(text), x, y, fontsize=fontsize, color=color,
+                                 ha=ha or kw.get("horizontalalignment") or "left",
+                                 va=va or kw.get("verticalalignment") or "baseline", arrow_to=arrow)
 
     def bar(self, x, height, width=0.8, bottom=0.0, align="center", color=None, label=None,
             edgecolor=None, **kw):
@@ -407,10 +415,11 @@ class PltAxes:
         w = _np.broadcast_to(_np.asarray(width, dtype=float), x.shape)
         b = _np.broadcast_to(_np.asarray(bottom, dtype=float), x.shape)
         left = x - w / 2 if align == "center" else x
+        # Each bar is a closed rectangle; NaN separates them (filled one by one).
         xs, ys = [], []
         for l0, wi, hi, bi in zip(left, w, h, b):
-            xs += [l0, l0, l0 + wi, l0 + wi]
-            ys += [bi, bi + hi, bi + hi, bi]
+            xs += [l0, l0, l0 + wi, l0 + wi, l0, _np.nan]
+            ys += [bi, bi + hi, bi + hi, bi, bi, _np.nan]
         opts = _common(dict(kw, **({"label": label} if label is not None else {}),
                             **({"color": color} if color is not None else {})), self._ax)
         return self._ax.plot(xs, ys, fill=True, **opts)
@@ -429,7 +438,7 @@ class PltAxes:
             ys.append(_np.nan)
         opts = _common(dict(kw, **({"label": label} if label is not None else {}),
                             **({"color": color} if color is not None else {})), self._ax)
-        return self._ax.plot(xs, ys, **opts)
+        return self._ax.plot(xs, ys, fill=True, **opts)
 
     def step(self, x, y, *args, where="pre", **kw):
         """Step plot (where: 'pre', 'post', 'mid')."""
@@ -504,6 +513,7 @@ class PltAxes:
         second = cur[1] if second is None else float(second)
         setattr(self._ax, axis + "_reversed", first > second)
         getattr(self._ax, "set_" + axis + "lim")(min(first, second), max(first, second))
+        self._fixed_limits.add(axis)  # later plots no longer re-fit this axis
 
     def _get_lim(self, axis):
         lo, hi = getattr(self._ax, axis + "lim")()
@@ -805,6 +815,28 @@ def ioff():
 
 def draw():
     _plotter.pause(0)  # process pending updates
+
+
+def _refits(method):
+    """Like matplotlib, re-fit the view to all data after each plotting call
+    (plotter itself fits only once, so interactive zooming is kept), except
+    for axes whose limits the script has set."""
+    import functools
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kw):
+        result = method(self, *args, **kw)
+        fit_x, fit_y = "x" not in self._fixed_limits, "y" not in self._fixed_limits
+        if fit_x or fit_y:
+            self._ax.autoscale(x=fit_x, y=fit_y)
+        return result
+
+    return wrapper
+
+
+for _name in ("plot", "scatter", "errorbar", "hist", "stairs", "fill_between", "bar", "barh", "step",
+              "semilogx", "semilogy", "loglog", "contour", "contourf", "imshow", "pcolormesh"):
+    setattr(PltAxes, _name, _refits(getattr(PltAxes, _name)))
 
 
 def _ax_call(name):

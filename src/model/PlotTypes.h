@@ -111,6 +111,12 @@ struct Annotation {
     QString text;
     QColor color;            // invalid = style default (annotation.color)
     double fontSize = 0.0;   // points; <= 0 = style default (annotation.size)
+    // Which point of the text sits at (x, y): Qt::Alignment flags (left /
+    // hcenter / right | top / vcenter / bottom), like matplotlib's ha / va.
+    int alignment = 0x0001 | 0x0040;  // Qt::AlignLeft | Qt::AlignBottom
+    // Optional arrow from the text to a point (annotate(..., xy=...)).
+    bool arrow = false;
+    double arrowX = 0.0, arrowY = 0.0;
     bool operator==(const Annotation&) const = default;
 };
 

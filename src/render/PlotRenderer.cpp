@@ -1003,6 +1003,7 @@ void PlotRenderer::onAnnotationAdded(ObjectId id)
 void PlotRenderer::onAnnotationRemoved(ObjectId id)
 {
     if (auto* t = m_annotations.take(id)) m_plot->removeItem(t);
+    if (auto* arrow = m_annotationArrows.take(id)) m_plot->removeItem(arrow);
     if (m_highlight.kind == ObjectKind::Annotation && m_highlight.id == id) m_highlight = {};
     replotObjectLayers();
 }
@@ -1018,7 +1019,31 @@ void PlotRenderer::applyAnnotation(ObjectId id)
     // Unset size/colour follow the style (annotation.size / annotation.color).
     t->setText(a->text.isEmpty() ? QStringLiteral(" ") : a->text,
                font(a->fontSize > 0 ? a->fontSize : st.annotationSize), st.mathText);
-    t->setColor(a->color.isValid() ? ink(a->color) : st.annotationColor);
+    const QColor color = a->color.isValid() ? ink(a->color) : st.annotationColor;
+    t->setColor(color);
+    t->setPositionAlignment(Qt::Alignment(a->alignment));
+    // Arrow from the text anchor to the annotated point.
+    QCPItemLine* arrow = m_annotationArrows.value(id);
+    if (a->arrow && !arrow) {
+        arrow = new QCPItemLine(m_plot);
+        bindItem(arrow);
+        arrow->setLayer(m_objectLayer);
+        arrow->setSelectable(false);
+        arrow->setHead(QCPLineEnding(QCPLineEnding::esSpikeArrow, 8, 10));
+        m_annotationArrows.insert(id, arrow);
+    } else if (!a->arrow && arrow) {
+        m_plot->removeItem(arrow);
+        m_annotationArrows.remove(id);
+        arrow = nullptr;
+    }
+    if (arrow) {
+        arrow->start->setCoords(a->x, a->y);
+        arrow->end->setCoords(a->arrowX, a->arrowY);
+        QPen pen(color, 1.2);
+        pen.setCosmetic(true);
+        arrow->setPen(pen);
+        arrow->setVisible(m_panelVisible);
+    }
     t->setPen(hl ? QPen(kHighlight, 1, Qt::DashLine) : QPen(Qt::NoPen));
 }
 

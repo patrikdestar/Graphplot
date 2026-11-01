@@ -208,8 +208,10 @@ Marker markerFromJson(const QJsonObject& o)
 
 QJsonObject annotationToJson(const Annotation& a)
 {
-    return {{"id", idText(a.id)}, {"x", jnum(a.x)}, {"y", jnum(a.y)}, {"text", a.text},
-            {"color", colorText(a.color)}, {"fontSize", a.fontSize}};
+    QJsonObject o{{"id", idText(a.id)}, {"x", jnum(a.x)}, {"y", jnum(a.y)}, {"text", a.text},
+                  {"color", colorText(a.color)}, {"fontSize", a.fontSize}, {"alignment", a.alignment}};
+    if (a.arrow) o["arrowTo"] = QJsonArray{jnum(a.arrowX), jnum(a.arrowY)};
+    return o;
 }
 
 Annotation annotationFromJson(const QJsonObject& o)
@@ -221,6 +223,10 @@ Annotation annotationFromJson(const QJsonObject& o)
     a.text = o["text"].toString();
     a.color = colorFrom(o["color"]);
     a.fontSize = o["fontSize"].toDouble();
+    a.alignment = o["alignment"].toInt(a.alignment);
+    const QJsonArray to = o["arrowTo"].toArray();
+    a.arrow = to.size() == 2;
+    if (a.arrow) a.arrowX = jdbl(to[0]), a.arrowY = jdbl(to[1]);
     return a;
 }
 

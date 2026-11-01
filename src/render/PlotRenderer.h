@@ -18,6 +18,7 @@
 class QCustomPlot;
 class QCPAbstractPlottable;
 class QCPItemStraightLine;
+class QCPItemLine;
 class QCPItemRect;
 class QCPItemText;
 class QCPLayer;
@@ -214,6 +215,7 @@ private:
     QHash<ObjectId, MatrixVisual> m_matrices;
     QHash<ObjectId, MarkerVisual> m_markers;
     QHash<ObjectId, RichTextItem*> m_annotations;
+    QHash<ObjectId, QCPItemLine*> m_annotationArrows;
     RegionVisual m_region;
 
     ObjectRef m_highlight;

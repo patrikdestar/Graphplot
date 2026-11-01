@@ -219,6 +219,21 @@ QColor requiredColor(const py::object& obj, const char* what)
     return toColor(obj, what);
 }
 
+// matplotlib-style horizontal / vertical alignment -> Qt::Alignment flags.
+int toAlignment(const std::string& ha, const std::string& va)
+{
+    int h = 0, v = 0;
+    if (ha == "left") h = Qt::AlignLeft;
+    else if (ha == "center" || ha == "centre") h = Qt::AlignHCenter;
+    else if (ha == "right") h = Qt::AlignRight;
+    else throw py::value_error("ha must be 'left', 'center' or 'right'");
+    if (va == "bottom" || va == "baseline") v = Qt::AlignBottom;
+    else if (va == "center" || va == "centre" || va == "center_baseline") v = Qt::AlignVCenter;
+    else if (va == "top") v = Qt::AlignTop;
+    else throw py::value_error("va must be 'bottom', 'center' or 'top'");
+    return h | v;
+}
+
 // Colour map name for 2D images (None = automatic).
 QString checkedColormap(const py::object& v)
 {
@@ -1150,9 +1165,11 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
 
     fig.def(
         "annotate",
-        [](FigurePtr self, const std::string& text, double x, double y, const py::object& color,
-           const py::object& fontsizeObj) {
+        [](FigurePtr self, const Text& text, double x, double y, const py::object& color,
+           const py::object& fontsizeObj, const std::string& ha, const std::string& va, const py::object& arrowTo) {
             const double fontsize = fontsizeObj.is_none() ? 0.0 : fontsizeObj.cast<double>();
+            if (!fontsizeObj.is_none() && !(fontsize > 0 && std::isfinite(fontsize)))
+                throw py::value_error("fontsize must be a positive number");
             Annotation a;
             a.text = QString::fromStdString(text);
             a.x = x;
@@ -1160,10 +1177,21 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
             const QColor c = toColor(color);
             if (c.isValid()) a.color = c;
             a.fontSize = fontsize;
+            a.alignment = toAlignment(ha, va);
+            if (!arrowTo.is_none()) {
+                const auto to = arrowTo.cast<std::pair<double, double>>();
+                a.arrow = true;
+                a.arrowX = to.first;
+                a.arrowY = to.second;
+            }
             return AnnotationH{{self, inGui([&] { return self->editor()->addAnnotation(a); })}};
         },
         py::arg("text"), py::arg("x"), py::arg("y"), py::kw_only(), py::arg("color") = py::none(),
-        py::arg("fontsize") = py::none(), "Add a text annotation anchored (bottom-left) at data (x, y).");
+        py::arg("fontsize") = py::none(), py::arg("ha") = "left", py::arg("va") = "bottom",
+        py::arg("arrow_to") = py::none(),
+        "Add a text annotation at data (x, y). ha / va: which point of the text sits there\n"
+        "('left', 'center', 'right' / 'bottom', 'center', 'top'); arrow_to=(x, y) draws an arrow\n"
+        "from the text to that point."); 
 
     // -- region
     fig.def(
@@ -2237,6 +2265,23 @@ Remove a callback with off(event, callback).)doc");
                           const QColor c = toColor(v);
                           h.edit([&](Annotation& a) { a.color = c; });
                       })
+        .def_property(
+            "arrow_to",
+            [](AnnotationH& h) -> py::object {
+                const Annotation a = inGui([&] { return h.get(); });
+                if (!a.arrow) return py::none();
+                return py::make_tuple(a.arrowX, a.arrowY);
+            },
+            [](AnnotationH& h, const py::object& v) {
+                const bool on = !v.is_none();
+                const auto to = on ? v.cast<std::pair<double, double>>() : std::pair<double, double>{0, 0};
+                h.edit([&](Annotation& a) {
+                    a.arrow = on;
+                    a.arrowX = to.first;
+                    a.arrowY = to.second;
+                });
+            },
+            "Point the arrow goes to, (x, y), or None for no arrow.")
         .def_property("fontsize",
                       [](AnnotationH& h) {
                           return inGui([&] {
