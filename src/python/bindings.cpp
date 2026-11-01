@@ -32,6 +32,7 @@
 #include <pybind11/stl.h>
 
 #include <QApplication>
+#include <QDir>
 #include <QPointer>
 #include <QSet>
 #include <QTimer>
@@ -48,6 +49,14 @@ using gp::pyglue::inGui;
 namespace {
 
 // ---- conversions ------------------------------------------------------------------
+
+// A file path from Python: "~" / "~/..." means the home folder (as in the shell).
+QString toPath(const std::string& p)
+{
+    QString s = QString::fromStdString(p);
+    if (s == "~" || s.startsWith("~/")) s = QDir::homePath() + s.mid(1);
+    return s;
+}
 
 QVector<double> toVector(const py::handle& obj, const char* what)
 {
@@ -655,7 +664,7 @@ PYBIND11_MODULE(_plotter, mod)
     mod.def("_style_text", [] { return defaultStyle().toText().toStdString(); });
     mod.def("_style_save", [](const std::string& fn) {
         QString err;
-        if (!saveStyle(QString::fromStdString(fn), defaultStyle(), &err)) throw std::runtime_error(err.toStdString());
+        if (!saveStyle(toPath(fn), defaultStyle(), &err)) throw std::runtime_error(err.toStdString());
     });
     mod.def("_style_default_path", [] { return userDefaultStylePath().toStdString(); });
     mod.def("_style_reload", [] {
@@ -818,7 +827,7 @@ levels; '*' and '/' halve / double them. Returns a Contour handle.)doc");
         [](FigurePtr self, const std::string& path) {
             QString err;
             const ObjectId id = inGui([&] {
-                return self->w()->openBruker(QString::fromStdString(path), &err);
+                return self->w()->openBruker(toPath(path), &err);
             });
             if (id == kInvalidId) throw std::runtime_error(err.toStdString());
             return Contour{{self, id}};
@@ -932,7 +941,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         "export_peaks",
         [](FigurePtr self, const std::string& fn) {
             QString err;
-            if (!inGui([&] { return self->w()->peakTable()->exportCsv(QString::fromStdString(fn), &err); }))
+            if (!inGui([&] { return self->w()->peakTable()->exportCsv(toPath(fn), &err); }))
                 throw std::runtime_error(err.toStdString());
         },
         py::arg("filename"), "Write the peak list as CSV (x, y, intensity, label, comment).");
@@ -940,7 +949,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         "import_peaks",
         [](FigurePtr self, const std::string& fn) {
             QString err;
-            if (!inGui([&] { return self->w()->peakTable()->importCsv(QString::fromStdString(fn), &err); }))
+            if (!inGui([&] { return self->w()->peakTable()->importCsv(toPath(fn), &err); }))
                 throw std::runtime_error(err.toStdString());
         },
         py::arg("filename"), "Add peaks from a CSV written by export_peaks (one undo step).");
@@ -1255,7 +1264,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         [](FigurePtr self, const std::string& nameOrPath) {
             QStringList errors;
             const bool ok = inGui([&] {
-                return self->w()->applyStyle(QString::fromStdString(nameOrPath), &errors);
+                return self->w()->applyStyle(toPath(nameOrPath), &errors);
             });
             if (!ok) throw std::runtime_error(errors.join("; ").toStdString());
             std::vector<std::string> out;
@@ -1298,7 +1307,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         "save_style",
         [](FigurePtr self, const std::string& fn) {
             QString err;
-            if (!inGui([&] { return saveStyle(QString::fromStdString(fn), self->model()->style(), &err); }))
+            if (!inGui([&] { return saveStyle(toPath(fn), self->model()->style(), &err); }))
                 throw std::runtime_error(err.toStdString());
         },
         py::arg("filename"), "Write this figure's complete style to a .gpstyle file.");
@@ -1525,7 +1534,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         [](FigurePtr self, const std::string& filename, int width, int height, double scale) {
             QString err;
             const bool ok = inGui([&] {
-                return self->w()->exportTo(QString::fromStdString(filename), width, height, scale, &err);
+                return self->w()->exportTo(toPath(filename), width, height, scale, &err);
             });
             if (!ok) throw std::runtime_error(err.toStdString());
         },
@@ -1537,7 +1546,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         "screenshot",
         [](FigurePtr self, const std::string& filename) {
             const bool ok = inGui([&] {
-                return self->w()->grab().save(QString::fromStdString(filename));
+                return self->w()->grab().save(toPath(filename));
             });
             if (!ok) throw std::runtime_error("could not save screenshot");
         },

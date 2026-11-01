@@ -405,7 +405,7 @@ void PlotRenderer::resetView()
 
 void PlotRenderer::maybeCaptureHome()
 {
-    if (m_hasHome) return;
+    if (m_hasHome || !m_autoHome) return;
     autoscale();
     captureHomeView();
 }

@@ -180,6 +180,7 @@ PlotRenderer* Timeline::rowRenderer(int row) const
 void Timeline::attachRow(int row)
 {
     PlotRenderer* r = rowRenderer(row);
+    r->setAutoHome(false);  // a row's first signal must not move the time window
     RowVisual v;
     v.cursor = new QCPItemStraightLine(m_plot);
     bindToRect(v.cursor, r);

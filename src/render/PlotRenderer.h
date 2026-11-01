@@ -72,6 +72,9 @@ public:
     // the first time data arrives, or explicitly via setHomeView().
     void setHomeView(const ViewRange& r);
     void captureHomeView() { setHomeView(viewRange()); }
+    // Off: the first data no longer autoscales the view (used by timeline
+    // rows, whose x range is the shared time window).
+    void setAutoHome(bool on) { m_autoHome = on; }
     void resetView();
 
     // ---- coordinates --------------------------------------------------
@@ -197,6 +200,7 @@ private:
     ObjectRef m_highlight;
     bool m_exportMode = false;
     bool m_hasHome = false;
+    bool m_autoHome = true;
     bool m_panelVisible = true;
     bool m_regionLabelOn = true;
     ViewRange m_home;

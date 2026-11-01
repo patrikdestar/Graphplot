@@ -13,8 +13,10 @@ figures, sends NumPy data and reads back what the user selected::
     fig.marker(25.0, color="green", label="Marker 1")
     fig.show(block=False)
 
-    xmin, xmax = fig.wait_for_region()     # let the user drag a region (None if closed)
-    m = (x >= xmin) & (x <= xmax)
+    region = fig.wait_for_region()         # let the user drag a region
+    if region is not None:                 # None if the window was closed
+        xmin, xmax = region
+        m = (x >= xmin) & (x <= xmax)
 
 Event loop
 ----------
@@ -127,6 +129,25 @@ def _figure_show(self: Figure, block: bool | None = None, timeout: float | None 
 
 
 Figure.show = _figure_show
+
+
+def _accept_pathlike(name: str) -> None:
+    """Let a Figure method take pathlib.Path (and other os.PathLike) paths."""
+    import functools
+    import os
+
+    native = getattr(Figure, name)
+
+    @functools.wraps(native)
+    def method(self, path, *args, **kwargs):
+        return native(self, os.fspath(path), *args, **kwargs)
+
+    setattr(Figure, name, method)
+
+
+for _name in ("open_bruker", "export_peaks", "import_peaks", "use_style", "save_style",
+              "savefig", "screenshot"):
+    _accept_pathlike(_name)
 Figure.vline = lambda self, x, **kw: self.marker(x, "v", **kw)
 Figure.vline.__doc__ = "Vertical marker at x (same keywords as marker())."
 Figure.hline = lambda self, y, **kw: self.marker(y, "h", **kw)

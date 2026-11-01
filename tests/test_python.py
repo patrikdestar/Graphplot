@@ -621,6 +621,28 @@ class PlotterTests(unittest.TestCase):
         g.close()
         self.assertNotIn(g, plotter.figures())
 
+    def test_paths_and_timeline_window(self):
+        import pathlib
+        tl = plotter.timeline()
+        t = np.linspace(0, 120, 121)
+        tl.add_row("a").plot(t, np.sin(t), label="s")
+        tl.window = (40, 50)
+        tl.add_row("b").plot(t, np.cos(t), label="c")  # must not move the window
+        self.assertEqual(tl.window, (40.0, 50.0))
+        tl.figure.close()
+        self.fig.plot([1, 2], [1, 2])
+        with tempfile.TemporaryDirectory() as d:
+            self.fig.savefig(pathlib.Path(d) / "p.png")  # os.PathLike accepted
+            self.assertTrue((pathlib.Path(d) / "p.png").exists())
+            home = os.environ.get("HOME")
+            os.environ["HOME"] = d
+            try:
+                self.fig.savefig("~/q.svg")  # "~" is the home folder
+            finally:
+                if home is not None:
+                    os.environ["HOME"] = home
+            self.assertTrue((pathlib.Path(d) / "q.svg").exists())
+
     def test_pyplot_compat_round2(self):
         import io
         import plotter.pyplot as plt
