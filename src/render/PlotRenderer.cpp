@@ -818,6 +818,7 @@ void PlotRenderer::onMatrixRemoved(ObjectId id)
     if (v.image) m_plot->removePlottable(v.image);
     if (m_highlight.kind == ObjectKind::Matrix && m_highlight.id == id) m_highlight = {};
     syncLegend();
+    updateColorBar();  // the removed image may have had the colour bar
     replot();
 }
 
@@ -860,8 +861,11 @@ void PlotRenderer::applyImageAppearance(const Matrix& m, MatrixVisual& v)
     QCPColorGradient g;
     colormapGradient(s.colormap, signedData, &g);
     QCPRange range;
-    if (s.fixedRange && s.vmax > s.vmin) {
-        range = QCPRange(s.vmin, s.vmax);
+    if (s.fixedRange) {
+        // A missing limit (stored as -inf / +inf) comes from the data.
+        const double lo = std::isfinite(s.vmin) ? s.vmin : v.lo;
+        const double hi = std::isfinite(s.vmax) ? s.vmax : v.hi;
+        range = QCPRange(lo, hi > lo ? hi : lo + 1);
     } else if (colormapIsDiverging(s.colormap, signedData)) {
         const double a = std::max({std::abs(v.lo), std::abs(v.hi), 1e-300});
         range = QCPRange(-a, a);  // zero sits in the middle of the map
@@ -870,6 +874,7 @@ void PlotRenderer::applyImageAppearance(const Matrix& m, MatrixVisual& v)
     }
     v.image->setGradient(g);
     v.image->setDataRange(range);
+    v.image->setInterpolate(s.smooth);
     v.image->setVisible(s.visible);
 }
 
@@ -885,21 +890,20 @@ void PlotRenderer::updateColorBar()
     if (!shown) {
         if (m_colorBar && m_colorBar->visible()) {
             m_colorBar->setVisible(false);
-            m_y2->setPadding(m_y2Padding);
+            m_y2->setPadding(0);
         }
         return;
     }
     if (!m_colorBar) {
         m_colorBar = new ColorBar(m_plot, m_rect);
         m_colorBar->setLayer(m_objectLayer);
-        m_y2Padding = m_y2->padding();
     }
     const Style st = displayStyle();
     const QCPColorMap* img = m_matrices.value(shown->id).image;
     m_colorBar->set(img->gradient(), img->dataRange(), shown->name, font(st.ytick.labelSize), st.axesEdge,
                     st.ytick.labelColor, st.mathText);
     m_colorBar->setVisible(m_panelVisible);
-    m_y2->setPadding(m_y2Padding + m_colorBar->requiredWidth());  // room in the right margin
+    m_y2->setPadding(m_colorBar->requiredWidth());  // room in the right margin (applyStyle resets it to 0)
 }
 
 void PlotRenderer::updateMatrixImage(ObjectId id)
@@ -1217,6 +1221,7 @@ void PlotRenderer::applyStyle()
     for (const auto& m : m_model->markers()) applyMarker(m.id);
     for (const auto& a : m_model->annotations()) applyAnnotation(a.id);
     applyAxesInfo();
+    updateColorBar();  // fonts / colours, and its margin (reset above with the axis padding)
 }
 
 void PlotRenderer::setOwnTitle(bool on)
@@ -1264,7 +1269,8 @@ void PlotRenderer::applyAxesInfo()
     m_x->setLabelPadding(int(std::lround(st.labelPad + std::max(0.0, m_axisLabels->xSize().height() - lineH))));
     // Panel title above the frame: the top axis' label reserves the space.
     const QFont tf = font(st.titleSize, st.titleBold);
-    const bool ownTitle = m_ownTitle && !info.title.isEmpty();
+    // A panel shows its own title in grids, or when a suptitle takes the header.
+    const bool ownTitle = (m_ownTitle || !info.suptitle.isEmpty()) && !info.title.isEmpty();
     m_axisLabels->setTitle(ownTitle ? info.title : QString(), tf, st.titleColor, st.mathText);
     m_x2->setLabelFont(tf);
     m_x2->setLabel(ownTitle ? QStringLiteral(" ") : QString());
@@ -1296,21 +1302,39 @@ void PlotRenderer::applyAxesInfo()
     setScale(m_y, m_y2, info.yLog, m_linTickerY);
     // Custom ticks replace the axis' ticker (and are taken away again when
     // switched off, restoring whatever ticker the axis had, e.g. clock time).
-    auto setCustomTicks = [](QCPAxis* a, QCPAxis* mirror, bool on, const QVector<double>& pos,
+    const bool unicodeMinus = st.unicodeMinus;
+    auto setCustomTicks = [this, unicodeMinus](QCPAxis* a, QCPAxis* mirror, bool on, const QVector<double>& pos,
                              const QStringList& labels, QSharedPointer<QCPAxisTicker>& saved) {
         if (on) {
             if (!saved) saved = a->ticker();
             auto t = QSharedPointer<QCPAxisTickerText>::create();
             for (qsizetype i = 0; i < pos.size(); ++i) {
+                // Numbers get the typographic minus (if the style uses it);
+                // text labels are shown as written ("pre-test").
                 QString text = i < labels.size() ? labels[i] : QString::number(pos[i], 'g', 6);
-                t->addTick(pos[i], text.replace('-', QChar(0x2212)));
+                if (i >= labels.size() && unicodeMinus) text.replace('-', QChar(0x2212));
+                t->addTick(pos[i], text);
             }
             t->setSubTickCount(0);
             a->setTicker(t);
             mirror->setTicker(t);
         } else if (saved) {
-            a->setTicker(saved);
-            mirror->setTicker(saved);
+            // The saved ticker belongs to the scale at the time; if the scale
+            // changed meanwhile, use one that fits the current scale.
+            const bool log = a->scaleType() == QCPAxis::stLogarithmic;
+            QSharedPointer<QCPAxisTicker> t = saved;
+            if (log != !saved.dynamicCast<QCPAxisTickerLog>().isNull()) {
+                if (log) {
+                    auto lt = QSharedPointer<QCPAxisTickerLog>::create();
+                    lt->setLogBase(10);
+                    lt->setSubTickCount(8);
+                    t = lt;
+                } else {
+                    t = a == m_x ? m_linTickerX : m_linTickerY;
+                }
+            }
+            a->setTicker(t);
+            mirror->setTicker(t);
             saved.reset();
         }
     };

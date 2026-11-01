@@ -122,6 +122,8 @@ int main(int argc, char** argv)
     QCommandLineOption exportOpt("export", "Export the figure (plot only) to <file> (.png, .svg, .pdf) and exit.",
                                  "file");
     parser.addOption(exportOpt);
+    QCommandLineOption sizeOpt("size", "Figure size for --export, in pixels (e.g. 800x600).", "WxH");
+    parser.addOption(sizeOpt);
     QCommandLineOption timelineOpt("timeline", "Open the CSV files as a timeline (stacked sensor rows).");
     parser.addOption(timelineOpt);
     QCommandLineOption perColumn("row-per-column", "Timeline: one row per column instead of per file.");
@@ -171,7 +173,11 @@ int main(int argc, char** argv)
             const QFileInfo fi(f);
             // Bruker: an experiment / pdata folder, or a 2rr file.
             const bool bruker = fi.isDir() || fi.fileName() == "2rr";
-            const bool ok = bruker ? w.openBruker(f, &err) != kInvalidId : w.openDataFile(f, &err);
+            const QString suffix = fi.suffix().toLower();
+            bool ok;
+            if (suffix == "gpfig") ok = w.loadFigure(f, &err);  // a saved figure
+            else if (suffix == "gpstyle") ok = w.applyStyle(f), err = "invalid style file";
+            else ok = bruker ? w.openBruker(f, &err) != kInvalidId : w.openDataFile(f, &err);
             if (!ok) report(&w, "Open " + f, err);
         }
         w.editor()->undoStack()->clear();
@@ -189,7 +195,14 @@ int main(int argc, char** argv)
             }
             if (ok && parser.isSet(exportOpt)) {
                 QString err;
-                ok = w.exportTo(parser.value(exportOpt), 0, 0, 2.0, &err);
+                int width = 0, height = 0;
+                if (parser.isSet(sizeOpt)) {
+                    const QStringList wh = parser.value(sizeOpt).toLower().split('x');
+                    width = wh.value(0).toInt();
+                    height = wh.value(1).toInt();
+                    if (width <= 0 || height <= 0) qCritical("--size expects WxH, e.g. 800x600");
+                }
+                ok = w.exportTo(parser.value(exportOpt), width, height, 2.0, &err);
                 if (!ok) qCritical("%s", qPrintable(err));
             }
             app.exit(ok ? 0 : 1);

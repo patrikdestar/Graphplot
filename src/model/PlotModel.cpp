@@ -355,6 +355,12 @@ bool PlotModel::dataBounds(double& xmin, double& xmax, double& ymin, double& yma
         if ((visibleOnly && !m.style.visible) || m.nx < 1 || m.ny < 1) continue;
         double x0 = std::min(m.x0, m.x1), x1 = std::max(m.x0, m.x1);
         double y0 = std::min(m.y0, m.y1), y1 = std::max(m.y0, m.y1);
+        if (m.style.showImage) {
+            // An image covers whole cells: half a cell beyond the outer centres.
+            const double hx = m.nx > 1 ? (x1 - x0) / (m.nx - 1) / 2 : 0.5;
+            const double hy = m.ny > 1 ? (y1 - y0) / (m.ny - 1) / 2 : 0.5;
+            x0 -= hx, x1 += hx, y0 -= hy, y1 += hy;
+        }
         // On logarithmic axes only the positive part of the extent counts.
         if (xPositive) x0 = std::max(x0, x1 * 1e-6);
         if (yPositive) y0 = std::max(y0, y1 * 1e-6);

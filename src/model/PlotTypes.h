@@ -76,7 +76,9 @@ struct ContourStyle {
     QString colormap;          // image colours: "" / "auto", "viridis", "magma", ... (see render/ColorBar.h)
     bool colorBar = false;     // colour bar beside the panel (for the image)
     bool fixedRange = false;   // image colour limits: vmin..vmax instead of the data range
-    double vmin = 0.0, vmax = 1.0;
+    double vmin = 0.0, vmax = 1.0;  // a missing limit is -inf / +inf (taken from the data)
+    QVector<double> levels;    // explicit contour levels (used exactly); empty = geometric levels
+    bool smooth = true;        // image: interpolate between cells; false = blocky cells (imshow)
     bool operator==(const ContourStyle&) const = default;
 };
 

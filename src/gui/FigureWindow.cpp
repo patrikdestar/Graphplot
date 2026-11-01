@@ -313,6 +313,16 @@ int FigureWindow::currentAxes() const
 void FigureWindow::setGrid(const GridSpec& spec)
 {
     const int rows = std::max(1, spec.rows), cols = std::max(1, spec.cols);
+    // A figure named at creation (figure("Run 42")) keeps that name as the
+    // figure-wide title once it has several panels, not as panel 0's title.
+    if (rows * cols > 1 && !m_axes.empty()) {
+        AxesInfo info = m_axes.front().model->axesInfo();
+        if (!info.title.isEmpty() && info.title == windowTitle() && info.suptitle.isEmpty()) {
+            info.suptitle = info.title;
+            info.title.clear();
+            m_axes.front().model->setAxesInfo(info);
+        }
+    }
     ensureGrid();
     // Create the missing panels (existing ones keep their content).
     while (int(m_axes.size()) < rows * cols) createPanel();

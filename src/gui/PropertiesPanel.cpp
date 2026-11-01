@@ -904,7 +904,9 @@ void PropertiesPanel::refreshCurrentPage()
         m_mxImage->setChecked(m->style.showImage);
         m_mxContours->setChecked(m->style.showContours);
         m_mxColorBar->setChecked(m->style.colorBar);
-        const int cm = m_mxColormap->findText(m->style.colormap.isEmpty() ? QString("auto") : m->style.colormap);
+        // "viridis_r" is shown as "viridis" (the reversal is kept unless another map is chosen).
+        const int cm = m_mxColormap->findText(m->style.colormap.isEmpty() ? QString("auto")
+                                                                          : QString(m->style.colormap).remove("_r"));
         m_mxColormap->setCurrentIndex(std::max(0, cm));
         m_mxVisible->setChecked(m->style.visible);
         const std::vector<double> lv = contourLevels(m->style);

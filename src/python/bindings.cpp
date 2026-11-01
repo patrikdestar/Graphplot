@@ -261,13 +261,15 @@ QString checkedColormap(const py::object& v)
     return name == "auto" ? QString() : name;
 }
 
-// (fixed, vmin, vmax) from optional limits; one missing limit keeps the data's.
+// (fixed, vmin, vmax) from optional limits; a missing limit (stored as
+// -inf / +inf) keeps the data's.
 std::tuple<bool, double, double> colorLimits(const py::object& vmin, const py::object& vmax)
 {
     if (vmin.is_none() && vmax.is_none()) return {false, 0.0, 1.0};
-    if (vmin.is_none() || vmax.is_none()) throw py::value_error("give both vmin and vmax (or neither)");
-    const double lo = vmin.cast<double>(), hi = vmax.cast<double>();
-    if (!(hi > lo) || !std::isfinite(lo) || !std::isfinite(hi))
+    const double inf = std::numeric_limits<double>::infinity();
+    const double lo = vmin.is_none() ? -inf : vmin.cast<double>();
+    const double hi = vmax.is_none() ? inf : vmax.cast<double>();
+    if ((!vmin.is_none() && !std::isfinite(lo)) || (!vmax.is_none() && !std::isfinite(hi)) || !(hi > lo))
         throw py::value_error("vmin must be smaller than vmax (finite numbers)");
     return {true, lo, hi};
 }
@@ -954,13 +956,22 @@ Returns a Line handle.)doc");
            const py::object& base,
            const py::object& color, const py::object& negativeColor, bool negative, bool image,
            const py::object& linewidthObj, const py::object& cmap, bool contours, bool colorbar,
-           const py::object& vmin, const py::object& vmax) {
-            const int levels = levelsObj.is_none() ? 0 : levelsObj.cast<int>();
+           const py::object& vmin, const py::object& vmax, bool smooth) {
+            // levels: a count (geometric levels) or a sequence of exact levels.
+            QVector<double> explicitLevels;
+            const bool isSequence = !levelsObj.is_none() && !py::isinstance<py::int_>(levelsObj) &&
+                                    py::hasattr(levelsObj, "__len__");
+            if (isSequence) {
+                explicitLevels = toVector(levelsObj, "levels");
+                if (explicitLevels.isEmpty() || explicitLevels.size() > 1000)
+                    throw py::value_error("give 1 to 1000 contour levels");
+            }
+            const int levels = levelsObj.is_none() || isSequence ? 0 : levelsObj.cast<int>();
             const double factor = factorObj.is_none() ? 0.0 : factorObj.cast<double>();
             const double linewidth = linewidthObj.is_none() ? 0.0 : linewidthObj.cast<double>();
             Matrix m = matrixFromNumpy(z, x, y);
             if (!label.is_none()) m.name = QString::fromStdString(py::str(label).cast<std::string>());
-            if (!levelsObj.is_none() && (levels < 1 || levels > 1000))
+            if (!levelsObj.is_none() && !isSequence && (levels < 1 || levels > 1000))
                 throw py::value_error("levels must be between 1 and 1000");
             if (!factorObj.is_none() && !(factor > 1.0)) throw py::value_error("factor must be > 1");
             m.style.levelCount = levels;
@@ -972,6 +983,8 @@ Returns a Line handle.)doc");
             m.style.showImage = image || !contours;  // no contours: show the image
             m.style.lineWidth = linewidth;
             m.style.showContours = contours;
+            m.style.levels = explicitLevels;
+            m.style.smooth = smooth;
             m.style.colorBar = colorbar;
             m.style.colormap = checkedColormap(cmap);
             std::tie(m.style.fixedRange, m.style.vmin, m.style.vmax) = colorLimits(vmin, vmax);
@@ -992,11 +1005,13 @@ Returns a Line handle.)doc");
         py::arg("negative_color") = py::none(), py::arg("negative") = true,
         py::arg("image") = false, py::arg("linewidth") = py::none(), py::arg("cmap") = py::none(),
         py::arg("contours") = true, py::arg("colorbar") = false, py::arg("vmin") = py::none(),
-        py::arg("vmax") = py::none(),
+        py::arg("vmax") = py::none(), py::arg("smooth") = true,
         R"doc(Show 2D data z[row=y, column=x] as contour lines on a regular grid.
 
 x, y      grid coordinates: full uniformly spaced arrays or (start, stop); default: indices
-levels    number of positive levels: base * factor**k, k = 0..levels-1
+levels    number of positive levels: base * factor**k, k = 0..levels-1;
+          or a list of exact levels (drawn as given, any sign)
+smooth    image: interpolate between cells (False: blocky cells)
 base      lowest level; default chooses the top level just below max |z|
 negative  also draw the mirrored negative levels (in negative_color)
 image     draw a colour-map image underneath the contours
@@ -2098,7 +2113,8 @@ Remove a callback with off(event, callback).)doc");
                       [](Contour& h) -> py::object {
                           const ContourStyle s = inGui([&] { return h.get().style; });
                           if (!s.fixedRange) return py::none();
-                          return py::make_tuple(s.vmin, s.vmax);
+                          auto lim = [](double v) { return std::isfinite(v) ? py::object(py::float_(v)) : py::object(py::none()); };
+                          return py::make_tuple(lim(s.vmin), lim(s.vmax));
                       },
                       [](Contour& h, const py::object& v) {
                           bool fixed = false;

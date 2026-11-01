@@ -211,7 +211,6 @@ private:
     QCPItemStraightLine* m_diagonal = nullptr;
     PeakOverlay* m_peaks = nullptr;
     class ColorBar* m_colorBar = nullptr;
-    int m_y2Padding = 0;  // the right axis' own padding (the colour bar adds to it)
 
     QHash<ObjectId, QCPAbstractPlottable*> m_plottables;
     struct ErrorVisual {

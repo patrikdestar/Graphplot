@@ -211,7 +211,7 @@ class PltAxes:
         return self._ax.plot(x, y, xerr=xerr, yerr=yerr, **opts)
 
     def hist(self, x, bins=10, range=None, density=False, weights=None,  # noqa: A002
-             histtype="step", **kw):
+             histtype="bar", **kw):
         # Several datasets (a list of arrays or a 2-D array, one per column):
         # one histogram each, with shared bins, like matplotlib.
         many = (isinstance(x, (list, tuple)) and len(x) > 0 and _np.ndim(x[0]) > 0) or _np.ndim(x) == 2
@@ -272,11 +272,18 @@ class PltAxes:
                                      color=_mpl_color(color), alpha=alpha, step=step)
 
     def contour(self, *args, levels=None, colors=None, **kw):
-        """contour(Z) or contour(X, Y, Z); levels: number of (geometric) levels."""
+        """contour(Z), contour(X, Y, Z), with levels as a count or a list of exact
+        levels (also positional: contour(X, Y, Z, 10) / contour(Z, [0.1, 0.5]))."""
         kw.pop("linewidths", None)
+        kw.pop("linestyles", None)
+        kw.pop("alpha", None)
+        cmap = kw.pop("cmap", None)
         label = kw.pop("label", None)
         if kw:
             raise TypeError(f"unsupported keyword(s): {', '.join(sorted(kw))}")
+        args = list(args)
+        if len(args) in (2, 4) and levels is None:  # trailing positional levels
+            levels = args.pop()
         if len(args) == 1:
             z, x, y = args[0], None, None
         elif len(args) == 3:
@@ -284,22 +291,16 @@ class PltAxes:
             x = x[0] if x.ndim == 2 else x
             y = y[:, 0] if y.ndim == 2 else y
         else:
-            raise TypeError("contour(Z) or contour(X, Y, Z)")
+            raise TypeError("contour(Z) or contour(X, Y, Z) (optionally followed by levels)")
         import numbers
 
-        n = base = factor = None
-        if isinstance(levels, numbers.Integral):
-            n = int(levels)
-        elif levels is not None:
-            # Explicit levels: geometric levels are base * factor**k, so use
-            # the positive ones to choose base, factor and count.
-            lv = _np.sort(_np.abs(_np.asarray(levels, dtype=float)))
-            lv = _np.unique(lv[lv > 0])
-            if lv.size:
-                base, n = float(lv[0]), int(lv.size)
-                factor = float((lv[-1] / lv[0]) ** (1 / (lv.size - 1))) if lv.size > 1 else 2.0
-        return self._ax.contour(z, x, y, levels=n, factor=factor, base=base, color=colors,
-                                label=label)
+        if levels is not None and not isinstance(levels, numbers.Integral):
+            levels = [float(v) for v in _np.atleast_1d(levels)]  # exact levels, as given
+        color = _mpl_color(colors) if isinstance(colors, (str, tuple)) else None
+        c = self._ax.contour(z, x, y, levels=levels, color=color, negative_color=color, label=label,
+                             negative=not isinstance(levels, list), cmap=cmap)
+        self._last_image = c
+        return c
 
     def contourf(self, *args, **kw):
         cmap = kw.pop("cmap", None)
@@ -338,8 +339,9 @@ class PltAxes:
             x = (left + dx / 2, right - dx / 2)
             # Row 0 is at the top for origin='upper', at the bottom for 'lower'.
             y = (top - dy / 2, bottom + dy / 2) if upper else (bottom + dy / 2, top - dy / 2)
+        smooth = interpolation not in (None, "none", "nearest", "antialiased")
         c = self._ax.image(z, x, y, cmap=cmap or "viridis", colorbar=False, vmin=vmin, vmax=vmax,
-                           label=label)
+                           label=label, smooth=smooth)
         self._last_image = c
         return c
 
@@ -356,7 +358,7 @@ class PltAxes:
         else:
             raise TypeError("pcolormesh(C) or pcolormesh(X, Y, C)")
         c = self._ax.image(c_arr, x, y, cmap=cmap or "viridis", colorbar=False, vmin=vmin, vmax=vmax,
-                           label=label)
+                           label=label, smooth=shading == "gouraud")
         self._last_image = c
         return c
 
@@ -488,8 +490,15 @@ class PltAxes:
         return lines
 
     def cla(self):
-        """Remove everything from this panel."""
-        self._ax.clear()
+        """Clear this panel: data, objects, title, labels, ticks and scales."""
+        ax = self._ax
+        ax.clear()
+        ax.title = ax.xlabel = ax.ylabel = ""
+        ax.x_log = ax.y_log = ax.x_reversed = ax.y_reversed = False
+        ax.set_xticks(None)
+        ax.set_yticks(None)
+        ax.legend(False)
+        self._fixed_limits.clear()
 
     def get_title(self):
         return self._ax.title
@@ -700,9 +709,18 @@ class _PltFigure:
         elif len(args) == 1 and isinstance(args[0], tuple):
             args = args[0]
         rows, cols, index = (args + (1, 1, 1))[:3] if args else (1, 1, 1)
-        if rows * cols != len(self.axes):
+        current = getattr(self, "_grid", (1, 1))
+        if (rows, cols) != current:
+            used = any(ax.get_lines() or ax.panel.contours() for ax in self.axes)
+            if used and current != (1, 1):
+                raise ValueError(f"subplot({rows}, {cols}, ...): this figure already uses a "
+                                 f"{current[0]}x{current[1]} grid; mixing grid shapes (e.g. 221 with "
+                                 f"212) is not supported - use plt.subplots() or one shape")
             grid = self._fig.subplots(rows, cols, squeeze=False)
             self.axes = [PltAxes(self, a) for row in grid for a in row]
+            self._grid = (rows, cols)
+        if not 1 <= index <= rows * cols:
+            raise ValueError(f"subplot index {index} is outside a {rows}x{cols} grid")
         ax = self.axes[index - 1]
         self._fig.sca(ax.panel)
         return ax
@@ -719,9 +737,16 @@ class _PltFigure:
         return _np.array([self._size[0] / _DPI, self._size[1] / _DPI])
 
     def clf(self):
-        """Clear every panel (data and objects)."""
+        """Clear the figure: back to one empty panel without titles, labels,
+        custom ticks or log scales (as matplotlib's clf)."""
         for ax in self.axes:
             ax.cla()
+        if getattr(self, "_grid", (1, 1)) != (1, 1):
+            self._fig.subplots(1, 1)
+            self._grid = (1, 1)
+        self._fig.suptitle = ""
+        self.axes = [PltAxes(self, self._fig.axes[0])]
+        self._fig.sca(self._fig.axes[0])
 
     def legend(self, *args, **kw):
         """Figure legend: shown on the first panel (plotter legends live inside a panel)."""
@@ -793,6 +818,7 @@ def subplots(nrows=1, ncols=1, sharex=False, sharey=False, figsize=None, squeeze
                              wspace=px(wspace), squeeze=False)
     axes = [[PltAxes(fig, a) for a in row] for row in grid]
     fig.axes = [a for row in axes for a in row]
+    fig._grid = (nrows, ncols)
     fig._fig.sca(grid[0][0])
     # Like matplotlib: an object ndarray (axs[0, 1], axs.flat, axs.ravel()).
     arr = _np.empty((nrows, ncols), dtype=object)

@@ -147,8 +147,14 @@ QJsonObject matrixToJson(const Matrix& m)
             {"visible", s.visible},
             {"contours", s.showContours},
             {"colormap", s.colormap},
+            {"smooth", s.smooth},
+            {"levelValues", [&] {
+                 QJsonArray a;
+                 for (double l : s.levels) a << jnum(l);
+                 return a;
+             }()},
             {"colorBar", s.colorBar},
-            {"clim", s.fixedRange ? QJsonValue(QJsonArray{s.vmin, s.vmax}) : QJsonValue()}};
+            {"clim", s.fixedRange ? QJsonValue(QJsonArray{jnum(s.vmin), jnum(s.vmax)}) : QJsonValue()}};
 }
 
 bool matrixFromJson(const QJsonObject& o, Matrix* m)
@@ -172,10 +178,12 @@ bool matrixFromJson(const QJsonObject& o, Matrix* m)
     s.visible = o["visible"].toBool(true);
     s.showContours = o["contours"].toBool(true);
     s.colormap = o["colormap"].toString();
+    s.smooth = o["smooth"].toBool(true);
+    for (const QJsonValue& l : o["levelValues"].toArray()) s.levels << jdbl(l);
     s.colorBar = o["colorBar"].toBool();
     const QJsonArray clim = o["clim"].toArray();
-    s.fixedRange = clim.size() == 2 && clim[1].toDouble() > clim[0].toDouble();
-    if (s.fixedRange) s.vmin = clim[0].toDouble(), s.vmax = clim[1].toDouble();
+    s.fixedRange = clim.size() == 2 && jdbl(clim[1]) > jdbl(clim[0]);
+    if (s.fixedRange) s.vmin = jdbl(clim[0]), s.vmax = jdbl(clim[1]);
     return decodeArray(o["z"], &m->z) && m->nx >= 2 && m->ny >= 2 &&
            m->z.size() == qsizetype(m->nx) * m->ny;
 }

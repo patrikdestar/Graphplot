@@ -149,6 +149,7 @@ void PlotEditor::scaleContourLevels(const QList<ObjectId>& ids, double factor)
         c.after = c.before;
         // Clamp: a level of exactly 0 (underflow) could never be scaled back.
         c.after.style.baseLevel = std::clamp(cur->style.baseLevel * factor, 1e-300, 1e300);
+        for (double& l : c.after.style.levels) l *= factor;  // explicit levels scroll too
         changes.push_back(std::move(c));
     }
     if (!changes.empty()) m_stack->push(new ScaleLevelsCommand(m_model, std::move(changes)));

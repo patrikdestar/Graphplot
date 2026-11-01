@@ -9,6 +9,11 @@ namespace gp {
 std::vector<double> contourLevels(const ContourStyle& s)
 {
     std::vector<double> levels;
+    if (!s.levels.isEmpty()) {  // explicit levels: exactly these, in any sign
+        for (double l : s.levels)
+            if (std::isfinite(l)) levels.push_back(l);
+        return levels;
+    }
     if (!(s.baseLevel > 0) || s.levelCount <= 0) return levels;
     const double f = s.factor > 1.0 ? s.factor : 1.0001;
     double l = s.baseLevel;

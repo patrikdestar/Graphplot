@@ -995,6 +995,45 @@ class PlotterTests(unittest.TestCase):
             plt.savefig(os.path.join(d, "b.png"))
             plt.close("all")
 
+    def test_round6_correctness(self):
+        import plotter.pyplot as plt
+        f = self.fig
+        # Views follow data; shared axes fit the union.
+        f.plot([0, 1], [0, 1])
+        f.plot([0, 1], [0, 5])
+        self.assertGreaterEqual(f.ylim()[1], 5)
+        g = plotter.figure()
+        a, b = g.subplots(1, 2, sharey=True)
+        a.plot([0, 1], [0, 1])
+        b.plot([0, 1], [5, 50])
+        a.autoscale()
+        self.assertLessEqual(a.ylim()[0], 0)
+        self.assertGreaterEqual(a.ylim()[1], 50)
+        g.close()
+        # Exact contour levels; one-sided colour limits; blocky images with full cells.
+        y, x = np.mgrid[-2:2:30j, -2:2:30j]
+        c = f.contour(np.exp(-(x**2 + y**2)), levels=[0.1, 0.5, 0.9])
+        self.assertEqual(sorted(c.levels()), [0.1, 0.5, 0.9])
+        img = f.image(np.arange(9.0).reshape(3, 3), vmin=2)
+        self.assertEqual(img.clim, (2.0, None))
+        # Colour bar: removed with its image; style changes keep it.
+        img.remove()
+        # pyplot: imshow extents, clf, subplot shape mixing.
+        plt.figure()
+        plt.imshow(np.zeros((3, 3)))
+        self.assertEqual(plt.xlim(), (-0.5, 2.5))
+        plt.clf()
+        plt.subplot(221)
+        plt.plot([0, 1])
+        with self.assertRaises(ValueError):
+            plt.subplot(212)
+        plt.close("all")
+        # A single panel keeps its title when a suptitle is set; figure names become suptitles.
+        h = plotter.figure("Run 42")
+        h.subplots(1, 2)
+        self.assertEqual(h.suptitle, "Run 42")
+        h.close()
+
     def test_pyplot_compat_round2(self):
         import io
         import plotter.pyplot as plt
@@ -1047,9 +1086,7 @@ class PlotterTests(unittest.TestCase):
         c = ax.contour(xx, yy, np.exp(-(xx ** 2 + yy ** 2)), levels=np.int64(5))
         self.assertEqual(c.n_levels, 5)
         c2 = ax.contour(xx, yy, np.exp(-(xx ** 2 + yy ** 2)), levels=[0.1, 0.2, 0.4, 0.8])
-        self.assertEqual(c2.n_levels, 4)
-        self.assertAlmostEqual(c2.base_level, 0.1)
-        self.assertAlmostEqual(c2.factor, 2.0)
+        self.assertEqual(sorted(c2.levels()), [0.1, 0.2, 0.4, 0.8])  # exactly the levels asked for
         with self.assertWarns(UserWarning):
             plt.scatter([1, 2, 3, 4, 5], [1, 2, 3, 4, 5], c=[1, 2, 3, 4, 5])  # per-point values
         plt.close("all")

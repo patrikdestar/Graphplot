@@ -21,7 +21,8 @@ const Map kMaps[] = {
     {"cividis", {"#00224e", "#123570", "#3b496c", "#575d6d", "#707173", "#8a8678", "#a59c74", "#c3b369", "#e1cc55", "#fee838"}},
     {"gray", {"#000000", "#ffffff"}},
     {"blues", {"#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"}},
-    {"rdbu", {"#053061", "#2166ac", "#4393c3", "#92c5de", "#f7f7f7", "#f4a582", "#d6604d", "#b2182b", "#67001f"}},
+    // As matplotlib's RdBu: red for low values, blue for high ones ("rdbu_r" is the reverse).
+    {"rdbu", {"#67001f", "#b2182b", "#d6604d", "#f4a582", "#f7f7f7", "#92c5de", "#4393c3", "#2166ac", "#053061"}},
 };
 
 }  // namespace
@@ -37,7 +38,9 @@ bool colormapIsDiverging(const QString& nameIn, bool signedData)
 {
     QString name = nameIn.trimmed().toLower();
     if (name.endsWith("_r")) name.chop(2);
-    return name == "rdbu" || ((name.isEmpty() || name == "auto") && signedData);
+    // Centred on zero only for data with both signs (otherwise the range is
+    // the data's, and half the map would be unused).
+    return signedData && (name == "rdbu" || name.isEmpty() || name == "auto");
 }
 
 bool colormapGradient(const QString& nameIn, bool signedData, QCPColorGradient* out)
@@ -117,7 +120,7 @@ int ColorBar::requiredWidth() const
     int labels = 0;
     for (double v : ticks()) labels = std::max(labels, fm.horizontalAdvance(tickText(v)));
     const int title = m_label.isEmpty() ? 0 : int(std::ceil(m_label.size().height())) + 6;
-    return kGap + kBarWidth + kTick + 3 + labels + title + 4;
+    return kGap + kBarWidth + kTick + 3 + labels + title + 12;  // + space before a neighbouring panel
 }
 
 void ColorBar::applyDefaultAntialiasingHint(QCPPainter* painter) const
