@@ -76,6 +76,9 @@ signals:
     void activeTargetChanged(int index);
     void zoomAxesChanged(gp::ZoomAxes axes);
     void cursorMoved(QPointF dataPos, bool insidePlot);
+    // Left button pressed inside the plot area (data coordinates); the status
+    // bar measures the distance from here.
+    void clicked(QPointF dataPos);
     // Emitted on double-click / "Edit…" context action for an object.
     void editRequested(gp::ObjectRef ref);
     void contextMenuRequested(gp::ObjectRef ref, QPoint globalPos, QPointF dataPos);

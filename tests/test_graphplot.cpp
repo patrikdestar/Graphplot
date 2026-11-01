@@ -1532,6 +1532,20 @@ private slots:
         QVERIFY2(missing.isEmpty(), qPrintable("no hover explanation:\n  " + missing.join("\n  ")));
     }
 
+    void statusBarMeasuresFromLastClick()
+    {
+        auto w = makeWindow();
+        w->controller()->setMode(InteractionMode::Pan);  // a click that changes nothing
+        QTest::mouseClick(w->plot(), Qt::LeftButton, Qt::NoModifier, px(w.get(), 20, 20));
+        QMouseEvent move(QEvent::MouseMove, QPointF(px(w.get(), 50, 30)), QPointF(w->plot()->mapToGlobal(px(w.get(), 50, 30))),
+                         Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(w->plot(), &move);
+        bool found = false;
+        for (QLabel* l : w->findChildren<QLabel*>())
+            if (l->text().contains(QChar(0x0394)) && l->text().contains("x = ")) found = true;
+        QVERIFY(found);
+    }
+
     // ---- figure files and data export -----------------------------------------------
     void figureFileRoundTrip()
     {

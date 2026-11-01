@@ -384,6 +384,7 @@ side panel). The timeline has its own table above.
 | Autoscale / X only / Y only | `A` (or double-click the plot) / *View → Autoscale X* / `Shift+A` |
 | Reset view / set home | `Home` / *View → Set current view as home* |
 | Previous / next view | `Alt+Left` / `Alt+Right` |
+| Measure a distance | click one point, hover another: the status bar shows Δx and Δy from the last click next to the cursor coordinates |
 | **Scroll contour levels** | **Alt + wheel**, or the plain wheel with **Levels** (`L`) on |
 | Lower / raise contour levels | `*` (÷2, more contours) / `/` (×2) |
 | **Automatic peak picking** | Peaks tab → *Pick peaks*, or `Ctrl+Shift+K` |

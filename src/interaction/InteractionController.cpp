@@ -184,6 +184,7 @@ void InteractionController::mousePress(QMouseEvent* e)
     m_dragMoved = false;
     m_drag = Drag::None;
     const bool inside = m_renderer->isInsidePlotArea(px);
+    if (inside && e->button() == Qt::LeftButton) emit clicked(m_pressData);  // measuring reference
 
     if (e->button() == Qt::MiddleButton) {
         m_drag = Drag::Pan;
