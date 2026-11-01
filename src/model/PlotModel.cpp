@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 #include "PlotModel.h"
 
+#include <QSet>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -321,8 +322,13 @@ bool PlotModel::dataBounds(double& xmin, double& xmax, double& ymin, double& yma
     bool any = false;
     xmin = ymin = std::numeric_limits<double>::infinity();
     xmax = ymax = -std::numeric_limits<double>::infinity();
+    // A hidden line that a visible fill uses as its other edge (fill_between
+    // bands) still bounds what is drawn.
+    QSet<ObjectId> fillEdges;
+    for (const auto& d : m_datasets)
+        if (d.style.visible && d.style.fillColor.isValid() && d.style.fillTo != kInvalidId) fillEdges.insert(d.style.fillTo);
     for (const auto& d : m_datasets) {
-        if (visibleOnly && !d.style.visible) continue;
+        if (visibleOnly && !d.style.visible && !fillEdges.contains(d.id)) continue;
         auto err = [](const QVector<double>& v, qsizetype i) {
             return i < v.size() && std::isfinite(v[i]) ? std::abs(v[i]) : 0.0;
         };

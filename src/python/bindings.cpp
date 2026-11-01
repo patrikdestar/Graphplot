@@ -36,6 +36,7 @@
 #include <pybind11/stl.h>
 
 #include <QApplication>
+#include <QGuiApplication>
 #include <QDir>
 #include <QEventLoop>
 #include <QPointer>
@@ -735,6 +736,11 @@ PYBIND11_MODULE(_plotter, mod)
         inGui([&] { Appearance::instance()->setTooltipsEnabled(on, save); });
     });
 
+    mod.def("_headless", [] {
+        // No screen: windows can never be closed by a user (CI, servers).
+        const QString p = QGuiApplication::platformName();
+        return p == "offscreen" || p == "minimal";
+    });
     mod.def("_is_gui_thread", [] { return pyglue::isGuiThread() || !QCoreApplication::instance(); });
     mod.def("process_events", &pyglue::processEvents, py::arg("ms") = 0,
             "Run the Qt event loop for `ms` milliseconds (keeps windows responsive in scripts).");
@@ -1097,10 +1103,17 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         "import_peaks",
         [](FigurePtr self, const std::string& fn) {
             QString err;
-            if (!inGui([&] { return self->w()->peakTable()->importCsv(toPath(fn), &err); }))
+            qsizetype added = 0;
+            if (!inGui([&] {
+                    const qsizetype before = qsizetype(self->model()->peaks().size());
+                    const bool ok = self->w()->peakTable()->importCsv(toPath(fn), &err);
+                    added = qsizetype(self->model()->peaks().size()) - before;
+                    return ok;
+                }))
                 throw std::runtime_error(err.toStdString());
+            return added;
         },
-        py::arg("filename"), "Add peaks from a CSV written by export_peaks (one undo step).");
+        py::arg("filename"), "Add peaks from a CSV written by export_peaks (one undo step); returns how many.");
     fig.def("show_peak_table", [](FigurePtr self) { inGui([&] { self->w()->showPeakTable(); }); },
             "Bring the 'Peaks' panel (peak list) to the front.");
     fig.def("clear_peaks", [](FigurePtr self) {

@@ -146,6 +146,9 @@ class PltAxes:
     def __init__(self, fig: "_PltFigure", axes: "_plotter.Axes"):
         self.figure = fig
         self._ax = axes
+        # As in matplotlib: a legend only where legend() is called.
+        if not axes.lines() and not axes.contours():
+            axes.legend(False)
 
     # ---- plotting ----------------------------------------------------------
     def plot(self, *args, **kw):

@@ -918,6 +918,31 @@ class PlotterTests(unittest.TestCase):
             t2.close()
         tl.figure.close()
 
+    def test_workflow_fixes(self):
+        import plotter.pyplot as plt
+        f = self.fig
+        f.plot([0, 1, 2], [0, 1, 2], label="a")
+        st = f.region_stats(20, 30)["a"]
+        self.assertEqual(st["n"], 0)
+        self.assertTrue(np.isnan(st["mean"]))  # not a misleading 0
+        # fill_between bands are inside the autoscaled view; points get x margins.
+        g = plotter.figure()
+        x = np.linspace(0, 1, 20)
+        g.fill_between(x, np.sin(x) - 0.5, np.sin(x) + 0.5)
+        g.autoscale()
+        lo, hi = g.ylim()
+        self.assertLessEqual(lo, -0.5)
+        self.assertGreaterEqual(hi, np.sin(1) + 0.5)
+        g.plot([0, 1, 2], [0, 1, 0], marker="o", style="none")
+        g.autoscale()
+        self.assertLess(g.xlim()[0], 0)
+        g.close()
+        # pyplot: no legend unless asked; show() returns without a screen.
+        fig, axs = plt.subplots(1, 2)
+        axs[0].plot([0, 1], [0, 1], label="x")
+        plt.show()  # offscreen: must not block
+        plt.close("all")
+
     def test_pyplot_compat_round2(self):
         import io
         import plotter.pyplot as plt

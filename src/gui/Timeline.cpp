@@ -115,6 +115,7 @@ Timeline::Timeline(FigureWindow* window) : QObject(window), m_win(window), m_plo
     m_navModel->setStyle(m_win->axes(0).model->style());
     m_navRenderer = new PlotRenderer(m_navModel, m_plot, navRect, false, this);
     m_navRenderer->setRegionLabelVisible(false);
+    m_navRenderer->setRegionInExports(true);  // the band shows which time span the rows show
     navRect->setMinimumSize(0, int(kNavHeight));
     navRect->setMaximumSize(QWIDGETSIZE_MAX, int(kNavHeight));
     navRect->axis(QCPAxis::atLeft)->setTickLabels(false);
@@ -497,7 +498,10 @@ bool Timeline::loadCsv(const QStringList& files, bool rowPerColumn, QString* err
         if (rowPerColumn) {
             for (int c = 0; c < t.columns.size(); ++c) {
                 const int row = addRow(t.columns[c]);
-                addSignal(row, t.columns[c], time, t.values[size_t(c)]);
+                // One signal per row: give each its own palette colour (each
+                // row would otherwise start at the first one).
+                addSignal(row, t.columns[c], time, t.values[size_t(c)],
+                          m_win->model()->style().paletteColor(m_signalCount++));
             }
         } else {
             const int row = addRow(t.name);

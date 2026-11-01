@@ -1532,6 +1532,19 @@ private slots:
         QVERIFY2(missing.isEmpty(), qPrintable("no hover explanation:\n  " + missing.join("\n  ")));
     }
 
+    void regionIsNotExported()
+    {
+        auto w = makeWindow();
+        w->editor()->setRegion(Region{true, 20, 40});
+        QTemporaryDir dir;
+        QVERIFY(w->exportTo(dir.filePath("r.png"), 400, 300, 1.0));
+        QImage img(dir.filePath("r.png"));
+        // The middle of the (blue, translucent) region band: plain background in the export.
+        const QColor c = img.pixelColor(int(img.width() * 0.33), int(img.height() * 0.5));
+        QVERIFY2(c.blue() - c.red() < 20, qPrintable(c.name()));
+        QVERIFY(w->renderer()->axisRect() != nullptr);
+    }
+
     void statusBarMeasuresFromLastClick()
     {
         auto w = makeWindow();

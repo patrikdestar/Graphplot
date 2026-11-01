@@ -119,7 +119,7 @@ Plotting options:
 | `add_peak(x, y, *, label='', comment='', snap=True)` | one peak (snaps to the nearest maximum within 3 points) |
 | `peaks()` | all `Peak` handles |
 | `peak_table()` | list of dicts (`x`, `y`, `intensity`, `label`, `comment`), e.g. for `pandas.DataFrame` |
-| `export_peaks(csv)`, `import_peaks(csv)` | CSV with header `x,y,intensity,label,comment` |
+| `export_peaks(csv)`, `import_peaks(csv)` | CSV with header `x,y,intensity,label,comment`; `import_peaks` returns how many peaks were added |
 | `clear_peaks()`, `show_peak_table()` | |
 | `peak_labels` | property: show labels on the plot |
 
@@ -202,7 +202,7 @@ How panels work:
 | `get_selected_region()` | `(xmin, xmax)` or `None` |
 | `set_selected_region(xmin, xmax)`, `clear_selection()` | change it (undoable) |
 | `region_mask(x)` | boolean mask of `x` inside the region (or `None`) |
-| `region_stats(xmin=None, xmax=None)` | statistics of every visible line in the region (or the given range): `{label: {n, mean, std, min, max, x_at_min, x_at_max, rms, integral}}`. `std` is the sample standard deviation, `integral` the trapezoid rule over |Δx| (so descending ppm axes give positive areas); NaN gaps are skipped. Raises `ValueError` if no range is given and nothing is selected. |
+| `region_stats(xmin=None, xmax=None)` | statistics of every visible line in the region (or the given range): `{label: {n, mean, std, min, max, x_at_min, x_at_max, rms, integral}}`. `std` is the sample standard deviation, `integral` the trapezoid rule over |Δx| (so descending ppm axes give positive areas); NaN gaps are skipped; with no point in the range `n` is 0 and the other values are NaN. Raises `ValueError` if no range is given and nothing is selected. |
 | `wait_for_region(timeout=-1)` | keep the window interactive until the user finishes a selection; return it. Returns `None` on timeout or close; raises `RuntimeError` if the window is not shown and no timeout is given. |
 | `scale_contour_levels(factor)` | same as the mouse wheel / `*` `/` keys |
 | `on(event, callback)`, `off(event, callback)` | register / remove a callback (see below); `off` returns whether it was registered and also matches a bound method given again |

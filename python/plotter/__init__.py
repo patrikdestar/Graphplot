@@ -92,6 +92,24 @@ def figures() -> list[Figure]:
     return list(_figures)
 
 
+_headless_warned = False
+
+
+def _no_blocking_without_screen() -> bool:
+    """True (after a one-time warning) when no screen is available
+    (QT_QPA_PLATFORM=offscreen): blocking until the user closes a window would
+    never end, so show() returns at once - like matplotlib's Agg backend."""
+    global _headless_warned
+    if not _plotter._headless():
+        return False
+    if not _headless_warned:
+        import warnings
+        warnings.warn("plotter: no screen (offscreen platform); show() does not wait. "
+                      "Use savefig() / save() to keep results.", stacklevel=3)
+        _headless_warned = True
+    return True
+
+
 def show(block: bool | None = None, timeout: float | None = None) -> None:
     """Show all figures. If blocking, run the event loop until all are closed."""
     _forget_closed()  # never re-open windows the user already closed
@@ -99,6 +117,9 @@ def show(block: bool | None = None, timeout: float | None = None) -> None:
         f._show()
     if block is None:
         block = not _interactive()
+    if block and timeout is None and _no_blocking_without_screen():
+        _process_events(0)
+        return
     if block:
         _run_until_closed(list(_figures), -1.0 if timeout is None else float(timeout))
 
@@ -158,6 +179,8 @@ def _figure_show(self: Figure, block: bool | None = None, timeout: float | None 
     if block is None:
         block = not _interactive()
     on_gui_thread = _plotter._is_gui_thread()
+    if block and timeout is None and on_gui_thread and _no_blocking_without_screen():
+        block = False
     if block and not on_gui_thread:
         raise RuntimeError("show(block=True) must be called from the main thread; "
                            "from a worker thread use show(block=False)")

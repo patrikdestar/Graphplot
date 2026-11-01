@@ -58,7 +58,7 @@ annotate, read the results back, process, and re-plot.
 - **Time formats:** epoch s, ms, µs or ns and ISO date-times are aligned on
   one clock. The axis shows seconds or clock time.
 
-**Appearance**
+**Themes and help**
 - **Dark mode:** *View → Appearance* offers System, Light, Dark, Dim,
   Midnight, Solarized dark and High contrast. Dark themes recolour the
   windows and, on screen, the plots; exports and the clipboard keep the
@@ -85,7 +85,7 @@ annotate, read the results back, process, and re-plot.
 - Everything is draggable and editable, with undo/redo for every edit
   (mouse, panel or Python).
 
-**Appearance**
+**Styles**
 - Every visual setting comes from a **style**, never from code.
 - Built-in styles:
   - `default`;
@@ -240,8 +240,10 @@ The application:
 - `--demo2d` shows a synthetic 2D spectrum.
 - `--timeline a.csv b.csv` opens sensor logs as a timeline (one row per file;
   add `--row-per-column` for one row per signal).
-- `--screenshot out.png` renders the window to a file and exits (for scripts
-  and documentation).
+- `--export figure.pdf` renders the figure (plot only; `.png`, `.svg`, `.pdf`)
+  and exits; `--screenshot out.png` renders the whole window. Errors then go
+  to the terminal with a non-zero exit code (for scripts and CI).
+- `--version` prints the version.
 - `--theme dark` uses a display theme for this session (`system`, `light`,
   `dark`, `dim`, `midnight`, `solarized-dark`, `high-contrast`).
 - `--help` lists the options.

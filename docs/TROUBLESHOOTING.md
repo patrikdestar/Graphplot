@@ -44,6 +44,17 @@ no screen. For scripts that only export files, use the off-screen platform:
 QT_QPA_PLATFORM=offscreen python my_script.py
 ```
 
+Without a screen `show()` does not wait (nobody could close the window); it
+warns once and returns, so the script runs to the end — like matplotlib's
+non-interactive backend. The application has a batch mode too:
+
+```bash
+QT_QPA_PLATFORM=offscreen graphplot spectrum/1 --export spectrum.pdf
+```
+
+In batch use (`--export`, `--screenshot` or no screen) errors are printed and
+the exit code is non-zero instead of showing a dialog.
+
 ## Windows and the event loop
 
 **My script ends immediately / the window flashes and disappears.** A

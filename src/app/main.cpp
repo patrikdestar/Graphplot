@@ -12,6 +12,7 @@
 #include "render/PlotRenderer.h"
 
 #include <QApplication>
+#include <QGuiApplication>
 #include <QCommandLineParser>
 #include <QFileInfo>
 #include <QMessageBox>
@@ -115,8 +116,12 @@ int main(int argc, char** argv)
     QCommandLineParser parser;
     parser.setApplicationDescription("Interactive scientific plotting");
     parser.addHelpOption();
-    QCommandLineOption shot("screenshot", "Render the window to <file> and exit.", "file");
+    parser.addVersionOption();
+    QCommandLineOption shot("screenshot", "Render the whole window to <file> and exit.", "file");
     parser.addOption(shot);
+    QCommandLineOption exportOpt("export", "Export the figure (plot only) to <file> (.png, .svg, .pdf) and exit.",
+                                 "file");
+    parser.addOption(exportOpt);
     QCommandLineOption timelineOpt("timeline", "Open the CSV files as a timeline (stacked sensor rows).");
     parser.addOption(timelineOpt);
     QCommandLineOption perColumn("row-per-column", "Timeline: one row per column instead of per file.");
@@ -130,8 +135,22 @@ int main(int argc, char** argv)
     parser.addOption(themeOpt);
     parser.process(app);
     Appearance::instance()->load();  // saved theme and hover-explanation setting
-    if (parser.isSet(themeOpt) && !Appearance::instance()->setTheme(parser.value(themeOpt), false))
-        qWarning("unknown theme '%s'", qPrintable(parser.value(themeOpt)));
+    if (parser.isSet(themeOpt) && !Appearance::instance()->setTheme(parser.value(themeOpt), false)) {
+        qCritical("unknown theme '%s' (system, light, dark, dim, midnight, solarized-dark, high-contrast)",
+                  qPrintable(parser.value(themeOpt)));
+        return 2;
+    }
+    // Batch use (--screenshot / --export, or no screen): errors go to the
+    // terminal and the exit code instead of a dialog nobody can close.
+    const QString platform = QGuiApplication::platformName();
+    const bool batch = parser.isSet(shot) || parser.isSet(exportOpt) || platform == "offscreen" ||
+                       platform == "minimal";
+    int errors = 0;
+    auto report = [&](QWidget* parent, const QString& title, const QString& err) {
+        ++errors;
+        if (batch) qCritical("%s: %s", qPrintable(title), qPrintable(err));
+        else QMessageBox::warning(parent, title, err);
+    };
     QStringList styleErrors;
     reloadDefaultStyle(&styleErrors);  // user default style file, if any
     for (const QString& e : styleErrors) qWarning("style: %s", qPrintable(e));
@@ -140,8 +159,7 @@ int main(int argc, char** argv)
     const QStringList files = parser.positionalArguments();
     if (parser.isSet(timelineOpt)) {
         QString err;
-        if (!w.timeline()->loadCsv(files, parser.isSet(perColumn), &err))
-            QMessageBox::warning(&w, "Open time series", err);
+        if (!w.timeline()->loadCsv(files, parser.isSet(perColumn), &err)) report(&w, "Open time series", err);
         w.undoStack()->clear();
     } else if (parser.isSet(demo2d)) {
         addDemo2D(w);
@@ -154,16 +172,26 @@ int main(int argc, char** argv)
             // Bruker: an experiment / pdata folder, or a 2rr file.
             const bool bruker = fi.isDir() || fi.fileName() == "2rr";
             const bool ok = bruker ? w.openBruker(f, &err) != kInvalidId : w.openDataFile(f, &err);
-            if (!ok) QMessageBox::warning(&w, "Open data", err);
+            if (!ok) report(&w, "Open " + f, err);
         }
         w.editor()->undoStack()->clear();
         w.renderer()->captureHomeView();
     }
+    if (batch && errors > 0 && (parser.isSet(shot) || parser.isSet(exportOpt))) return 1;
     w.show();
-    if (parser.isSet(shot)) {
-        // Used for documentation and headless smoke tests.
+    if (parser.isSet(shot) || parser.isSet(exportOpt)) {
+        // Used for documentation, scripts and headless smoke tests.
         QTimer::singleShot(300, &w, [&] {
-            const bool ok = w.grab().save(parser.value(shot));
+            bool ok = true;
+            if (parser.isSet(shot)) {
+                ok = w.grab().save(parser.value(shot));
+                if (!ok) qCritical("cannot write '%s'", qPrintable(parser.value(shot)));
+            }
+            if (ok && parser.isSet(exportOpt)) {
+                QString err;
+                ok = w.exportTo(parser.value(exportOpt), 0, 0, 2.0, &err);
+                if (!ok) qCritical("%s", qPrintable(err));
+            }
             app.exit(ok ? 0 : 1);
         });
     }

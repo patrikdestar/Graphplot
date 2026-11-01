@@ -254,6 +254,9 @@ void PlotRenderer::setupAppearance()
         m_rect->insetLayout()->addElement(m_legend, Qt::AlignTop | Qt::AlignRight);
         m_legend->setLayer("legend");
     }
+    // The same inset as QCustomPlot gives its default panel, so every
+    // panel's legend sits away from the frame.
+    m_rect->insetLayout()->setMargins(QMargins(12, 12, 12, 12));
     m_legend->setVisible(true);
     m_legend->setIconSize(24, 10);
     m_legend->setSelectableParts(QCPLegend::spNone);
@@ -383,7 +386,13 @@ void PlotRenderer::autoscale(bool doX, bool doY)
     };
     ViewRange r = viewRange();
     if (doX) {
-        pad(xmin, xmax, 0.0, xLog);  // x usually spans the data exactly
+        // Curves (spectra, time series) span x exactly; points drawn with
+        // symbols or error bars get a small margin so the edge ones are whole.
+        bool points = false;
+        for (const auto& d : m_model->datasets())
+            points |= d.style.visible && (d.style.scatter != ScatterShape::None || !d.xErrLow.isEmpty() ||
+                                          !d.yErrLow.isEmpty());
+        pad(xmin, xmax, points ? 0.03 : 0.0, xLog);
         r.xmin = xmin;
         r.xmax = xmax;
     }
@@ -541,6 +550,7 @@ void PlotRenderer::setExportMode(bool on)
     const bool themeChanges = DisplayTheme::instance()->plotOverlayActive(m_exportMode) !=
                               DisplayTheme::instance()->plotOverlayActive(on);
     m_exportMode = on;
+    applyRegion();
     if (themeChanges) {  // exports use the figure's own colours (see DisplayTheme)
         refreshAppearance();
         if (m_plot) m_plot->replot(QCustomPlot::rpImmediateRefresh);
@@ -1017,7 +1027,9 @@ void PlotRenderer::applyAnnotation(ObjectId id)
 void PlotRenderer::applyRegion()
 {
     const Region& r = m_model->region();
-    const bool on = r.active && m_panelVisible;
+    // The selection is an interactive aid: not part of exported figures
+    // (except where it carries meaning, e.g. the timeline's navigator window).
+    const bool on = r.active && m_panelVisible && (!m_exportMode || m_regionInExports);
     m_region.rect->setVisible(on);
     m_region.minEdge->setVisible(on);
     m_region.maxEdge->setVisible(on);

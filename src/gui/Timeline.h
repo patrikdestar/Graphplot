@@ -170,6 +170,7 @@ private:
     void applyTimeAxis();
     int rowAt(const QPointF& px) const;           // visible row under px, or -1
     int firstVisibleRow() const;
+    int m_signalCount = 0;  // colours for one-signal-per-row loading
     void applyThemeColors();
     bool inNavigator(const QPointF& px) const;
     ObjectId pinAt(const QPointF& px, int row) const;

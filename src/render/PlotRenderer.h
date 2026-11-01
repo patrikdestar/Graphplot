@@ -111,6 +111,8 @@ public:
     void setPanelVisible(bool visible);
     bool panelVisible() const { return m_panelVisible; }
     void setRegionLabelVisible(bool on) { m_regionLabelOn = on; applyRegion(); }
+    // Draw the region also in exports (default: no, it is a selection aid).
+    void setRegionInExports(bool on) { m_regionInExports = on; }
 
     // The style as drawn: the figure's style, with the display theme's plot
     // colours on top on screen (see DisplayTheme).
@@ -215,6 +217,7 @@ private:
     bool m_exportMode = false;
     bool m_hasHome = false;
     bool m_autoHome = true;
+    bool m_regionInExports = false;
     bool m_panelVisible = true;
     bool m_regionLabelOn = true;
     ViewRange m_home;

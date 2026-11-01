@@ -2,6 +2,7 @@
 #include "Statistics.h"
 
 #include <cmath>
+#include <limits>
 
 namespace gp {
 
@@ -38,7 +39,11 @@ std::vector<SignalStats> rangeStats(const PlotModel& model, double x0, double x1
             px = x;
             py = y;
         }
-        if (s.n > 0) {
+        if (s.n == 0) {
+            // Nothing in the range: "no value", not a misleading 0.
+            const double nan = std::numeric_limits<double>::quiet_NaN();
+            s.mean = s.min = s.max = s.xAtMin = s.xAtMax = s.std = s.rms = s.integral = nan;
+        } else {
             s.mean = mean;
             s.rms = std::sqrt(meanSq);
             s.std = s.n > 1 ? std::sqrt(std::max(0.0, m2) / double(s.n - 1)) : 0.0;
