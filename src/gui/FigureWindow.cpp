@@ -3,6 +3,7 @@
 #include "Icons.h"
 #include "PropertiesPanel.h"
 #include "commands/PlotEditor.h"
+#include "model/BrukerReader.h"
 #include "model/DataLoader.h"
 #include "model/PlotModel.h"
 #include "qcustomplot.h"
@@ -93,6 +94,8 @@ void FigureWindow::buildActions()
     QAction* open = file->addAction("&Open data…", this, &FigureWindow::onOpen);
     open->setShortcut(QKeySequence::Open);
     file->addAction("Open &2D matrix…", this, &FigureWindow::onOpenMatrix);
+    QAction* bruker = file->addAction("Open &Bruker 2D spectrum…", this, &FigureWindow::onOpenBruker);
+    bruker->setShortcut(QKeySequence("Ctrl+B"));
     QAction* exportAct = file->addAction(icons::make(icons::Kind::Export), "&Export…", this,
                                          &FigureWindow::onExport);
     exportAct->setShortcut(QKeySequence("Ctrl+E"));
@@ -307,6 +310,43 @@ bool FigureWindow::openMatrixFile(const QString& fileName, QString* error)
     m_editor->addMatrix(std::move(r.matrix));
     m_renderer->autoscale();
     return true;
+}
+
+ObjectId FigureWindow::openBruker(const QString& path, QString* error)
+{
+    BrukerSpectrum s = readBruker2D(path);
+    if (!s.error.isEmpty()) {
+        if (error) *error = s.error;
+        return kInvalidId;
+    }
+    m_editor->undoStack()->beginMacro("Open Bruker spectrum");
+    const ObjectId id = m_editor->addMatrix(std::move(s.matrix));
+    AxesInfo a = m_model->axesInfo();
+    auto axisLabel = [](const QString& nuc, const char* dim) {
+        return nuc.isEmpty() ? QString("%1 (ppm)").arg(dim) : QString("%1 %2 (ppm)").arg(dim, nuc);
+    };
+    a.xLabel = axisLabel(s.nucleusF2, "F2");
+    a.yLabel = axisLabel(s.nucleusF1, "F1");
+    a.xReversed = true;  // NMR convention: ppm decreases to the right/up
+    a.yReversed = true;
+    a.showDiagonal = !s.nucleusF1.isEmpty() && s.nucleusF1 == s.nucleusF2;
+    if (a.title.isEmpty()) a.title = s.title;
+    m_editor->setAxesInfo(a);
+    m_editor->undoStack()->endMacro();
+    m_renderer->autoscale();
+    m_renderer->captureHomeView();
+    return id;
+}
+
+void FigureWindow::onOpenBruker()
+{
+    const QString dir = QFileDialog::getExistingDirectory(
+        this, "Open Bruker 2D spectrum (select the pdata/N folder or the experiment folder)",
+        m_lastDir);
+    if (dir.isEmpty()) return;
+    m_lastDir = QFileInfo(dir).absolutePath();
+    QString err;
+    if (openBruker(dir, &err) == kInvalidId) QMessageBox::warning(this, "Open Bruker spectrum", err);
 }
 
 void FigureWindow::onOpenMatrix()

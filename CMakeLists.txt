@@ -32,6 +32,7 @@ add_library(graphplot_model STATIC
   src/model/PlotModel.h src/model/PlotModel.cpp
   src/model/DataLoader.h src/model/DataLoader.cpp
   src/model/Contour.h src/model/Contour.cpp
+  src/model/BrukerReader.h src/model/BrukerReader.cpp
   src/commands/Commands.h src/commands/Commands.cpp
   src/commands/PlotEditor.h src/commands/PlotEditor.cpp)
 target_include_directories(graphplot_model PUBLIC src)

@@ -130,6 +130,7 @@ private:
     QCPLayer* m_regionLayer = nullptr;
     QCPLayer* m_objectLayer = nullptr;
     QCPTextElement* m_title = nullptr;
+    QCPItemStraightLine* m_diagonal = nullptr;
 
     QHash<ObjectId, QCPAbstractPlottable*> m_plottables;
     QHash<ObjectId, MatrixVisual> m_matrices;

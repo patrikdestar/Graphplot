@@ -208,6 +208,17 @@ void PlotRenderer::setupAppearance()
     m_region.rect->topLeft->setTypeY(QCPItemPosition::ptAxisRectRatio);
     m_region.rect->bottomRight->setTypeY(QCPItemPosition::ptAxisRectRatio);
     m_region.rect->setVisible(false);
+    // Diagonal y = x (plot coordinates on both axes), below the curves.
+    m_diagonal = new QCPItemStraightLine(p);
+    m_diagonal->setLayer(m_regionLayer);
+    m_diagonal->setSelectable(false);
+    QPen diagPen(kInkSecondary, 1, Qt::DashLine);
+    diagPen.setCosmetic(true);
+    m_diagonal->setPen(diagPen);
+    m_diagonal->point1->setCoords(0, 0);
+    m_diagonal->point2->setCoords(1, 1);
+    m_diagonal->setVisible(false);
+
     m_region.minEdge = makeRegionLine();
     m_region.maxEdge = makeRegionLine();
     m_region.label = new QCPItemText(p);
@@ -737,6 +748,11 @@ void PlotRenderer::applyAxesInfo()
     m_plot->yAxis->setLabel(info.yLabel);
     m_plot->xAxis->grid()->setVisible(info.gridVisible);
     m_plot->yAxis->grid()->setVisible(info.gridVisible);
+    m_plot->xAxis->setRangeReversed(info.xReversed);
+    m_plot->xAxis2->setRangeReversed(info.xReversed);
+    m_plot->yAxis->setRangeReversed(info.yReversed);
+    m_plot->yAxis2->setRangeReversed(info.yReversed);
+    m_diagonal->setVisible(info.showDiagonal);
 
     if (!info.title.isEmpty()) {
         if (!m_title) {

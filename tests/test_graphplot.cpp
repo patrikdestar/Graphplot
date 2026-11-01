@@ -5,6 +5,7 @@
 #include "model/DataLoader.h"
 #include "model/PlotModel.h"
 #include "qcustomplot.h"
+#include "model/BrukerReader.h"
 #include "model/Contour.h"
 #include "render/ContourPlottable.h"
 #include "render/PlotRenderer.h"
@@ -542,6 +543,41 @@ private slots:
         QCOMPARE(r.matrix.ny, 2);
         QCOMPARE(r.matrix.x1, 10.0);
         QCOMPARE(r.matrix.z[4], 5.0);
+    }
+
+    void brukerRoundTripAndReversedAxes()
+    {
+        Matrix m = peaks(64);
+        m.x0 = 9.0;  // ppm, high -> low
+        m.x1 = 1.0;
+        m.y0 = 9.0;
+        m.y1 = 1.0;
+        QTemporaryDir dir;
+        const QString pdata = dir.filePath("exp/pdata/1");
+        QString err;
+        QVERIFY2(writeBruker2D(pdata, m, "1H", "1H", 600.13, 600.13, 16, 8, &err), qPrintable(err));
+        const BrukerSpectrum s = readBruker2D(dir.filePath("exp"));
+        QVERIFY2(s.error.isEmpty(), qPrintable(s.error));
+        QCOMPARE(s.matrix.nx, 64);
+        QCOMPARE(s.nucleusF1, QString("1H"));
+        QVERIFY(std::abs(s.matrix.x1 - 1.0) < 1e-9);
+        double maxErr = 0;
+        for (int i = 0; i < m.z.size(); ++i) maxErr = std::max(maxErr, std::abs(m.z[i] - s.matrix.z[i]));
+        QVERIFY(maxErr < 1e-6);  // int32 quantisation only
+
+        auto w = makeWindow();
+        QVERIFY(w->openBruker(pdata, &err) != kInvalidId);
+        QVERIFY(w->model()->axesInfo().xReversed);
+        QVERIFY(w->model()->axesInfo().showDiagonal);  // homonuclear
+        QVERIFY(w->plot()->xAxis->rangeReversed());
+        // Panning on a reversed axis still drags the data with the mouse.
+        w->renderer()->setViewRange({2, 8, 2, 8});
+        w->plot()->replot();
+        const QPoint a = px(w.get(), 5, 5), b = a + QPoint(100, 0);
+        const double before = w->renderer()->pixelToData(a).x();
+        w->controller()->setMode(InteractionMode::Pan);
+        drag(w->plot(), a, b);
+        QVERIFY(std::abs(w->renderer()->pixelToData(b).x() - before) < 0.02);
     }
 
     // ---- data loading -----------------------------------------------------------------------

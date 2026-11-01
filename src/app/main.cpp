@@ -8,6 +8,7 @@
 
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QFileInfo>
 #include <QMessageBox>
 #include <QTimer>
 #include <QUndoStack>
@@ -112,7 +113,8 @@ int main(int argc, char** argv)
     parser.addOption(shot);
     QCommandLineOption demo2d("demo2d", "Show a synthetic 2D spectrum (contour demo).");
     parser.addOption(demo2d);
-    parser.addPositionalArgument("files", "Column data files to open (CSV/TSV/whitespace).");
+    parser.addPositionalArgument("files", "Column data files (CSV/TSV/whitespace), or Bruker 2D "
+                                          "spectra (experiment folder, pdata/N folder or 2rr file).");
     parser.process(app);
 
     FigureWindow w;
@@ -124,7 +126,11 @@ int main(int argc, char** argv)
     } else {
         for (const QString& f : files) {
             QString err;
-            if (!w.openDataFile(f, &err)) QMessageBox::warning(&w, "Open data", err);
+            const QFileInfo fi(f);
+            // Bruker: an experiment / pdata folder, or a 2rr file.
+            const bool bruker = fi.isDir() || fi.fileName() == "2rr";
+            const bool ok = bruker ? w.openBruker(f, &err) != kInvalidId : w.openDataFile(f, &err);
+            if (!ok) QMessageBox::warning(&w, "Open data", err);
         }
         w.editor()->undoStack()->clear();
         w.renderer()->captureHomeView();

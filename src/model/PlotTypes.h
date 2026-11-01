@@ -110,6 +110,9 @@ struct AxesInfo {
     QString yLabel;
     bool legendVisible = true;
     bool gridVisible = true;
+    bool xReversed = false;     // high values on the left (NMR ppm convention)
+    bool yReversed = false;     // high values at the bottom
+    bool showDiagonal = false;  // dashed y = x line (homonuclear 2D spectra)
     bool operator==(const AxesInfo&) const = default;
 };
 

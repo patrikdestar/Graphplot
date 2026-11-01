@@ -255,12 +255,12 @@ void InteractionController::mouseMove(QMouseEvent* e)
         const double dyPx = px.y() - m_pressPx.y();
         ViewRange nv = v;
         if (xa->scaleType() == QCPAxis::stLinear) {
-            const double dx = dxPx / ar.width() * (v.xmax - v.xmin);
+            const double dx = dxPx / ar.width() * (v.xmax - v.xmin) * (xa->rangeReversed() ? -1 : 1);
             nv.xmin -= dx;
             nv.xmax -= dx;
         }
         if (ya->scaleType() == QCPAxis::stLinear) {
-            const double dy = dyPx / ar.height() * (v.ymax - v.ymin);
+            const double dy = dyPx / ar.height() * (v.ymax - v.ymin) * (ya->rangeReversed() ? -1 : 1);
             nv.ymin += dy;
             nv.ymax += dy;
         }

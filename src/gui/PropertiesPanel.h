@@ -97,6 +97,9 @@ private:
     QLineEdit* m_yLabel = nullptr;
     QCheckBox* m_legend = nullptr;
     QCheckBox* m_grid = nullptr;
+    QCheckBox* m_xRev = nullptr;
+    QCheckBox* m_yRev = nullptr;
+    QCheckBox* m_diag = nullptr;
 
     // dataset
     QLineEdit* m_dsName = nullptr;

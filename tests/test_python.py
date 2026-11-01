@@ -196,6 +196,43 @@ class PlotterTests(unittest.TestCase):
         self.assertEqual(len(got), 1)
         self.assertAlmostEqual(got[0], c.base_level)
 
+    def test_open_bruker_matches_nmrglue_layout(self):
+        """Write a tiled int32 2rr exactly as nmrglue orders it, read it back."""
+        try:
+            from nmrglue.fileio import bruker as ngb
+        except ImportError:
+            self.skipTest("nmrglue not installed")
+        si1, si2, xd1, xd2 = 64, 128, 16, 32
+        rng = np.random.default_rng(3)
+        data = rng.integers(-2**20, 2**20, size=(si1, si2)).astype(np.int32)
+        nc = -3
+        with tempfile.TemporaryDirectory() as d:
+            pdata = os.path.join(d, "exp", "1", "pdata", "1")
+            os.makedirs(pdata)
+            tiles = ngb.reorder_submatrix(data, (si1, si2), (xd1, xd2), reverse=True)
+            np.asarray(tiles, dtype="<i4").tofile(os.path.join(pdata, "2rr"))
+            for name, si, xd, sw, sf, off, nuc in (("procs", si2, xd2, 6000.0, 600.13, 10.5, "1H"),
+                                                   ("proc2s", si1, xd1, 24000.0, 150.9, 160.0, "13C")):
+                with open(os.path.join(pdata, name), "w") as f:
+                    f.write(f"##$AXNUC= <{nuc}>\n##$BYTORDP= 0\n##$DTYPP= 0\n##$NC_proc= {nc}\n"
+                            f"##$OFFSET= {off}\n##$SF= {sf}\n##$SI= {si}\n##$SW_p= {sw}\n"
+                            f"##$XDIM= {xd}\n##END=\n")
+            # Reference: nmrglue's reader on the same files.
+            dic, ref = ngb.read_pdata(pdata, read_acqus=False)
+            c = self.fig.open_bruker(os.path.join(d, "exp", "1"))  # experiment folder
+            np.testing.assert_allclose(c.z, ref)
+            np.testing.assert_allclose(c.z, data * 2.0 ** nc)
+            x0, x1, y0, y1 = c.extent
+            self.assertAlmostEqual(x0, 10.5)
+            self.assertAlmostEqual(x1, 10.5 - (si2 - 1) * 6000.0 / (600.13 * si2))
+            self.assertAlmostEqual(y0, 160.0)
+            self.assertAlmostEqual(y1, 160.0 - (si1 - 1) * 24000.0 / (150.9 * si1))
+        self.assertTrue(self.fig.x_reversed and self.fig.y_reversed)
+        self.assertFalse(self.fig.diagonal)  # heteronuclear
+        self.assertEqual(self.fig.xlabel, "F2 1H (ppm)")
+        with self.assertRaises(RuntimeError):
+            self.fig.open_bruker("/nonexistent")
+
     def test_savefig(self):
         self.fig.plot(self.x, np.sin(self.x), label="s")
         self.fig.marker(50, label="M")

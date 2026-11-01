@@ -41,6 +41,10 @@ public:
 
     bool openDataFile(const QString& fileName, QString* error = nullptr);
     bool openMatrixFile(const QString& fileName, QString* error = nullptr);
+    // Opens a Bruker processed 2D spectrum (pdata dir, 2rr file or experiment
+    // dir) with ppm axes, NMR axis orientation and nucleus axis labels.
+    // Returns the new 2D dataset id (kInvalidId on error).
+    ObjectId openBruker(const QString& path, QString* error = nullptr);
     bool exportTo(const QString& fileName, int width = 0, int height = 0, double scale = 2.0,
                   QString* error = nullptr);
 
@@ -55,6 +59,7 @@ private:
     void showContextMenu(ObjectRef ref, QPoint globalPos, QPointF dataPos);
     void onOpen();
     void onOpenMatrix();
+    void onOpenBruker();
     void updateLevelStatus();
     void onExport();
 

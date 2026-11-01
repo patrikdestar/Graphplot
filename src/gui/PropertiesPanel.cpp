@@ -157,14 +157,26 @@ void PropertiesPanel::buildUi()
     checks->addWidget(m_legend);
     checks->addWidget(m_grid);
     checks->addStretch();
+    m_xRev = new QCheckBox("Reverse X");
+    m_yRev = new QCheckBox("Reverse Y");
+    m_diag = new QCheckBox("Diagonal");
+    m_xRev->setToolTip("High values on the left (NMR ppm convention)");
+    m_diag->setToolTip("Dashed y = x line (homonuclear 2D spectra)");
+    auto* checks2 = new QHBoxLayout;
+    checks2->addWidget(m_xRev);
+    checks2->addWidget(m_yRev);
+    checks2->addWidget(m_diag);
+    checks2->addStretch();
     axesForm->addRow("Title", m_title);
     axesForm->addRow("X label", m_xLabel);
     axesForm->addRow("Y label", m_yLabel);
     axesForm->addRow(checks);
+    axesForm->addRow(checks2);
     for (QLineEdit* e : {m_title, m_xLabel, m_yLabel})
         connect(e, &QLineEdit::editingFinished, this, &PropertiesPanel::commitAxes);
     connect(m_legend, &QCheckBox::toggled, this, &PropertiesPanel::commitAxes);
-    connect(m_grid, &QCheckBox::toggled, this, &PropertiesPanel::commitAxes);
+    for (QCheckBox* c : {m_grid, m_xRev, m_yRev, m_diag})
+        connect(c, &QCheckBox::toggled, this, &PropertiesPanel::commitAxes);
     layout->addWidget(axesBox);
 
     // Object tree
@@ -686,12 +698,16 @@ void PropertiesPanel::refreshCurrentPage()
 void PropertiesPanel::refreshAxes()
 {
     const AxesInfo& a = m_model->axesInfo();
-    const QSignalBlocker b1(m_title), b2(m_xLabel), b3(m_yLabel), b4(m_legend), b5(m_grid);
+    const QSignalBlocker b1(m_title), b2(m_xLabel), b3(m_yLabel), b4(m_legend), b5(m_grid),
+        b6(m_xRev), b7(m_yRev), b8(m_diag);
     m_title->setText(a.title);
     m_xLabel->setText(a.xLabel);
     m_yLabel->setText(a.yLabel);
     m_legend->setChecked(a.legendVisible);
     m_grid->setChecked(a.gridVisible);
+    m_xRev->setChecked(a.xReversed);
+    m_yRev->setChecked(a.yReversed);
+    m_diag->setChecked(a.showDiagonal);
 }
 
 // ---- commits -------------------------------------------------------------------------
@@ -770,6 +786,9 @@ void PropertiesPanel::commitAxes()
     a.yLabel = m_yLabel->text();
     a.legendVisible = m_legend->isChecked();
     a.gridVisible = m_grid->isChecked();
+    a.xReversed = m_xRev->isChecked();
+    a.yReversed = m_yRev->isChecked();
+    a.showDiagonal = m_diag->isChecked();
     m_editor->setAxesInfo(a);
 }
 

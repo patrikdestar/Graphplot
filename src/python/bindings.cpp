@@ -526,6 +526,21 @@ In the window, Alt+mouse wheel (or the wheel in 'Levels' mode) scrolls the
 levels; '*' and '/' halve / double them. Returns a Contour handle.)doc");
 
     fig.def(
+        "open_bruker",
+        [](FigurePtr self, const std::string& path) {
+            QString err;
+            const ObjectId id = inGui([&] {
+                return self->w()->openBruker(QString::fromStdString(path), &err);
+            });
+            if (id == kInvalidId) throw std::runtime_error(err.toStdString());
+            return Contour{{self, id}};
+        },
+        py::arg("path"),
+        R"doc(Open a Bruker TopSpin processed 2D spectrum (pdata/N folder, 2rr file or
+experiment folder). Axes are in ppm, drawn high-to-low as in TopSpin, labelled
+with the nuclei; the diagonal is shown for homonuclear spectra. Returns a Contour.)doc");
+
+    fig.def(
         "marker",
         [](FigurePtr self, double pos, const std::string& orientation, const py::object& color,
            const std::string& label, const std::string& style, double width, bool showValue) {
@@ -738,6 +753,25 @@ levels; '*' and '/' halve / double them. Returns a Contour handle.)doc");
             });
         },
         py::arg("visible") = true);
+    auto axesFlag = [](bool AxesInfo::*field) {
+        return std::make_pair(
+            [field](FigurePtr self) { return inGui([&] { return self->model()->axesInfo().*field; }); },
+            [field](FigurePtr self, bool v) {
+                inGui([&] {
+                    AxesInfo a = self->model()->axesInfo();
+                    a.*field = v;
+                    self->editor()->setAxesInfo(a);
+                });
+            });
+    };
+    {
+        auto [g1, s1] = axesFlag(&AxesInfo::xReversed);
+        auto [g2, s2] = axesFlag(&AxesInfo::yReversed);
+        auto [g3, s3] = axesFlag(&AxesInfo::showDiagonal);
+        fig.def_property("x_reversed", g1, s1, "High x values on the left (NMR convention).");
+        fig.def_property("y_reversed", g2, s2);
+        fig.def_property("diagonal", g3, s3, "Show the dashed y = x diagonal.");
+    }
     fig.def(
         "grid",
         [](FigurePtr self, bool visible) {
