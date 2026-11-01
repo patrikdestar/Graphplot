@@ -12,6 +12,7 @@
 #include <QObject>
 #include <QFont>
 #include <QPointF>
+#include <QSharedPointer>
 
 class QCustomPlot;
 class QCPAbstractPlottable;
@@ -25,6 +26,7 @@ class QCPErrorBars;
 class QCPAxisRect;
 class QCPAxis;
 class QCPLegend;
+class QCPAxisTicker;
 class QCPAbstractItem;
 
 namespace gp {
@@ -164,6 +166,7 @@ private:
     QCPAxis* m_x2 = nullptr;
     QCPAxis* m_y2 = nullptr;
     QCPLegend* m_legend = nullptr;
+    QSharedPointer<QCPAxisTicker> m_linTickerX, m_linTickerY;  // kept while an axis is logarithmic
     QCPLayer* m_imageLayer = nullptr;
     QCPLayer* m_regionLayer = nullptr;
     QCPLayer* m_objectLayer = nullptr;

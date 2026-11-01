@@ -310,7 +310,7 @@ void PlotModel::setAxesInfo(const AxesInfo& info)
 }
 
 bool PlotModel::dataBounds(double& xmin, double& xmax, double& ymin, double& ymax,
-                           bool visibleOnly) const
+                           bool visibleOnly, bool xPositive, bool yPositive) const
 {
     bool any = false;
     xmin = ymin = std::numeric_limits<double>::infinity();
@@ -323,15 +323,17 @@ bool PlotModel::dataBounds(double& xmin, double& xmax, double& ymin, double& yma
         for (qsizetype i = 0; i < d.x.size(); ++i) {
             const double x = d.x[i], y = d.y[i];
             if (!std::isfinite(x) || !std::isfinite(y)) continue;
-            // Error bars are part of the data extent.
-            xmin = std::min(xmin, x - err(d.xErrLow, i));
+            if ((xPositive && x <= 0) || (yPositive && y <= 0)) continue;
+            // Error bars are part of the data extent (not below zero on log axes).
+            const double xl = x - err(d.xErrLow, i), yl = y - err(d.yErrLow, i);
+            xmin = std::min(xmin, xPositive && xl <= 0 ? x : xl);
             xmax = std::max(xmax, x + err(d.xErrHigh, i));
-            ymin = std::min(ymin, y - err(d.yErrLow, i));
+            ymin = std::min(ymin, yPositive && yl <= 0 ? y : yl);
             ymax = std::max(ymax, y + err(d.yErrHigh, i));
             any = true;
         }
         // Areas filled to zero (histograms) include the baseline.
-        if (any && d.style.fillColor.isValid() && d.style.fillTo == kInvalidId) {
+        if (any && !yPositive && d.style.fillColor.isValid() && d.style.fillTo == kInvalidId) {
             ymin = std::min(ymin, 0.0);
             ymax = std::max(ymax, 0.0);
         }

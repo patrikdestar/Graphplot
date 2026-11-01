@@ -104,6 +104,8 @@ private:
     QCheckBox* m_xRev = nullptr;
     QCheckBox* m_yRev = nullptr;
     QCheckBox* m_diag = nullptr;
+    QCheckBox* m_xLog = nullptr;
+    QCheckBox* m_yLog = nullptr;
 
     // dataset
     QLineEdit* m_dsName = nullptr;

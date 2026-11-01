@@ -158,6 +158,10 @@ void PropertiesPanel::buildUi()
     auto* checks = new QHBoxLayout;
     checks->addWidget(m_legend);
     checks->addWidget(m_grid);
+    m_xLog = new QCheckBox("Log X");
+    m_yLog = new QCheckBox("Log Y");
+    checks->addWidget(m_xLog);
+    checks->addWidget(m_yLog);
     checks->addStretch();
     m_xRev = new QCheckBox("Reverse X");
     m_yRev = new QCheckBox("Reverse Y");
@@ -177,7 +181,7 @@ void PropertiesPanel::buildUi()
     for (QLineEdit* e : {m_title, m_xLabel, m_yLabel})
         connect(e, &QLineEdit::editingFinished, this, &PropertiesPanel::commitAxes);
     connect(m_legend, &QCheckBox::toggled, this, &PropertiesPanel::commitAxes);
-    for (QCheckBox* c : {m_grid, m_xRev, m_yRev, m_diag})
+    for (QCheckBox* c : {m_grid, m_xRev, m_yRev, m_diag, m_xLog, m_yLog})
         connect(c, &QCheckBox::toggled, this, &PropertiesPanel::commitAxes);
     layout->addWidget(axesBox);
 
@@ -805,6 +809,9 @@ void PropertiesPanel::refreshAxes()
     m_xRev->setChecked(a.xReversed);
     m_yRev->setChecked(a.yReversed);
     m_diag->setChecked(a.showDiagonal);
+    const QSignalBlocker b9(m_xLog), b10(m_yLog);
+    m_xLog->setChecked(a.xLog);
+    m_yLog->setChecked(a.yLog);
 }
 
 // ---- commits -------------------------------------------------------------------------
@@ -889,6 +896,8 @@ void PropertiesPanel::commitAxes()
     a.xReversed = m_xRev->isChecked();
     a.yReversed = m_yRev->isChecked();
     a.showDiagonal = m_diag->isChecked();
+    a.xLog = m_xLog->isChecked();
+    a.yLog = m_yLog->isChecked();
     m_editor->setAxesInfo(a);
 }
 

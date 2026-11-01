@@ -634,9 +634,27 @@ void FigureWindow::onOpen()
     if (!openDataFile(fn, &err)) QMessageBox::warning(this, "Open data", err);
 }
 
+void FigureWindow::setFigureSize(const QSize& size)
+{
+    m_figureSize = size;
+    // Toolbar, status bar and the side panel come on top of the plot area.
+    const int panel = m_dock && m_dock->isVisible() ? m_dock->sizeHint().width() : 330;
+    resize(size.width() + panel, size.height() + 110);
+}
+
 bool FigureWindow::exportTo(const QString& fileName, int width, int height, double scale,
                             QString* error)
 {
+    // No explicit size: the nominal figure size if set, else the widget size
+    // (which is only meaningful once the window has been laid out).
+    if (width <= 0 && height <= 0 && m_figureSize.isValid()) {
+        width = m_figureSize.width();
+        height = m_figureSize.height();
+    }
+    if ((width <= 0 || height <= 0) && (m_plot->width() < 100 || m_plot->height() < 100)) {
+        width = width > 0 ? width : 800;
+        height = height > 0 ? height : 600;
+    }
     ExportOptions o;
     o.width = width;
     o.height = height;

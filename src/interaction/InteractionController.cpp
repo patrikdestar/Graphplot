@@ -333,6 +333,15 @@ void InteractionController::mouseMove(QMouseEvent* e)
         const double dxPx = px.x() - m_pressPx.x();
         const double dyPx = px.y() - m_pressPx.y();
         ViewRange nv = v;
+        auto logShift = [](double& lo, double& hi, double fraction) {
+            const double f = std::pow(hi / lo, fraction);
+            lo *= f;
+            hi *= f;
+        };
+        if (xa->scaleType() == QCPAxis::stLogarithmic)
+            logShift(nv.xmin, nv.xmax, -dxPx / ar.width() * (xa->rangeReversed() ? -1 : 1));
+        if (ya->scaleType() == QCPAxis::stLogarithmic)
+            logShift(nv.ymin, nv.ymax, dyPx / ar.height() * (ya->rangeReversed() ? -1 : 1));
         if (xa->scaleType() == QCPAxis::stLinear) {
             const double dx = dxPx / ar.width() * (v.xmax - v.xmin) * (xa->rangeReversed() ? -1 : 1);
             nv.xmin -= dx;

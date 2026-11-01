@@ -1,47 +1,75 @@
 # Graphplot
 
-A lightweight, interactive scientific plotting application in C++20 / Qt 6,
-controllable from Python with NumPy arrays.
+An interactive scientific plotting application in C++20 / Qt 6, controllable
+from Python with NumPy arrays.
 
 C++/Qt handles plotting, rendering and mouse interaction. Python handles
-numerical analysis: create a figure, send arrays, let the user mark and select
-regions, read the selection back, process, and re-plot.
+numerical analysis: create figures, send arrays, let the user mark, select and
+annotate, read the results back, process, and re-plot.
 
-![Main window](docs/images/main_window.png)
+| 2D NMR: picking and assigning cross peaks | Publication style (HEP-like) |
+|---|---|
+| ![NMR](docs/images/nmr_cross_peaks.png) | ![HEP style](docs/images/hep_style.png) |
 
-Features:
+## Features
 
-- **Curves:** many overlaid 1D datasets with individual colour, line style,
-  width, symbols and visibility, plus a legend. Large datasets stay fast
-  thanks to QCustomPlot's adaptive sampling.
-- **2D data:** contour plots with TopSpin-style geometric levels that you can
-  **scroll with the mouse wheel**. You can also show positive and negative
-  levels, and an optional colour-map image underneath.
-- **Navigation:** wheel zoom around the cursor (X only, Y only, or both),
-  rectangle zoom, pan, autoscale, and reset to the home view.
-- **Region selection:** select an X range and drag its edges. The selection
-  is stored in data coordinates and can be read from Python.
-- **Markers:** vertical and horizontal markers are persistent objects. You
-  can drag them, edit their label, colour and style, and they show their
-  coordinate.
-- **Annotations:** text annotations anchored in data coordinates. Drag them
-  or edit their text, colour and font size.
-- **Undo/redo:** every edit is undoable through `QUndoStack`, whether it was
-  made with the mouse, the property panel or Python.
-- **Export:** PNG (high-DPI), plus SVG and PDF as true vector output.
+**Plotting**
+- Overlaid 1D datasets: lines, symbols, step histograms, filled areas,
+  uncertainty bands between two curves, and x/y error bars (symmetric or
+  asymmetric).
+- 2D data as contour plots, with TopSpin-style geometric levels that you
+  **scroll with the mouse wheel**. Negative levels can be shown, with an
+  optional colour-map image underneath.
+- Multi-panel figures: subplots, ratio/residual panels with touching frames,
+  shared axes.
+- Linear or logarithmic axes, which can also be reversed (ppm convention).
+
+**NMR**
+- Opens Bruker TopSpin processed 2D spectra (`pdata/N/2rr`) directly, with
+  ppm axes, nucleus labels and the diagonal.
+- **Peak picking:** automatic picking above the lowest visible contour, with
+  an option to skip the diagonal so only cross peaks are picked. Manual
+  picking with the Peak tool, where a click snaps to the nearest maximum.
+- **Assignments:** each peak has a label shown on the plot (e.g. `H3/C5`)
+  and a longer comment that is kept off the plot.
+- Labels can be dragged away from crowded peaks; a leader line is then drawn.
+- A peak table with sorting and editing, plus CSV export/import.
+
+**Interaction**
+- Wheel and rectangle zoom, pan, autoscale, and reset to the home view.
+- X-region selection, markers and text annotations.
+- Everything is draggable and editable, with undo/redo for every edit
+  (mouse, panel or Python).
+
+**Appearance**
+- Every visual setting comes from a **style**, never from code.
+- Built-in styles:
+  - `default`;
+  - `science` (CERN/ROOT-like: inward ticks on all sides, minor ticks,
+    Helvetica-like font, accessible colour cycle);
+  - `nmr`;
+  - `presentation`.
+- Plain-text `.gpstyle` files that you can edit, load, save and inherit
+  from, plus your own default style that is loaded automatically.
+- Math in all texts: `$m_{\gamma\gamma}$`, `$\delta$(${}^{1}$H)`,
+  `**CMS** *Preliminary*`.
+- Export to PNG (high-DPI), and to SVG and PDF as true vector output.
+
+**Python**
+- `plotter`: the full API.
+- `plotter.pyplot`: a matplotlib-compatible layer, so many existing scripts
+  run after changing the import.
 
 ## Building
 
 Requirements:
 
-- A C++20 compiler (GCC 11+, Clang 14+, MSVC 2022)
+- A C++20 compiler
 - CMake ≥ 3.21
 - Qt ≥ 6.2 with the Widgets, PrintSupport and Svg modules
-- For the Python module: Python ≥ 3.8, pybind11 and NumPy
+- For Python: Python ≥ 3.8, pybind11 and NumPy
 
-QCustomPlot 2.1.1 is vendored in `third_party/`, so you don't need to install it.
-
-Ubuntu 24.04:
+QCustomPlot 2.1.1 is vendored in `third_party/`.
 
 ```bash
 sudo apt install build-essential cmake qt6-base-dev qt6-svg-dev libgl1-mesa-dev
@@ -50,8 +78,6 @@ sudo apt install build-essential cmake qt6-base-dev qt6-svg-dev libgl1-mesa-dev
 ```bash
 pip install pybind11 numpy
 ```
-
-Build and run the tests:
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -65,11 +91,12 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
-Options: `-DGRAPHPLOT_BUILD_PYTHON=OFF` skips the Python module, and
-`-DGRAPHPLOT_BUILD_TESTS=OFF` skips the tests. On macOS/Windows, point CMake
-at Qt with `-DCMAKE_PREFIX_PATH=/path/to/Qt/6.x/<platform>`.
+Options: `-DGRAPHPLOT_BUILD_PYTHON=OFF` and `-DGRAPHPLOT_BUILD_TESTS=OFF`. On
+macOS/Windows, add `-DCMAKE_PREFIX_PATH=/path/to/Qt/6.x/<platform>`.
 
-## Running the application
+## Quick start
+
+The application:
 
 ```bash
 ./build/graphplot
@@ -80,96 +107,129 @@ at Qt with `-DCMAKE_PREFIX_PATH=/path/to/Qt/6.x/<platform>`.
 ```
 
 ```bash
+./build/graphplot path/to/experiment/1
+```
+
+```bash
 ./build/graphplot --demo2d
 ```
 
 - With no arguments, the app shows 1D demo data.
-- With file arguments, it opens column files: the first column is X and each
-  further column becomes one dataset.
-- `--demo2d` shows a synthetic 2D spectrum for trying out contour levels.
+- `data.csv` stands for a column file: X followed by one or more Y columns.
+- A folder argument opens a Bruker 2D spectrum. It can be the experiment
+  folder or its `pdata/N` folder.
+- `--demo2d` shows a synthetic 2D spectrum.
 
-*File → Open 2D matrix…* reads a grid of numbers: one row per y value. An
-optional `# extent: x0 x1 y0 y1` line sets the axis coordinates.
-
-### Mouse and keyboard
-
-| Action | How |
-|---|---|
-| Zoom (rectangle) | `Z` tool, drag |
-| Zoom (wheel) | wheel over the plot; Ctrl = X only, Shift = Y only; wheel over an axis zooms that axis |
-| Pan | `P` tool and drag, or middle-drag in any tool |
-| Select X region | `R` tool, drag; drag its edges to adjust; Shift+drag inside to move it |
-| Vertical / horizontal marker | `V` / `H`, then click |
-| Text annotation | `T`, then click (the text field opens in the panel) |
-| Move a marker or annotation | drag it, in any tool |
-| Edit an object | double-click it, or right-click → Edit, or use the Properties panel |
-| Delete selected object | `Del` |
-| Autoscale / Reset view | `A` (or double-click empty plot area) / `Home` |
-| **Scroll contour levels** | **Alt + wheel** in any tool, or the plain wheel with **Levels** (`L`) on |
-| Lower / raise contour levels ×2 | `*` / `/` (or ÷2 / ×2 in the panel) |
-| Undo / Redo | `Ctrl+Z` / `Ctrl+Shift+Z` (`Ctrl+Y`) |
-| Cancel a drag | `Esc` (restores the state from before the drag) |
-
-Wheel up lowers the contour levels, which reveals weaker features. One
-continuous scroll counts as a single undo step. Scrolling affects the 2D
-dataset selected in the panel, or every visible one if none is selected.
-
-![Contour levels](docs/images/contour_levels.png)
-
-## Python
+Python:
 
 ```bash
 export PYTHONPATH=$PWD/build/python
 ```
 
 ```bash
-python examples/demo.py
+python examples/make_sample_nmr.py
 ```
-
-```python
-import numpy as np
-import plotter
-
-x = np.linspace(0, 100, 2000)
-y1 = np.sin(x)
-
-fig = plotter.figure()
-fig.plot(x, y1, label="Signal 1", color="blue")
-fig.plot(x, np.cos(x), label="Signal 2", color="red")
-fig.marker(25.0, color="green", label="Marker 1")
-fig.show()                                   # blocks in scripts, returns at the prompt
-
-xmin, xmax = fig.get_selected_region()       # after selecting with the mouse
-fig.plot(x, y1 - np.mean(y1), label="Corrected signal", color="black")
-
-c = fig.contour(z, x=f2_axis, y=f1_axis)     # 2D data, z[row=y, col=x]
-c.scale_levels(0.5)                          # same as one '*' key press
-```
-
-At the interactive prompt (`python -i`, the plain REPL, or IPython after
-`%gui plotter`), windows stay fully interactive while you type. See
-[docs/PYTHON_API.md](docs/PYTHON_API.md) for the complete API, and
-`examples/` for runnable scripts.
-
-To install the module into the active environment instead of setting
-`PYTHONPATH`, run:
 
 ```bash
-cmake --install build --prefix "$(python -c 'import site; print(site.getsitepackages()[0])')"
+python examples/nmr_cross_peaks.py
 ```
+
+```bash
+python examples/hep_style.py
+```
+
+```bash
+python examples/matplotlib_port.py
+```
+
+- `make_sample_nmr.py` writes a synthetic COSY to `sample_nmr/` in Bruker
+  format.
+- `nmr_cross_peaks.py` opens it, picks the cross peaks, assigns them and
+  exports the peak list.
+- `hep_style.py` draws histograms, data points, an uncertainty band and a
+  ratio panel.
+- `matplotlib_port.py` is an existing matplotlib script with only the import
+  changed.
+
+### 2D NMR: cross peaks
+
+```python
+import plotter
+
+fig = plotter.figure()
+spec = fig.open_bruker("~/data/cosy/1")             # ppm axes, TopSpin orientation
+spec.scale_levels(0.5)                              # lower the contours (same as one '*' key press)
+cross = fig.pick_peaks(exclude_diagonal=0.1)        # off-diagonal peaks in the visible area
+for p in cross:
+    print(p.x, p.y, p.intensity)
+cross[0].label = "H3/C5"                            # shown on the plot
+cross[0].comment = "dd, J = 7.2 / 1.5 Hz; check HMBC"   # kept off the plot
+fig.export_peaks("peaks.csv")
+fig.show()
+```
+
+### Publication style and matplotlib scripts
+
+```python
+import plotter.pyplot as plt               # instead of matplotlib.pyplot
+plt.style.use("science")                   # or your own file: plt.style.use("thesis.gpstyle")
+fig, (ax, rax) = plt.subplots(2, 1, sharex=True, gridspec_kw={"height_ratios": [3, 1], "hspace": 0})
+ax.hist(mc, bins=edges, histtype="stepfilled", label="Simulation")
+ax.errorbar(x, n, yerr=n**0.5, fmt="ko", label="Data")
+ax.set_yscale("log"); ax.legend()
+rax.errorbar(x, n / mc_counts, yerr=n**0.5 / mc_counts, fmt="ko")
+fig.native.set_style({"label.top.left": "**CMS** *Preliminary*",
+                      "label.top.right": "138 fb$^{-1}$ (13 TeV)"})
+plt.savefig("plot.pdf")
+```
+
+## Mouse and keyboard
+
+| Action | How |
+|---|---|
+| Zoom | `Z` tool and drag a rectangle; wheel (Ctrl: X only, Shift: Y only; over an axis: that axis) |
+| Pan | `P` tool, or middle-drag in any tool |
+| Select an X region | `R` tool and drag; drag its edges; Shift+drag inside to move it |
+| Markers / text | `V` / `H` / `T`, then click |
+| **Pick a peak** | `K` (Peak tool), then click (snaps to the maximum; Shift: exactly at the cursor); Esc leaves the tool |
+| **Automatic peak picking** | Peaks tab → *Pick peaks*, or `Ctrl+Shift+K` |
+| Move an object or a peak label | drag it (in any tool) |
+| Edit an object | double-click it, or use the Properties / Peaks tabs |
+| **Scroll contour levels** | **Alt + wheel**, or the plain wheel with **Levels** (`L`) on; `*` / `/` = ÷2 / ×2 |
+| Autoscale / reset view | `A` (or double-click the plot) / `Home` |
+| Delete / undo / redo | `Del` / `Ctrl+Z` / `Ctrl+Shift+Z` |
+| Styles | *Style* menu: built-ins, *Edit style…*, load/save `.gpstyle`, *Use as my default style* |
+
+In multi-panel figures, the panel you click becomes current; the side panels
+then show its objects.
+
+## Styles
+
+```text
+# thesis.gpstyle
+inherit: science
+font.size: 11
+axes.prop_cycle: #1b9e77, #d95f02, #7570b3
+label.top.left: "**My Experiment** *Preliminary*"
+```
+
+- Every key is listed with defaults and descriptions in
+  [docs/STYLE_REFERENCE.md](docs/STYLE_REFERENCE.md).
+- A complete example file is [docs/example_science.gpstyle](docs/example_science.gpstyle).
+- Your default style lives at `~/.config/Graphplot/default.gpstyle` (or
+  `$GRAPHPLOT_STYLE`). *Style → Use as my default style* writes it, and it
+  is loaded on every start.
 
 ## Documentation
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): directory layout, layers and
-  how they communicate, plus the technical difficulties and how they were
-  solved.
-- [docs/PYTHON_API.md](docs/PYTHON_API.md): Python reference.
-- The C++ API is documented in the headers. Start with `src/model/PlotModel.h`,
-  `src/commands/PlotEditor.h` and `src/gui/FigureWindow.h`.
+- [docs/PYTHON_API.md](docs/PYTHON_API.md): the Python reference, including
+  peaks, styles, subplots and pyplot.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): layout, layers, and the
+  technical difficulties and their solutions.
+- [docs/STYLE_REFERENCE.md](docs/STYLE_REFERENCE.md): all style keys.
 
 ## License note
 
 QCustomPlot is licensed under **GPLv3**. Distributing a binary that links it
-makes the combined work subject to the GPL. Commercial QCustomPlot licences
-are available from its author, and the renderer is isolated in `src/render`
-if you ever need to replace the library.
+makes the combined work subject to the GPL; commercial licences are available
+from its author.

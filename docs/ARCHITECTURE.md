@@ -11,6 +11,9 @@ Graphplot/
 │   │   ├── PlotTypes.*            value types: Dataset, Matrix, Marker, Annotation, Region, styles
 │   │   ├── PlotModel.*            owns all plot content, emits change signals
 │   │   ├── Contour.*              marching-squares contour extraction (pure computation)
+│   │   ├── PeakPicker.*           peak picking, snapping, peak-list CSV
+│   │   ├── BrukerReader.*         Bruker TopSpin pdata (2rr + procs/proc2s) reader/writer
+│   │   ├── Style.*                all visual settings, .gpstyle files, built-in styles
 │   │   └── DataLoader.*           column / matrix text file readers
 │   ├── commands/               5. history layer
 │   │   ├── Commands.*             QUndoCommand subclasses (generic add/remove/edit templates)
@@ -18,18 +21,23 @@ Graphplot/
 │   ├── render/                 2. rendering layer
 │   │   ├── PlotRenderer.*         model → QCustomPlot objects; hit-testing; coordinates; view
 │   │   ├── ContourPlottable.*     custom QCustomPlot plottable (QPainter) for contour lines
+│   │   ├── PeakOverlay.*          all peaks (crosses, labels, leader lines) in one layerable
+│   │   ├── RichText.* / RichElements.*  $math$ / **bold** text: labels, header, legend, items
 │   │   └── Exporter.*             PNG / SVG / PDF
 │   ├── interaction/            3. interaction layer
 │   │   └── InteractionController.*  mouse/keyboard → view changes and editor calls
 │   ├── gui/                    4. GUI layer
 │   │   ├── FigureWindow.*         main window: wiring, toolbar, menus, status bar
 │   │   ├── PropertiesPanel.*      object tree + property editors
+│   │   ├── PeakTable.*            peak list, picking controls, CSV import/export
+│   │   ├── StyleEditor.*          dialog editing every style key
 │   │   └── Icons.*                toolbar icons drawn with QPainter
 │   ├── app/main.cpp            standalone executable
 │   └── python/                 6. Python binding layer
 │       ├── bindings.cpp           pybind11 module "_plotter"
 │       └── GuiThread.*            event-loop / GIL / thread marshalling glue
-├── python/plotter/             pure-Python part of the package (show(), IPython hook)
+├── python/plotter/             pure-Python part: show(), Axes proxies, hist/errorbar/
+│                               fill_between, style module, pyplot compatibility layer
 ├── examples/                   Python example scripts
 ├── tests/                      QtTest suite (C++) and unittest suite (Python)
 └── docs/
@@ -111,6 +119,53 @@ way without changing the other layers' structure.
     the output contains `<path>` elements and no embedded raster images.
   - Selection highlights are switched off while exporting.
 
+### Multi-panel figures
+
+A figure holds one or more *panels*. Each panel has its own `PlotModel`,
+`PlotEditor` and `PlotRenderer` (drawing into its own `QCPAxisRect`).
+
+- **Shared state:**
+  - All editors share the figure's `QUndoStack`, so there is one history.
+  - The interaction controller knows all panels; the panel under the mouse
+    becomes current.
+- **First panel:** it also owns the figure-level elements: header row
+  (title, top-left and top-right labels), padding and background.
+- **Layout (`FigureWindow::setGrid`):**
+  - Panels go into a `QCPLayoutGrid` with stretch factors.
+  - Margin groups align the frames.
+  - Shared axes are linked through `rangeChanged`.
+  - Ratio panels use zero spacing with fixed zero inner margins, so the
+    frames touch.
+
+### Styles
+
+`Style` (model layer) contains every visual parameter. `PlotRenderer::applyStyle`
+is the only place that turns it into QCustomPlot settings: fonts, pens, tick
+lengths and directions, mirroring, minor ticks, number format, legend, header,
+peaks and so on. Each panel's model carries the style, and changing it is an
+undoable command. New objects take their defaults from it (line width,
+colour cycle, contour levels). Style files are parsed in `Style::parse`:
+
+- Unknown keys and invalid values are reported with line numbers and do not
+  abort loading.
+- An `inherit:` line chains a built-in style or another file.
+- `Style::toText` writes a complete, commented file.
+
+### Peaks and Bruker data
+
+- **Reader:** `BrukerReader` resolves an experiment folder, a `pdata/N`
+  folder or a `2rr` file. It decodes the submatrix tiling (XDIM), the int32
+  or float64 data type, byte order and the `NC_proc` scaling, and computes
+  the ppm axes as OFFSET − i·SW_p/(SF·SI). The Python tests verify the result
+  against nmrglue's reader.
+- **Picking:** `PeakPicker` finds strict local maxima in each 3×3
+  neighbourhood above the threshold. It drops candidates near the diagonal
+  if requested, then suppresses peaks within the minimum distance (strongest
+  first). Positions are refined by parabolic interpolation, and a click snaps
+  to the strongest point within a search window.
+- **Drawing:** peaks are drawn by one `PeakOverlay` on the buffered
+  "objects" layer. Laid-out labels are cached.
+
 ## Technical difficulties and how they are handled
 
 ### Qt GUI thread vs. Python
@@ -163,6 +218,19 @@ documented in the package docstring.
 - **Mixed coordinates:** markers and the region use mixed position types:
   data coordinates on one axis and axis-rect ratio on the other. They always
   span the plot area at any zoom level.
+- **Rich text:** QCustomPlot draws plain text only. Rich text uses
+  `QTextDocument`:
+  - **Axis labels:** QCustomPlot reserves the space via a blank label in the
+    same font plus extra padding; an overlay layerable draws the formatted
+    text there.
+  - **Title, header and legend:** these are custom layout elements.
+  - **Annotations and marker labels:** these are a custom item.
+- **Legend icons:** `drawLegendIcon` is protected, and QCustomPlot's
+  friendship with its own legend item class does not extend to subclasses.
+  The rich legend item therefore lets the base class draw the icon (with an
+  empty name) and draws the text itself.
+- **Legend auto-add:** QCustomPlot adds every new plottable to the *main*
+  legend by default. This is switched off; legends are rebuilt per panel.
 - **Licence:** QCustomPlot is GPLv3 (see README).
 
 ### Data ownership
@@ -181,10 +249,28 @@ reads Python memory without the GIL.
     dragging markers, annotation drag, wheel and rectangle zoom, pan,
     Alt+wheel contour scrolling;
   - contour geometry, checked against an analytic circle;
+  - peak picking (off-grid positions, diagonal exclusion, no duplicates,
+    undo), the snapping Peak tool and label dragging;
+  - Bruker write/read round-trip and panning on reversed axes;
+  - style files (round-trip of every key, `inherit`, error reporting), user
+    default style, undoable figure styles, rich-text conversion;
+  - error bars, steps and fills;
+  - multi-panel layout (touching frames, shared x, active panel, one undo
+    history);
   - contour performance;
   - export validity (PNG size, SVG is vector-only, PDF header);
   - file loaders.
-- `tests/test_python.py`: the full Python API, including the example from
-  the project brief, callbacks, exceptions in callbacks, cross-thread calls
-  combined with `wait_for_region`, contours and export.
+- `tests/test_python.py`: the full Python API, including:
+  - the example from the project brief;
+  - callbacks, exceptions in callbacks, and cross-thread calls combined with
+    `wait_for_region`;
+  - contours and export;
+  - the Bruker reader, compared with nmrglue;
+  - the complete NMR cross-peak workflow on a synthetic COSY (pick, assign,
+    CSV round-trip);
+  - styles;
+  - `hist`, `errorbar` and `fill_between`;
+  - subplots and ratio panels;
+  - log axes;
+  - the `pyplot` compatibility layer.
 - Run everything with `ctest --test-dir build`.

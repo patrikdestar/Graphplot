@@ -412,7 +412,7 @@ FigurePtr makeFigure(const py::object& title, int width, int height)
         throw std::runtime_error("figures must be created on the GUI (main) thread");
     auto* win = new FigureWindow;
     win->setAttribute(Qt::WA_DeleteOnClose, false);  // keep data accessible after closing
-    win->resize(width, height);
+    win->setFigureSize(QSize(width, height));
     if (!title.is_none()) {
         const QString t = QString::fromStdString(title.cast<std::string>());
         win->setWindowTitle(t);
@@ -1057,6 +1057,10 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         auto [g2, s2] = axesFlag(&AxesInfo::yReversed);
         auto [g3, s3] = axesFlag(&AxesInfo::showDiagonal);
         auto [g4, s4] = axesFlag(&AxesInfo::showPeakLabels);
+        auto [g5, s5] = axesFlag(&AxesInfo::xLog);
+        auto [g6, s6] = axesFlag(&AxesInfo::yLog);
+        fig.def_property("x_log", g5, s5, "Logarithmic x axis.");
+        fig.def_property("y_log", g6, s6, "Logarithmic y axis.");
         fig.def_property("peak_labels", g4, s4, "Show peak labels on the plot.");
         fig.def_property("x_reversed", g1, s1, "High x values on the left (NMR convention).");
         fig.def_property("y_reversed", g2, s2);
@@ -1093,13 +1097,21 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         "_set_style_params",
         [](FigurePtr self, const std::vector<std::pair<std::string, std::string>>& kv) {
             inGui([&] {
-                Style s = self->model()->style();
-                for (const auto& [k, v] : kv) {
-                    QString err;
-                    if (!s.set(QString::fromStdString(k), QString::fromStdString(v), &err))
-                        throw py::value_error(err.toStdString());
+                // The style is figure-wide: apply the changed keys to every panel.
+                FigureWindow* w = self->w();
+                std::vector<Style> styles;
+                for (int i = 0; i < w->axesCount(); ++i) {
+                    Style s = w->axes(i).model->style();
+                    for (const auto& [k, v] : kv) {
+                        QString err;
+                        if (!s.set(QString::fromStdString(k), QString::fromStdString(v), &err))
+                            throw py::value_error(err.toStdString());
+                    }
+                    styles.push_back(s);
                 }
-                self->editor()->setStyle(s, "Change style");
+                w->undoStack()->beginMacro("Change style");
+                for (int i = 0; i < w->axesCount(); ++i) w->axes(i).editor->setStyle(styles[size_t(i)], "Change style");
+                w->undoStack()->endMacro();
             });
         });
     fig.def(
@@ -1193,7 +1205,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         py::arg("filename"), py::kw_only(), py::arg("width") = 0, py::arg("height") = 0,
         py::arg("scale") = 2.0,
         "Export to .png, .svg or .pdf (format from the extension). width/height in pixels\n"
-        "(0 = window size); scale multiplies the PNG resolution.");
+        "(0 = the figure size given to plotter.figure); scale multiplies the PNG resolution.");
     fig.def(
         "screenshot",
         [](FigurePtr self, const std::string& filename) {

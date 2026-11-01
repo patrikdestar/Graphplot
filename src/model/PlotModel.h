@@ -88,8 +88,9 @@ public:
     void setAxesInfo(const AxesInfo& info);
 
     // Bounding box of all visible datasets and matrices; returns false if there is no data.
+    // xPositive / yPositive skip values <= 0 (for logarithmic axes).
     bool dataBounds(double& xmin, double& xmax, double& ymin, double& ymax,
-                    bool visibleOnly = true) const;
+                    bool visibleOnly = true, bool xPositive = false, bool yPositive = false) const;
 
     void clear();
 

@@ -140,6 +140,8 @@ struct AxesInfo {
     bool yReversed = false;     // high values at the bottom
     bool showDiagonal = false;  // dashed y = x line (homonuclear 2D spectra)
     bool showPeakLabels = true;
+    bool xLog = false;          // logarithmic axes
+    bool yLog = false;
     bool operator==(const AxesInfo&) const = default;
 };
 

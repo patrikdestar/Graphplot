@@ -21,8 +21,12 @@ fig = plotter.figure(title=None, size=(1000, 650))
 
 | Method | Returns |
 |---|---|
-| `plot(x, y=None, *, label, color, width=1.5, style='-', marker=None, markersize=6, visible=True, replace=False)` | `Line` |
-| `contour(z, x=None, y=None, *, label, levels=12, factor=1.4, base=None, color, negative_color, negative=True, image=False, linewidth=1.0)` | `Contour` |
+| `plot(x, y=None, *, label, color, width, style='-', marker=None, markersize, visible=True, replace=False, step=None, fill=None, fill_to=None, xerr=None, yerr=None)` | `Line` |
+| `errorbar(x, y, yerr=None, xerr=None, *, label, color, marker='o', ...)` | `Line` |
+| `hist(data, bins=10, range=None, *, density=False, weights=None, histtype='step', label, color, fill)` | `(counts, edges, Line)` |
+| `fill_between(x, y1, y2=0, *, label, color, alpha=0.3, step=None)` | `Line` (one undo step) |
+| `contour(z, x=None, y=None, *, label, levels, factor, base=None, color, negative_color, negative=True, image=False, linewidth)` | `Contour` |
+| `open_bruker(path)` | `Contour` (Bruker processed 2D spectrum, ppm axes) |
 | `marker(position, orientation='v', *, color, label='', style='--', width=1.5, show_value=True)` | `Marker` |
 | `vline(x, **kw)`, `hline(y, **kw)` | `Marker` |
 | `annotate(text, x, y, *, color, fontsize=10)` | `Annotation` |
@@ -41,6 +45,25 @@ Argument formats:
 
 `plot(..., replace=True)` updates the dataset with the same label in place,
 or adds a new one if no such dataset exists.
+Unset sizes and colours come from the style (`lines.linewidth`,
+`axes.prop_cycle`, …). Only labelled lines appear in the legend, as in
+matplotlib.
+
+Plotting options:
+
+- `step`: `'pre'`, `'post'` or `'mid'`.
+- `fill`: `True`, which uses the line colour at 30 % opacity, or any colour.
+  The area is filled down to y = 0, or towards another Line given as
+  `fill_to` (a band).
+- `xerr`, `yerr`: a scalar, a length-n array, or a `(2, n)` array for
+  (low, high).
+
+`hist`:
+
+- It follows `numpy.histogram` semantics.
+- `histtype` is `'step'`, `'stepfilled'` or `'errorbar'`. The last draws
+  points at the bin centres with Poisson errors √(Σw²), scaled correctly for
+  `density=True`.
 
 `contour`:
 
@@ -50,6 +73,79 @@ or adds a new one if no such dataset exists.
 - The positive levels are `base * factor**k` for `k = 0 … levels-1`. With
   `negative=True`, they are mirrored for negative values.
 - `base=None` places the top level just below `max |z|`.
+
+### Peaks (2D spectra)
+
+| Method | Description |
+|---|---|
+| `pick_peaks(*, threshold=None, min_distance=3, negative=False, exclude_diagonal=0.0, region='view', contour=None)` | automatic picking; returns the *new* peaks (one undo step) |
+| `add_peak(x, y, *, label='', comment='', snap=True)` | one peak (snaps to the nearest maximum within 3 points) |
+| `peaks()` | all `Peak` handles |
+| `peak_table()` | list of dicts (`x`, `y`, `intensity`, `label`, `comment`), e.g. for `pandas.DataFrame` |
+| `export_peaks(csv)`, `import_peaks(csv)` | CSV with header `x,y,intensity,label,comment` |
+| `clear_peaks()`, `show_peak_table()` | |
+| `peak_labels` | property: show labels on the plot |
+
+How `pick_peaks` works:
+
+- It finds local maxima above `threshold`. The default threshold is the
+  lowest contour level, so the peaks you can see are the ones picked.
+- Candidates closer than `min_distance` data points to a stronger peak are
+  dropped.
+- `exclude_diagonal` skips peaks with |x − y| below the given value. Use it
+  to pick only off-diagonal cross peaks.
+- `region` is `'view'` (the visible area), `'all'`, or `'selection'` (the
+  selected X region).
+- Positions are refined between grid points.
+- Peaks that already exist are not added again.
+
+### Axes appearance
+
+| Property | Description |
+|---|---|
+| `x_reversed`, `y_reversed` | high values on the left / bottom (set automatically by `open_bruker`) |
+| `x_log`, `y_log` | logarithmic axes |
+| `diagonal` | dashed y = x line |
+
+### Styles (figure-wide, undoable)
+
+| Method | Description |
+|---|---|
+| `use_style(name_or_path)` | built-in (`default`, `science`, `nmr`, `presentation`) or `.gpstyle` file; returns the list of ignored entries |
+| `set_style({key: value, ...}, **kw)` | change keys (in keyword form, `_` stands for `.`, e.g. `font_size=12`) |
+| `get_style_param(key)`, `save_style(path)` | |
+
+Module `plotter.style` (the default for *new* figures):
+
+| Function | Description |
+|---|---|
+| `use`, `set`, `get`, `text`, `save` | like the figure methods |
+| `available()` | built-in style names |
+| `keys()` | all keys with descriptions |
+| `save_as_default()` | writes your default style file |
+| `default_path()` | where that file lives |
+| `reload()` | re-reads the default style |
+
+All keys: [STYLE_REFERENCE.md](STYLE_REFERENCE.md). In texts, `$...$` math
+(`^{}`, `_{}`, Greek letters, `\to`, `\pm`, `\sqrt{}`, ...), `**bold**` and
+`*italic*` are supported.
+
+### Multi-panel figures
+
+| Method | Description |
+|---|---|
+| `subplots(nrows=1, ncols=1, *, sharex, sharey, height_ratios, width_ratios, hspace, wspace, squeeze=True)` | list or grid of `Axes`; existing content stays in panel 0 |
+| `ratio_panel(ratio=0.3, *, ylabel='Ratio')` | `(main, lower)` with shared x and touching frames |
+| `axes`, `gca()`, `sca(ax)` | panels / current panel |
+
+How panels work:
+
+- An `Axes` offers the same plotting methods and properties as `Figure`
+  (`ax.plot`, `ax.hist`, `ax.xlabel = ...`, `ax.set_ylim`, `ax.pick_peaks`, …).
+- Handles stay bound to the panel they were created in.
+- Figure-level calls act on the current panel. That is the one used last, or
+  the one clicked in the window.
+- Styles and the header labels are figure-wide.
 
 ### Selection and interaction
 
@@ -88,6 +184,29 @@ is released, not during a drag.
 | `screenshot(filename)` | image of the whole window |
 | `show(block=None)`, `close()`, `is_open` | window control |
 
+## matplotlib compatibility: `plotter.pyplot`
+
+```python
+import plotter.pyplot as plt
+```
+
+| Supported | Not supported |
+|---|---|
+| `figure`, `subplots` (incl. `gridspec_kw` height ratios / hspace), `gcf`, `gca`, `sca`, `close`, `show`, `pause`, `savefig(dpi=)` | `imshow`, colour bars |
+| `plot` with format strings (`'r--o'`, several x/y/fmt groups), `scatter`, `errorbar(fmt=)`, `hist` (`step`, `stepfilled`/`bar`, `errorbar`), `stairs` | polar and 3D axes |
+| `fill_between`, `contour`/`contourf` (X, Y, Z), `axhline`, `axvline`, `text`, `annotate` | twin axes |
+| `xlabel`, `ylabel`, `title`, `xlim`, `ylim`, `xscale`, `yscale`, `legend(loc=, frameon=)`, `grid`, `plt.style.use` | `rcParams` (use `plotter.style.set`) |
+
+Axes methods use the matplotlib names (`set_xlabel`, `set_xlim`,
+`set_yscale`, `invert_xaxis`, …). `ax.panel` and `fig.native` give access to
+the full plotter API (peaks, regions, undo, styles).
+
+Differences from matplotlib:
+
+- Figure sizes are converted at 100 px per inch.
+- Contour levels are geometric (NMR convention).
+- `hspace` is given in hundredths of the panel height.
+
 ## Handles
 
 Handles refer to objects by id. They stay valid after undo/redo. Accessing a
@@ -95,10 +214,23 @@ removed object raises `KeyError`. Setting a property is an undoable edit.
 
 ### `Line`
 
-- **Read-only:** `x`, `y` (NumPy copies), `exists`.
-- **Properties:** `label`, `color`, `width`, `style`, `marker`, `visible`.
+- **Read-only:** `x`, `y` (NumPy copies), `yerr` (`(low, high)` or `None`),
+  `exists`.
+- **Properties:** `label`, `color`, `width`, `style`, `marker`, `visible`,
+  `step`, `fill`.
 - `set_data(x, y, *, undoable=False)`: by default, streaming updates do not
   fill the undo history.
+- `set_errors(xerr=None, yerr=None)`.
+- `remove()`.
+
+### `Peak`
+
+- **Read-only:** `x`, `y`, `intensity`.
+- **Properties:**
+  - `position` (`(x, y)`);
+  - `label`, drawn next to the peak;
+  - `comment`, never drawn, but exported with the peak list;
+  - `label_offset` (pixels).
 - `remove()`.
 
 ### `Contour`

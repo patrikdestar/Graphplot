@@ -82,6 +82,10 @@ public:
     // Returns the new 2D dataset id (kInvalidId on error).
     ObjectId openBruker(const QString& path, QString* error = nullptr);
     PeakTable* peakTable() const { return m_peakTable; }
+    // Nominal figure (plot area) size: used by exports that give no size,
+    // and the window is sized so the plot area roughly matches it.
+    void setFigureSize(const QSize& size);
+    QSize figureSize() const { return m_figureSize; }
     void showPeakTable();
     bool exportTo(const QString& fileName, int width = 0, int height = 0, double scale = 2.0,
                   QString* error = nullptr);
@@ -133,6 +137,7 @@ private:
     QLabel* m_levelLabel = nullptr;
     QAction* m_levelsAction = nullptr;
     QString m_lastDir;
+    QSize m_figureSize;
 };
 
 }  // namespace gp

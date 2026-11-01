@@ -371,6 +371,54 @@ class PlotterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             self.fig.savefig(os.path.join(d, "grid.svg"))
 
+    def test_log_axes(self):
+        x = np.linspace(1, 100, 100)
+        self.fig.plot(x, x ** 3, label="cubic")
+        self.fig.y_log = True
+        self.fig.autoscale()
+        lo, hi = self.fig.ylim()
+        self.assertGreater(lo, 0)
+        self.assertGreaterEqual(hi, 1e6)
+        self.fig.undo()
+        self.assertFalse(self.fig.y_log)
+
+    def test_pyplot_compat(self):
+        import plotter.pyplot as plt
+        x = np.linspace(0, 10, 100)
+        plt.figure(figsize=(6, 4))
+        lines = plt.plot(x, np.sin(x), "r--", x, np.cos(x), "bo", label="trig")
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(lines[0].style, "dash")
+        self.assertEqual(lines[1].marker, "circle")
+        plt.errorbar(x[:5], x[:5], yerr=0.1, fmt="ks", label="pts")
+        plt.hist(np.random.default_rng(0).normal(5, 1, 500), bins=20, histtype="stepfilled", alpha=0.5)
+        plt.axvline(5, color="green", ls=":")
+        plt.xlabel(r"$\theta$ (rad)")
+        plt.ylabel("value")
+        plt.title("test")
+        plt.xlim(0, 8)
+        self.assertEqual(plt.xlim(), (0.0, 8.0))
+        plt.yscale("log")
+        plt.legend(loc="lower left", frameon=False)
+        self.assertEqual(plt.gcf().native.get_style_param("legend.loc"), "lower left")
+        fig, axs = plt.subplots(2, 2, sharex=True, figsize=(5, 5))
+        self.assertEqual(len(axs), 2)
+        axs[1][0].plot([1, 2], [3, 4])
+        axs[1][0].set_xlabel("x")
+        self.assertEqual(axs[1][0].get_xlabel(), "x")
+        fig, (a, b) = plt.subplots(2, 1, gridspec_kw={"height_ratios": [3, 1], "hspace": 0})
+        b.stairs([1, 3, 2], [0, 1, 2, 3], fill=True)
+        a.scatter([1, 2, 3], [1, 2, 3], s=36, c="purple")
+        yy, xx = np.mgrid[-1:1:50j, -1:1:60j]
+        c = a.contour(xx, yy, np.exp(-(xx ** 2 + yy ** 2) * 4), levels=6)
+        self.assertEqual(c.n_levels, 6)
+        with tempfile.TemporaryDirectory() as d:
+            plt.savefig(os.path.join(d, "f.png"), dpi=50)
+            self.assertTrue(os.path.getsize(os.path.join(d, "f.png")) > 1000)
+        with self.assertRaises(TypeError):
+            plt.plot([1, 2], [1, 2], bogus=3)
+        plt.close("all")
+
     def test_savefig(self):
         self.fig.plot(self.x, np.sin(self.x), label="s")
         self.fig.marker(50, label="M")

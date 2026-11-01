@@ -1,0 +1,84 @@
+# Graphplot style file
+# Format: 'key: value'. Lines starting with '#' are comments.
+# 'inherit: <built-in name or file>' may be used as the first line.
+
+font.family: Helvetica, Arial, Nimbus Sans, FreeSans, Liberation Sans, sans-serif # font preference list; generic names: sans-serif, serif, monospace
+font.size: 12                                # base font size (pt)
+
+figure.facecolor: #ffffff                    # background outside the axes
+figure.padding: 14                           # empty border around the figure (px)
+
+axes.facecolor: #ffffff                      # background inside the axes
+axes.edgecolor: #000000                      # frame and tick colour
+axes.linewidth: 1.2                          # frame line width (px)
+axes.labelsize: 14                           # axis label font size (pt)
+axes.labelcolor: #000000                     # axis label colour
+axes.labelpad: 6                             # space between tick labels and axis label (px)
+axes.titlesize: 14                           # title font size (pt)
+axes.titlebold: true                         # bold title
+axes.titlecolor: #000000                     # title colour
+axes.unicode_minus: true                     # use a real minus sign in tick labels
+axes.formatter: sci                          # tick label number format (auto | plain | sci)
+
+text.math: true                              # interpret $math$, **bold** and *italic* in texts
+
+xtick.direction: in                          # tick direction (in | out | inout)
+xtick.major.size: 10                         # major tick length (px)
+xtick.minor.size: 5                          # minor tick length (px)
+xtick.width: 1.2                             # tick line width (px)
+xtick.minor.visible: true                    # show minor ticks
+xtick.top: true                              # ticks also on the top side
+xtick.labelsize: 12                          # tick label font size (pt)
+xtick.labelcolor: #000000                    # tick label colour
+xtick.count: 5                               # approximate number of major ticks
+
+ytick.direction: in                          # tick direction (in | out | inout)
+ytick.major.size: 10                         # major tick length (px)
+ytick.minor.size: 5                          # minor tick length (px)
+ytick.width: 1.2                             # tick line width (px)
+ytick.minor.visible: true                    # show minor ticks
+ytick.right: true                            # ticks also on the right side
+ytick.labelsize: 12                          # tick label font size (pt)
+ytick.labelcolor: #000000                    # tick label colour
+ytick.count: 5                               # approximate number of major ticks
+
+axes.grid: false                             # show the major grid
+
+grid.color: #e4e3de                          # grid colour
+grid.linewidth: 1                            # grid line width (px)
+grid.linestyle: -                            # grid line style (- | -- | : | -.)
+grid.minor: false                            # show the minor grid
+grid.minor.color: #f0efec                    # minor grid colour
+
+axes.prop_cycle: #5790fc, #f89c20, #e42536, #964a8b, #9c9ca1, #7a21dd # comma-separated colour cycle for new datasets
+
+lines.linewidth: 2                           # default line width (px)
+lines.markersize: 7                          # default symbol size (px)
+
+errorbar.capsize: 0                          # error bar cap width (px)
+
+legend.frameon: false                        # draw a frame around the legend
+legend.loc: upper right                      # legend position (upper right | upper left | lower right | lower left | upper center | lower center | center left | center right | center)
+legend.fontsize: 12                          # legend font size (pt)
+legend.facecolor: #e6ffffff                  # legend background
+legend.edgecolor: #e4e3de                    # legend frame colour
+
+label.top.left: ""                           # text above the frame, left (e.g. **CMS** *Preliminary*)
+label.top.right: ""                          # text above the frame, right (e.g. 138 fb$^{-1}$ (13 TeV))
+label.inside: ""                             # text inside the frame
+label.inside.loc: upper left                 # position of label.inside (upper left | upper right | lower left | lower right)
+label.inside.size: 12                        # font size of label.inside (pt)
+
+contour.linewidth: 1                         # contour line width (px)
+contour.negativecolor: #e34948               # colour of negative contours
+contour.levels: 12                           # number of contour levels for new 2D data
+contour.factor: 1.4                          # ratio between successive contour levels
+
+peak.color: #000000                          # peak cross colour
+peak.size: 7                                 # peak cross half-size (px)
+peak.linewidth: 1.2                          # peak cross line width (px)
+peak.labelsize: 11                           # peak label font size (pt)
+peak.labelcolor: #0b0b0b                     # peak label colour
+
+annotation.size: 12                          # default annotation font size (pt)
+annotation.color: #0b0b0b                    # default annotation colour

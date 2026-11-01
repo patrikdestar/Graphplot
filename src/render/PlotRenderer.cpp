@@ -328,10 +328,19 @@ void PlotRenderer::setViewRange(const ViewRange& r)
 void PlotRenderer::autoscale(bool doX, bool doY)
 {
     double xmin, xmax, ymin, ymax;
-    if (!m_model->dataBounds(xmin, xmax, ymin, ymax)) return;
+    const bool xLog = m_model->axesInfo().xLog, yLog = m_model->axesInfo().yLog;
+    if (!m_model->dataBounds(xmin, xmax, ymin, ymax, true, xLog, yLog)) return;
+    // Padding in log space for logarithmic axes.
+    auto pad = [](double& lo, double& hi, double fraction, bool log) {
+        if (!log) return padRange(lo, hi, fraction);
+        double a = std::log10(lo), b = std::log10(hi);
+        padRange(a, b, fraction);
+        lo = std::pow(10.0, a);
+        hi = std::pow(10.0, b);
+    };
     ViewRange r = viewRange();
     if (doX) {
-        padRange(xmin, xmax, 0.0);  // x usually spans the data exactly
+        pad(xmin, xmax, 0.0, xLog);  // x usually spans the data exactly
         r.xmin = xmin;
         r.xmax = xmax;
     }
@@ -339,7 +348,7 @@ void PlotRenderer::autoscale(bool doX, bool doY)
         // Curves get headroom; a pure 2D (contour) view is fitted exactly.
         bool anyCurve = false;
         for (const auto& d : m_model->datasets()) anyCurve |= d.style.visible && !d.x.isEmpty();
-        padRange(ymin, ymax, anyCurve ? 0.05 : 0.0);
+        pad(ymin, ymax, anyCurve ? 0.05 : 0.0, yLog);
         r.ymin = ymin;
         r.ymax = ymax;
     }
@@ -941,8 +950,10 @@ void PlotRenderer::applyStyle()
         axis->setSubTicks(ticksOn && ts.minorVisible);
         axis->setTickLabelFont(font(ts.labelSize));
         axis->setTickLabelColor(ts.labelColor);
-        axis->setNumberFormat(fmt);
-        axis->setNumberPrecision(st.formatter == "plain" ? 10 : 6);
+        if (axis->scaleType() == QCPAxis::stLinear) {
+            axis->setNumberFormat(fmt);
+            axis->setNumberPrecision(st.formatter == "plain" ? 10 : 6);
+        }
         if (auto t = axis->ticker().dynamicCast<StyledTicker>()) {
             t->unicodeMinus = st.unicodeMinus;
             t->setTickCount(std::max(1, ts.count));
@@ -957,6 +968,8 @@ void PlotRenderer::applyStyle()
     // Mirrored axes follow the primary tick ranges (setupFullAxesBox).
     m_x2->setTicker(m_x->ticker());
     m_y2->setTicker(m_y->ticker());
+    for (QCPAxis* axis : {m_x, m_y})
+        if (auto t = axis->ticker().dynamicCast<QCPAxisTickerLog>()) t->setSubTickCount(8);
 
     // Legend
     QCPLegend* lg = m_legend;
@@ -973,7 +986,7 @@ void PlotRenderer::applyStyle()
     m_insideLabel->setColor(st.labelColor);
     m_insideLabel->setPositionAlignment(ia);
     m_insideLabel->position->setCoords(ia & Qt::AlignLeft ? 0.03 : 0.97, ia & Qt::AlignTop ? 0.03 : 0.97);
-    m_insideLabel->setVisible(!st.labelInside.isEmpty());
+    m_insideLabel->setVisible(m_primary && !st.labelInside.isEmpty());  // first panel only
 
     // Peaks
     PeakAppearance pa = m_peaks->appearance();
@@ -1025,6 +1038,36 @@ void PlotRenderer::applyAxesInfo()
     m_y->setLabelPadding(int(std::lround(st.labelPad + std::max(0.0, m_axisLabels->ySize().height() - lineH))));
     m_x->grid()->setVisible(info.gridVisible);
     m_y->grid()->setVisible(info.gridVisible);
+    // Linear / logarithmic scales (each with its own ticker).
+    auto setScale = [](QCPAxis* a, QCPAxis* mirror, bool log, const QSharedPointer<QCPAxisTicker>& lin) {
+        for (QCPAxis* ax : {a, mirror}) {
+            if (log && ax->scaleType() != QCPAxis::stLogarithmic) {
+                ax->setScaleType(QCPAxis::stLogarithmic);
+                auto t = QSharedPointer<QCPAxisTickerLog>::create();
+                t->setLogBase(10);
+                t->setSubTickCount(8);
+                ax->setTicker(t);
+            } else if (!log && ax->scaleType() != QCPAxis::stLinear) {
+                ax->setScaleType(QCPAxis::stLinear);
+                ax->setTicker(lin);
+            }
+        }
+        a->setNumberFormat(log ? "eb" : a->numberFormat());
+        if (log) a->setNumberPrecision(0);
+        mirror->setTicker(a->ticker());
+    };
+    if (!m_linTickerX) m_linTickerX = m_x->ticker(), m_linTickerY = m_y->ticker();
+    setScale(m_x, m_x2, info.xLog, m_linTickerX);
+    setScale(m_y, m_y2, info.yLog, m_linTickerY);
+    if (!info.xLog || !info.yLog) {
+        // Restore the style's number format on linear axes.
+        const QString fmt = st.formatter == "sci" ? "gbc" : st.formatter == "plain" ? "g" : "gbd";
+        for (QCPAxis* a : {m_x, m_y})
+            if (a->scaleType() == QCPAxis::stLinear) {
+                a->setNumberFormat(fmt);
+                a->setNumberPrecision(st.formatter == "plain" ? 10 : 6);
+            }
+    }
     m_x->setRangeReversed(info.xReversed);
     m_x2->setRangeReversed(info.xReversed);
     m_y->setRangeReversed(info.yReversed);
