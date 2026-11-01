@@ -1576,22 +1576,43 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
     fig.def(
         "_drawn_ticks",
         [](FigurePtr self, bool isX) {
-            // The ticks as currently drawn (automatic or custom), after a layout.
+            // The ticks an export draws: lay the figure out at its export size
+            // (layout passes and their fitting handlers only, no painting),
+            // read the ticks, then lay it out at the screen size again.
             return inGui([&] {
-                self->w()->plot()->replot(QCustomPlot::rpImmediateRefresh);
+                FigureWindow* w = self->w();
+                QCustomPlot* plot = w->plot();
+                QSize size = w->figureSize();
+                if (!size.isValid()) size = plot->width() >= 100 && plot->height() >= 100 ? plot->size() : QSize(800, 600);
+                const QRect screen = plot->viewport();
+                auto layoutAt = [plot](const QRect& r) {
+                    plot->setViewport(r);
+                    QCPLayoutGrid* layout = plot->plotLayout();
+                    layout->update(QCPLayoutElement::upPreparation);
+                    layout->update(QCPLayoutElement::upMargins);
+                    layout->update(QCPLayoutElement::upLayout);
+                    emit plot->afterLayout();  // tick fitting, margins, ratios, legends
+                };
+                layoutAt(QRect(QPoint(0, 0), size));
                 QCPAxis* a = isX ? self->renderer()->xAxis() : self->renderer()->yAxis();
                 const QVector<double> ticks = a->tickVector();  // copies: one list for begin/end
-                const QVector<QString> texts = a->tickVectorLabels();
-                std::vector<double> pos(ticks.begin(), ticks.end());
-                std::vector<std::string> labels;
-                for (const QString& l : texts) labels.push_back(l.toStdString());
-                // Only the ticks inside the view (QCustomPlot keeps one outside each end).
+                QVector<QString> texts = a->tickVectorLabels();
+                if (!a->tickLabels() || texts.size() != ticks.size()) {
+                    // Hidden labels are not generated: ask the ticker for the texts.
+                    QVector<double> t2;
+                    texts.clear();
+                    a->ticker()->generate(a->range(), plot->locale(), a->numberFormat().isEmpty() ? QChar('g') : a->numberFormat()[0],
+                                          a->numberPrecision(), t2, nullptr, &texts);
+                    if (t2 != ticks) texts = QVector<QString>(ticks.size());
+                }
+                layoutAt(screen);
                 std::vector<double> p2;
                 std::vector<std::string> l2;
-                for (size_t i = 0; i < pos.size(); ++i)
-                    if (a->range().contains(pos[i])) {
-                        p2.push_back(pos[i]);
-                        l2.push_back(i < labels.size() ? labels[i] : std::string());
+                // Only the ticks inside the view (QCustomPlot keeps one outside each end).
+                for (int i = 0; i < ticks.size(); ++i)
+                    if (a->range().contains(ticks[i])) {
+                        p2.push_back(ticks[i]);
+                        l2.push_back(i < texts.size() ? texts[i].toStdString() : std::string());
                     }
                 return std::make_pair(p2, l2);
             });

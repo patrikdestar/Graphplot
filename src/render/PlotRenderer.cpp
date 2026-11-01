@@ -1675,9 +1675,10 @@ void PlotRenderer::finishLegend()
 bool PlotRenderer::legendFits() const
 {
     if (!m_compact) return true;  // a legend that was asked for stays on ordinary panels
-    const int h = m_rect->rect().height();
-    // Room for the legend plus its inset margins above and below.
-    return h <= 0 || m_legend->minimumOuterSizeHint().height() + 20 <= h;
+    if (m_rect->outerRect().height() <= 0) return true;  // not laid out yet
+    // Room for the legend plus its inset margins above and below (a frame
+    // squeezed below zero height has none).
+    return m_legend->minimumOuterSizeHint().height() + 20 <= m_rect->rect().height();
 }
 
 void PlotRenderer::updateAnnotationVisibility()
@@ -2159,7 +2160,16 @@ bool PlotRenderer::fitTickCounts()
     // panel height on y (small ratio panels). Called after each layout pass;
     // repeats within the pass because fewer ticks can mean wider labels.
     const QRect ar = m_rect->rect();
-    if (ar.width() < 20 || ar.height() < 20) return false;
+    bool changed = false;
+    if (m_compact) {  // compact rows (timeline): too short for two labels -> none
+        const bool room = ar.height() >= 2 * QFontMetrics(m_y->tickLabelFont()).height();
+        if (m_y->tickLabels() != room) {
+            m_y->setTickLabels(room);
+            m_rect->update(QCPLayoutElement::upPreparation);
+            changed = true;
+        }
+    }
+    if (ar.width() < 20 || ar.height() < 20) return changed;
     const Style st = displayStyle();
     // Any automatic ticker (numbers, dates, log); not fixed or text ticks.
     auto adjustable = [](QCPAxis* axis) -> QSharedPointer<QCPAxisTicker> {
@@ -2173,7 +2183,6 @@ bool PlotRenderer::fitTickCounts()
         if (limit > 0) count = std::min(count, limit);
         if (auto t = adjustable(axis)) t->setTickCount(count);
     };
-    bool changed = false;
     // x: by label width (horizontal labels only; rotation is the user's way out).
     const int styleX = std::max(1, st.xtick.count);
     if (adjustable(m_x)) {
@@ -2207,13 +2216,6 @@ bool PlotRenderer::fitTickCounts()
         }
     }
     // y: by panel height.
-    if (m_compact) {  // too short for even two labels: none (the row name still shows)
-        const bool room = ar.height() >= 2 * QFontMetrics(m_y->tickLabelFont()).height();
-        if (m_y->tickLabels() != room) {
-            m_y->setTickLabels(room);
-            changed = true;
-        }
-    }
     if (adjustable(m_y)) {
         const QFontMetrics fm(m_y->tickLabelFont());
         const int styleY = std::max(1, st.ytick.count);

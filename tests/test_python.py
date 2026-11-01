@@ -1485,6 +1485,22 @@ class PlotterTests(unittest.TestCase):
             tl.save(path)
             self.assertEqual(plotter.load(path).title, "Orig")  # title survives reorder + save
 
+    def test_round20_fixes(self):
+        import plotter.pyplot as plt
+        # get_xticks reports what an export draws, before and after saving.
+        fig, ax = plt.subplots(figsize=(3, 2.5))
+        ax.plot(np.linspace(1e5, 1e6, 50), np.arange(50))
+        before = list(ax.get_xticks())
+        with tempfile.TemporaryDirectory() as d:
+            fig.savefig(os.path.join(d, "a.png"))
+        self.assertEqual(before, list(ax.get_xticks()))
+        # Hidden inner labels still have texts.
+        fig, axs = plt.subplots(2, 1, sharex=True)
+        for a in axs:
+            a.plot([0, 1], [0, 1])
+        self.assertTrue(all(l.get_text() for l in axs[0].get_xticklabels()))
+        plt.close("all")
+
     def test_round6_correctness(self):
         import plotter.pyplot as plt
         f = self.fig
