@@ -153,6 +153,12 @@ bool FigureWindow::saveFigure(const QString& fileName, QString* error) const
 
 bool FigureWindow::loadFigure(const QString& fileName, QString* error)
 {
+    // Each panel's saved direction is restored as is (no syncing in between).
+    m_syncDirections = false;
+    struct Restore {
+        bool& flag;
+        ~Restore() { flag = true; }
+    } restore{m_syncDirections};
     auto fail = [&](const QString& what) {
         if (error) *error = what;
         return false;

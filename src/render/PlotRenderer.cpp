@@ -53,6 +53,29 @@ public:
         setTimeZone(QTimeZone::utc());
         setTickCount(5);
     }
+
+protected:
+    // Below a day: steps on whole clock units (1, 2, 5, 10, 15, 30 s; min; 1, 2,
+    // 3, 6, 12 h) or decimal fractions of a second, so labels are exact times.
+    double getTickStep(const QCPRange& range) override
+    {
+        const double raw = range.size() / std::max(1.0, double(tickCount()) + 1e-10);
+        if (raw >= 43200) return QCPAxisTickerDateTime::getTickStep(range);
+        mDateStrategy = dsNone;
+        static const double units[] = {1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800,
+                                       3600, 7200, 10800, 21600, 43200};
+        if (raw >= 1) {
+            for (double u : units)
+                if (u >= raw) return u;
+            return 43200;
+        }
+        const double mag = std::pow(10.0, std::floor(std::log10(raw)));
+        for (double m : {1.0, 2.0, 5.0, 10.0})
+            if (m * mag >= raw) return m * mag;
+        return mag * 10;
+    }
+
+public:
     void generate(const QCPRange& range, const QLocale& locale, QChar formatChar, int precision,
                   QVector<double>& ticks, QVector<double>* subTicks, QVector<QString>* tickLabels) override
     {
@@ -67,7 +90,7 @@ public:
                           : step >= 86400.0      ? "yyyy-MM-dd"
                           : step >= 60           ? (manyDays ? "MM-dd hh:mm" : "hh:mm")
                           : step >= 1            ? "hh:mm:ss"
-                                                 : "ss.zzz";
+                                                 : "hh:mm:ss.zzz";
         tickLabels->clear();
         for (double t : ticks)
             tickLabels->push_back(QDateTime::fromMSecsSinceEpoch(qint64(std::llround(t * 1000.0)), QTimeZone::utc())
@@ -88,16 +111,50 @@ public:
     void generate(const QCPRange& range, const QLocale& locale, QChar formatChar, int precision,
                   QVector<double>& ticks, QVector<double>* subTicks, QVector<QString>* tickLabels) override
     {
-        if (range.lower > 0 && range.upper / range.lower < 20) {
+        const double ratio = range.lower > 0 ? range.upper / range.lower : 0;
+        if (ratio > 0 && ratio < 3) {  // less than half a decade: evenly spaced round ticks
             m_linear.setTickCount(5);
             m_linear.generate(range, locale, 'g', 6, ticks, subTicks, nullptr);
-            if (tickLabels) {
-                tickLabels->clear();
-                for (double t : ticks) tickLabels->push_back(locale.toString(t, 'g', 6));
+        } else if (ratio > 0 && ratio < 100) {  // one or two decades: 1-2-5 ticks (0.2, 0.5, 1, 2, 5)
+            ticks.clear();
+            const int k0 = int(std::floor(std::log10(range.lower))), k1 = int(std::ceil(std::log10(range.upper)));
+            for (int k = k0; k <= k1; ++k)
+                for (double m : {1.0, 2.0, 5.0}) {
+                    const double t = m * std::pow(10.0, k);
+                    if (t >= range.lower * (1 - 1e-9) && t <= range.upper * (1 + 1e-9)) ticks << t;
+                }
+            if (subTicks) {
+                subTicks->clear();
+                for (int k = k0; k <= k1; ++k)
+                    for (int m = 1; m <= 9; ++m) {
+                        const double t = m * std::pow(10.0, k);
+                        if (t > range.lower && t < range.upper && !ticks.contains(t)) *subTicks << t;
+                    }
             }
+        } else {
+            QCPAxisTickerLog::generate(range, locale, formatChar, precision, ticks, subTicks, tickLabels);
             return;
         }
-        QCPAxisTickerLog::generate(range, locale, formatChar, precision, ticks, subTicks, tickLabels);
+        if (tickLabels) {
+            tickLabels->clear();
+            for (double t : ticks) tickLabels->push_back(plain(t, locale));
+        }
+    }
+
+    // Plain decimals in an everyday range (no mixed "0.00015" / "5·10⁻⁵");
+    // exponent form (drawn as 10ⁿ) only far outside it.
+    static QString plain(double v, const QLocale& locale)
+    {
+        const double a = std::abs(v);
+        if (a == 0 || (a >= 1e-5 && a < 1e7)) {
+            QString s = locale.toString(v, 'f', std::max(0, 6 - int(std::floor(std::log10(std::max(a, 1e-300)))) - 1));
+            if (s.contains(locale.decimalPoint())) {
+                while (s.endsWith('0')) s.chop(1);
+                if (s.endsWith(locale.decimalPoint())) s.chop(1);
+            }
+            return s;
+        }
+        return locale.toString(v, 'g', 3);
     }
 
 private:
@@ -464,6 +521,7 @@ PlotRenderer::PlotRenderer(PlotModel* model, QCustomPlot* plot, QCPAxisRect* rec
     // legend.loc 'best': placed after every layout pass, which also runs for
     // exports at their own size (so the choice fits the exported geometry).
     connect(m_plot, &QCustomPlot::afterLayout, this, [this] {
+        fitTickCounts();
         if (m_legendBest && !m_twinHost) placeLegendBest();
     });
 
@@ -1646,6 +1704,8 @@ void PlotRenderer::applyStyle()
             t->unicodeMinus = st.unicodeMinus;
             int count = std::max(1, ts.count);
             if (!isX && m_maxTicksY > 0) count = std::min(count, m_maxTicksY);  // short panels (timeline rows)
+            if (!isX && m_autoTicksY > 0) count = std::min(count, m_autoTicksY);
+            if (isX && m_autoTicksX > 0) count = std::min(count, m_autoTicksX);  // wide labels
             t->setTickCount(count);
         }
         axis->grid()->setPen(cosmetic(st.gridColor, st.gridWidth, gridPenStyle(st.gridStyle)));
@@ -2002,6 +2062,48 @@ void PlotRenderer::setMaxTicksY(int n)
         t->setTickCount(count);
     }
     m_rect->update(QCPLayoutElement::upPreparation);
+}
+
+void PlotRenderer::fitTickCounts()
+{
+    // Fewer ticks where labels would run together: by label width on x, by
+    // panel height on y (small ratio panels). Called after each layout pass.
+    const QRect ar = m_rect->rect();
+    if (ar.width() < 20 || ar.height() < 20) return;
+    const Style st = displayStyle();
+    bool changed = false;
+    auto apply = [&](QCPAxis* axis, int& autoMax, int styleCount, int limit) {
+        auto t = axis->ticker().dynamicCast<StyledTicker>();
+        if (!t) return;
+        const int want = limit >= styleCount ? 0 : std::max(2, limit);
+        if (want == autoMax) return;
+        autoMax = want;
+        int count = std::max(1, styleCount);
+        if (axis == m_y && m_maxTicksY > 0) count = std::min(count, m_maxTicksY);
+        if (want > 0) count = std::min(count, want);
+        t->setTickCount(count);
+        changed = true;
+    };
+    if (m_x->visible() && std::abs(m_x->tickLabelRotation()) < 1) {
+        const QFontMetrics fm(m_x->tickLabelFont());
+        int widest = 0;
+        for (const QString& l : m_x->tickVectorLabels()) widest = std::max(widest, fm.horizontalAdvance(l));
+        const int styleCount = std::max(1, st.xtick.count);
+        const int slot = widest + fm.horizontalAdvance("00");  // label plus a gap
+        if (widest > 0) {
+            // Shrink when crowded; relax only with clear room (no back-and-forth).
+            const int fits = ar.width() / std::max(1, slot);
+            const int labels = m_x->tickVectorLabels().size();
+            if (labels > fits) apply(m_x, m_autoTicksX, styleCount, fits);
+            else if (m_autoTicksX > 0 && fits >= 2 * labels) apply(m_x, m_autoTicksX, styleCount, fits / 2 + 1);
+        }
+    }
+    {
+        const QFontMetrics fm(m_y->tickLabelFont());
+        const int styleCount = std::max(1, st.ytick.count);
+        apply(m_y, m_autoTicksY, styleCount, ar.height() / std::max(1, 2 * fm.height()));
+    }
+    if (changed) m_rect->update(QCPLayoutElement::upPreparation);
 }
 
 }  // namespace gp

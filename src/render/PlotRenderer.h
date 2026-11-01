@@ -134,7 +134,10 @@ public:
     // such as timeline rows use fewer so labels do not overlap.
     // Takes effect in the current replot (it is called from afterLayout).
     void setMaxTicksY(int n);
-    void startFresh();  // after clearing the panel: the next data is fitted again
+    void startFresh();
+    const QList<PlotRenderer*>& sharedX() const { return m_shareX; }
+    const QList<PlotRenderer*>& sharedY() const { return m_shareY; }
+    void fitTickCounts();  // after clearing the panel: the next data is fitted again
     // The view-fitting state (follow flags, home, current view), saved and
     // restored around an undoable clear.
     struct FitState {
@@ -283,6 +286,7 @@ private:
     void updateRightPadding();            // colour bar + twin axis space in the right margin
     void updateTwinMargin();              // twin: tell the host how much room its axis needs
     int m_maxTicksY = 0;
+    int m_autoTicksX = 0, m_autoTicksY = 0;  // limits from label size (fitTickCounts)
     QList<PlotRenderer*> m_shareX, m_shareY;
     // The view follows the data (re-fits when data is added or changed) until
     // the user or code sets the view; autoscale() resumes following.

@@ -180,6 +180,7 @@ private:
     QUndoStack* m_stack = nullptr;
     std::vector<Axes> m_axes;
     QCPLayoutGrid* m_grid = nullptr;
+    bool m_syncDirections = true;  // off while a file restores each panel's own settings
     QList<QCPMarginGroup*> m_marginGroups;
     QList<QMetaObject::Connection> m_linkConnections;
     GridSpec m_gridSpec;

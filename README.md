@@ -82,8 +82,9 @@ annotate, read the results back, process, and re-plot.
 - **Export data**, not only pictures: the visible curves (or just the
   selected region) as CSV; *Copy statistics* puts the region statistics on
   the clipboard for a spreadsheet.
-- Everything is draggable and editable, with undo/redo for every edit
-  (mouse, panel or Python).
+- Everything is draggable and editable, with undo/redo for every edit of the
+  content (mouse, panel or Python). Changing the panel layout (`subplots`,
+  `ratio_panel`, `twinx`) is not undoable.
 
 **Styles**
 - Every visual setting comes from a **style**, never from code.

@@ -96,6 +96,10 @@ itself.
 
 ## Data
 
+**Values beyond about ±1e250 are not drawn correctly.** The plotting library
+works in double precision with a limit of about 1e250 on axis ranges; scale
+such data (for example plot `log10` of it) before plotting.
+
 **My sensor log starts in 1970 / times are wrong by 1000×.** Graphplot
 detects Unix epochs from the size of the numbers and treats a column as
 epoch time only if the whole column lies after ~1973. Relative counters in

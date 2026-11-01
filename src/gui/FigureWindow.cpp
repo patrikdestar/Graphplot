@@ -132,6 +132,25 @@ void FigureWindow::wireAxes(const Axes& ax)
     PlotRenderer* renderer = ax.renderer;
     connect(renderer, &PlotRenderer::viewChanged, this, [this, renderer] { recordView(renderer); });
     PlotModel* model = ax.model;
+    // Shared axes share their direction too (invert_xaxis on one panel flips
+    // all panels sharing that x). Partners follow through their models, so
+    // undo of the original change brings them back as well.
+    connect(model, &PlotModel::axesInfoChanged, this, [this, renderer, model] {
+        if (!m_syncDirections) return;
+        const AxesInfo& info = model->axesInfo();
+        for (PlotRenderer* p : renderer->sharedX())
+            if (p->model()->axesInfo().xReversed != info.xReversed) {
+                AxesInfo o = p->model()->axesInfo();
+                o.xReversed = info.xReversed;
+                p->model()->setAxesInfo(o);
+            }
+        for (PlotRenderer* p : renderer->sharedY())
+            if (p->model()->axesInfo().yReversed != info.yReversed) {
+                AxesInfo o = p->model()->axesInfo();
+                o.yReversed = info.yReversed;
+                p->model()->setAxesInfo(o);
+            }
+    });
     // Show the peak list automatically once there are peaks.
     connect(model, &PlotModel::peakAdded, this, [this] {
         if (m_peakDock->isHidden()) m_peakDock->show();
@@ -429,6 +448,28 @@ void FigureWindow::setGrid(const GridSpec& spec)
         }
         if (PlotRenderer* twin = cellRenderer(i)->twin()) xs << twin;  // its twin shares x too
         cellRenderer(i)->setSharedWith(xs, ys);
+    }
+    // Panels sharing an axis start with the same direction as their group's
+    // first panel (e.g. a reversed ppm axis).
+    for (int i = 0; i < n; ++i) {
+        PlotRenderer* r = cellRenderer(i);
+        auto align = [](const QList<PlotRenderer*>& partners, PlotModel* m, bool x) {
+            for (PlotRenderer* p : partners) {
+                const AxesInfo& lead = p->model()->axesInfo();
+                AxesInfo o = m->axesInfo();
+                bool& mine = x ? o.xReversed : o.yReversed;
+                const bool theirs = x ? lead.xReversed : lead.yReversed;
+                if (mine != theirs) {
+                    mine = theirs;
+                    m->setAxesInfo(o);
+                }
+                return;  // the first partner leads
+            }
+        };
+        if (i > 0) {
+            align(r->sharedX(), r->model(), true);
+            align(r->sharedY(), r->model(), false);
+        }
     }
     m_gridSpec = spec;
     m_plot->replot();

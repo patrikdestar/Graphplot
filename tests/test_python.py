@@ -1393,6 +1393,26 @@ class PlotterTests(unittest.TestCase):
         h.plot([1, 2, 3], [1e300, 2e300, -1e300])
         self.assertGreater(h.ylim()[1], 1e200)  # fitted as far as the plot can show
 
+    def test_round15_fixes(self):
+        import plotter.pyplot as plt
+        fig, axs = plt.subplots(2, 1, sharex=True)
+        for a in axs:
+            a.plot([0, 6], [0, 1])
+        axs[1].invert_xaxis()
+        self.assertEqual(axs[0].get_xlim(), (6.0, 0.0))  # shared x: same direction
+        fig.native.undo()
+        self.assertEqual(axs[0].get_xlim(), (0.0, 6.0))
+        plt.close("all")
+        f = plotter.figure()
+        c = f.contour(np.random.rand(8, 8))
+        c.set_data(np.random.rand(20, 30))
+        self.assertEqual(tuple(c.extent), (0.0, 29.0, 0.0, 19.0))  # new size: index coordinates
+        with tempfile.TemporaryDirectory() as d:  # tick labels on awkward ranges render
+            g = plotter.figure()
+            g.plot(np.linspace(1.7e9, 1.7e9 + 3600, 20), np.arange(20.0))
+            g.y_log = True
+            g.savefig(os.path.join(d, "t.png"), width=300, height=200)
+
     def test_round6_correctness(self):
         import plotter.pyplot as plt
         f = self.fig
