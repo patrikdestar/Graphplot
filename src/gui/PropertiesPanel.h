@@ -18,6 +18,7 @@ class QCheckBox;
 class QLabel;
 class QPushButton;
 class QSpinBox;
+class QPlainTextEdit;
 
 namespace gp {
 
@@ -55,6 +56,7 @@ private:
     QWidget* buildAnnotationPage();
     QWidget* buildRegionPage();
     QWidget* buildMatrixPage();
+    QWidget* buildPeakPage();
 
     void rebuildTree();
     void refreshTreeItem(const ObjectRef& ref);
@@ -68,6 +70,7 @@ private:
     void commitAnnotation(bool mergeable);
     void commitRegion();
     void commitMatrix(bool mergeable);
+    void commitPeak(bool mergeable, const QString& text);
     void commitAxes();
 
     PlotEditor* m_editor;
@@ -90,6 +93,7 @@ private:
     QWidget* m_annotationPage = nullptr;
     QWidget* m_regionPage = nullptr;
     QWidget* m_matrixPage = nullptr;
+    QWidget* m_peakPage = nullptr;
 
     // axes
     QLineEdit* m_title = nullptr;
@@ -123,6 +127,13 @@ private:
     QCheckBox* m_mxImage = nullptr;
     QCheckBox* m_mxVisible = nullptr;
     QLabel* m_mxInfo = nullptr;
+
+    // peak
+    QLineEdit* m_pkLabel = nullptr;
+    QDoubleSpinBox* m_pkX = nullptr;
+    QDoubleSpinBox* m_pkY = nullptr;
+    QLabel* m_pkIntensity = nullptr;
+    QPlainTextEdit* m_pkComment = nullptr;
 
     // marker
     QLabel* m_mkOrientation = nullptr;

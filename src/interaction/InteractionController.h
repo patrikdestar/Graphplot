@@ -22,7 +22,7 @@ namespace gp {
 
 class PlotEditor;
 
-enum class InteractionMode { Zoom, Pan, Region, AddVMarker, AddHMarker, AddAnnotation };
+enum class InteractionMode { Zoom, Pan, Region, AddVMarker, AddHMarker, AddAnnotation, AddPeak };
 enum class ZoomAxes { Both, XOnly, YOnly };
 
 class InteractionController : public QObject {
@@ -65,7 +65,7 @@ protected:
 
 private:
     enum class Drag { None, Pan, RubberBand, RegionCreate, RegionMin, RegionMax, RegionMove,
-                      Marker, Annotation };
+                      Marker, Annotation, Peak, PeakLabel };
 
     void mousePress(QMouseEvent* e);
     void mouseMove(QMouseEvent* e);
@@ -94,6 +94,7 @@ private:
     Region m_dragStartRegion;
     Marker m_dragStartMarker;
     Annotation m_dragStartAnnotation;
+    Peak m_dragStartPeak;
     bool m_dragMoved = false;
 };
 

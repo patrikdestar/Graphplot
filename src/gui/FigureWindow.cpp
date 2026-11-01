@@ -1,6 +1,7 @@
 #include "FigureWindow.h"
 
 #include "Icons.h"
+#include "PeakTable.h"
 #include "PropertiesPanel.h"
 #include "commands/PlotEditor.h"
 #include "model/BrukerReader.h"
@@ -22,6 +23,7 @@
 #include <QMessageBox>
 #include <QStatusBar>
 #include <QToolBar>
+#include <QSignalBlocker>
 #include <QUndoStack>
 
 namespace gp {
@@ -47,6 +49,17 @@ FigureWindow::FigureWindow(QWidget* parent) : QMainWindow(parent)
     m_dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetClosable |
                         QDockWidget::DockWidgetFloatable);
     addDockWidget(Qt::RightDockWidgetArea, m_dock);
+
+    m_peakTable = new PeakTable(m_editor, m_renderer, m_controller);
+    m_peakDock = new QDockWidget("Peaks", this);
+    m_peakDock->setObjectName("peaksDock");
+    m_peakDock->setWidget(m_peakTable);
+    addDockWidget(Qt::RightDockWidgetArea, m_peakDock);
+    tabifyDockWidget(m_dock, m_peakDock);
+    m_dock->raise();
+    // Show the peak list automatically once there are peaks or 2D data.
+    auto showPeaks = [this] { if (m_peakDock->isHidden()) m_peakDock->show(); };
+    connect(m_model, &PlotModel::peakAdded, this, showPeaks);
 
     buildActions();
 
@@ -111,6 +124,9 @@ void FigureWindow::buildActions()
     QAction* redo = stack->createRedoAction(this, "&Redo");
     redo->setShortcuts({QKeySequence::Redo, QKeySequence("Ctrl+Y")});
     redo->setIcon(icons::make(icons::Kind::Redo));
+    // Keep the toolbar buttons short; the menu shows "Undo <action>".
+    undo->setIconText("Undo");
+    redo->setIconText("Redo");
     edit->addAction(undo);
     edit->addAction(redo);
     edit->addSeparator();
@@ -144,6 +160,9 @@ void FigureWindow::buildActions()
          "Click to place a horizontal marker."},
         {InteractionMode::AddAnnotation, icons::Kind::Annotation, "Text", "T",
          "Click to place a text annotation."},
+        {InteractionMode::AddPeak, icons::Kind::Peak, "Peak", "K",
+         "Click to add peaks: snaps to the nearest maximum (Shift: exactly at the cursor).\n"
+         "Stays active until Esc. Drag a peak or its label to move it."},
     };
     QMenu* tools = menuBar()->addMenu("&Tools");
     QToolBar* tb = addToolBar("Main");
@@ -205,6 +224,30 @@ void FigureWindow::buildActions()
     QAction* raiseLevels = new QAction("Raise contour levels ×2", this);
     raiseLevels->setShortcut(QKeySequence("/"));
     connect(raiseLevels, &QAction::triggered, this, [this] { m_controller->scaleContourLevels(2.0); });
+    QAction* pickAct = new QAction("Pick peaks", this);
+    pickAct->setShortcut(QKeySequence("Ctrl+Shift+K"));
+    pickAct->setToolTip("Automatic peak picking with the options of the Peaks panel");
+    connect(pickAct, &QAction::triggered, this, [this] {
+        m_peakDock->show();
+        m_peakDock->raise();
+        m_peakTable->pickNow();
+    });
+    QAction* labelsAct = new QAction("Show peak labels", this);
+    labelsAct->setCheckable(true);
+    labelsAct->setChecked(true);
+    connect(labelsAct, &QAction::toggled, this, [this](bool on) {
+        AxesInfo a = m_model->axesInfo();
+        a.showPeakLabels = on;
+        m_editor->setAxesInfo(a);
+    });
+    connect(m_model, &PlotModel::axesInfoChanged, labelsAct, [this, labelsAct] {
+        const QSignalBlocker b(labelsAct);
+        labelsAct->setChecked(m_model->axesInfo().showPeakLabels);
+    });
+    tools->addSeparator();
+    tools->addAction(pickAct);
+    view->addAction(labelsAct);
+    view->addAction(m_peakDock->toggleViewAction());
     view->addAction(m_levelsAction);
     view->addAction(lowerLevels);
     view->addAction(raiseLevels);
@@ -298,6 +341,12 @@ bool FigureWindow::openDataFile(const QString& fileName, QString* error)
     m_editor->undoStack()->endMacro();
     m_renderer->autoscale();
     return true;
+}
+
+void FigureWindow::showPeakTable()
+{
+    m_peakDock->show();
+    m_peakDock->raise();
 }
 
 bool FigureWindow::openMatrixFile(const QString& fileName, QString* error)

@@ -24,6 +24,7 @@ class QCPColorMap;
 namespace gp {
 
 class ContourPlottable;
+class PeakOverlay;
 
 struct ViewRange {
     double xmin = 0, xmax = 1, ymin = 0, ymax = 1;
@@ -74,6 +75,9 @@ public:
     // Matrices affected by contour level scrolling: the selected one, or all
     // visible ones when no matrix is selected.
     QList<ObjectId> levelTargets() const;
+    PeakOverlay* peakOverlay() const { return m_peaks; }
+    // The visible 2D dataset whose extent contains the data point (topmost first).
+    const Matrix* matrixAt(const QPointF& data) const;
 
     void replot();               // queued full replot
     void replotObjectLayers();   // immediate replot of marker/annotation/region layers only
@@ -131,6 +135,7 @@ private:
     QCPLayer* m_objectLayer = nullptr;
     QCPTextElement* m_title = nullptr;
     QCPItemStraightLine* m_diagonal = nullptr;
+    PeakOverlay* m_peaks = nullptr;
 
     QHash<ObjectId, QCPAbstractPlottable*> m_plottables;
     QHash<ObjectId, MatrixVisual> m_matrices;

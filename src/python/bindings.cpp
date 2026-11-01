@@ -16,7 +16,9 @@
 
 #include "commands/PlotEditor.h"
 #include "gui/FigureWindow.h"
+#include "gui/PeakTable.h"
 #include "model/Contour.h"
+#include "model/PeakPicker.h"
 #include "model/PlotModel.h"
 #include "qcustomplot.h"
 #include "render/PlotRenderer.h"
@@ -221,6 +223,23 @@ struct MarkerH : Handle {
         });
     }
 };
+struct PeakH : Handle {
+    Peak get() const
+    {
+        const Peak* p = fig->model()->peak(id);
+        if (!p) throw py::key_error("this peak no longer exists");
+        return *p;
+    }
+    void edit(const std::function<void(Peak&)>& f, const QString& text = "Edit peak")
+    {
+        inGui([&] {
+            Peak p = get();
+            f(p);
+            fig->editor()->updatePeak(p, std::nullopt, false, text);
+        });
+    }
+};
+
 struct AnnotationH : Handle {
     Annotation get() const
     {
@@ -541,6 +560,136 @@ experiment folder). Axes are in ppm, drawn high-to-low as in TopSpin, labelled
 with the nuclei; the diagonal is shown for homonuclear spectra. Returns a Contour.)doc");
 
     fig.def(
+        "pick_peaks",
+        [](FigurePtr self, const py::object& threshold, int minDistance, bool negative,
+           double excludeDiagonal, const std::string& region, const py::object& contour) {
+            if (region != "view" && region != "all" && region != "selection")
+                throw py::value_error("region must be 'view', 'all' or 'selection'");
+            PeakPickOptions o;
+            o.threshold = threshold.is_none() ? 0.0 : threshold.cast<double>();
+            o.minDistance = minDistance;
+            o.negative = negative;
+            o.diagonalExclusion = excludeDiagonal;
+            ObjectId only = kInvalidId;
+            if (!contour.is_none()) only = contour.cast<Contour&>().id;
+            const QList<ObjectId> ids = inGui([&] {
+                PlotRenderer* r = self->w()->renderer();
+                if (region == "view") {
+                    const ViewRange v = r->viewRange();
+                    o.restrictToRect = true;
+                    o.xmin = v.xmin; o.xmax = v.xmax; o.ymin = v.ymin; o.ymax = v.ymax;
+                } else if (region == "selection") {
+                    const Region s = self->model()->region();
+                    if (!s.active) throw py::value_error("no region is selected");
+                    const ViewRange v = r->viewRange();
+                    o.restrictToRect = true;
+                    o.xmin = s.xmin; o.xmax = s.xmax; o.ymin = v.ymin; o.ymax = v.ymax;
+                }
+                QList<ObjectId> targets;
+                if (only != kInvalidId) {
+                    if (!self->model()->matrix(only)) throw py::key_error("contour no longer exists");
+                    targets << only;
+                } else {
+                    for (const auto& m : self->model()->matrices())
+                        if (m.style.visible) targets << m.id;
+                }
+                if (targets.isEmpty()) throw py::value_error("peak picking needs 2D data (fig.contour / open_bruker)");
+                QList<ObjectId> all;
+                self->editor()->undoStack()->beginMacro("Pick peaks");
+                for (ObjectId t : targets) all += self->editor()->pickPeaks(t, o);
+                self->editor()->undoStack()->endMacro();
+                return all;
+            });
+            std::vector<PeakH> out;
+            for (ObjectId id : ids) out.push_back(PeakH{{self, id}});
+            return out;
+        },
+        py::kw_only(), py::arg("threshold") = py::none(), py::arg("min_distance") = 3,
+        py::arg("negative") = false, py::arg("exclude_diagonal") = 0.0,
+        py::arg("region") = "view", py::arg("contour") = py::none(),
+        R"doc(Automatic peak picking on the 2D data; returns the *new* peaks (one undo step).
+
+threshold         minimum height; default = the lowest contour level shown
+min_distance      minimum separation in data points
+negative          also pick negative peaks
+exclude_diagonal  skip peaks with |x - y| < value (pick only off-diagonal cross peaks)
+region            'view' (visible area), 'all', or 'selection' (selected X region)
+Peaks closer than min_distance to existing peaks are not added again.)doc");
+    fig.def(
+        "add_peak",
+        [](FigurePtr self, double x, double y, const std::string& label, const std::string& comment,
+           bool snap) {
+            const ObjectId id = inGui([&] {
+                Peak p;
+                p.x = x;
+                p.y = y;
+                if (const Matrix* m = self->w()->renderer()->matrixAt({x, y})) {
+                    p.matrixId = m->id;
+                    p.intensity = sampleMatrix(*m, x, y);
+                    if (snap)
+                        if (auto s = snapToPeak(*m, x, y, 3)) p = *s;
+                }
+                p.label = QString::fromStdString(label);
+                p.comment = QString::fromStdString(comment);
+                return self->editor()->addPeak(p);
+            });
+            return PeakH{{self, id}};
+        },
+        py::arg("x"), py::arg("y"), py::kw_only(), py::arg("label") = "", py::arg("comment") = "",
+        py::arg("snap") = true,
+        "Add a peak at (x, y); with snap=True it moves to the nearest maximum (within 3 points).");
+    fig.def("peaks", [](FigurePtr self) {
+        std::vector<PeakH> out;
+        inGui([&] {
+            for (const auto& p : self->model()->peaks()) out.push_back(PeakH{{self, p.id}});
+        });
+        return out;
+    });
+    fig.def(
+        "peak_table",
+        [](FigurePtr self) {
+            // Plain data for analysis / pandas: list of dicts.
+            py::list rows;
+            const std::vector<Peak> ps = inGui([&] { return self->model()->peaks(); });
+            for (const Peak& p : ps) {
+                py::dict d;
+                d["x"] = p.x;
+                d["y"] = p.y;
+                d["intensity"] = p.intensity;
+                d["label"] = p.label.toStdString();
+                d["comment"] = p.comment.toStdString();
+                rows.append(d);
+            }
+            return rows;
+        },
+        "All peaks as a list of dicts (x, y, intensity, label, comment) - e.g. pandas.DataFrame(fig.peak_table()).");
+    fig.def(
+        "export_peaks",
+        [](FigurePtr self, const std::string& fn) {
+            QString err;
+            if (!inGui([&] { return self->w()->peakTable()->exportCsv(QString::fromStdString(fn), &err); }))
+                throw std::runtime_error(err.toStdString());
+        },
+        py::arg("filename"), "Write the peak list as CSV (x, y, intensity, label, comment).");
+    fig.def(
+        "import_peaks",
+        [](FigurePtr self, const std::string& fn) {
+            QString err;
+            if (!inGui([&] { return self->w()->peakTable()->importCsv(QString::fromStdString(fn), &err); }))
+                throw std::runtime_error(err.toStdString());
+        },
+        py::arg("filename"), "Add peaks from a CSV written by export_peaks (one undo step).");
+    fig.def("show_peak_table", [](FigurePtr self) { inGui([&] { self->w()->showPeakTable(); }); },
+            "Bring the 'Peaks' panel (peak list) to the front.");
+    fig.def("clear_peaks", [](FigurePtr self) {
+        inGui([&] {
+            QList<ObjectId> ids;
+            for (const auto& p : self->model()->peaks()) ids << p.id;
+            self->editor()->removePeaks(ids, "Delete all peaks");
+        });
+    });
+
+    fig.def(
         "marker",
         [](FigurePtr self, double pos, const std::string& orientation, const py::object& color,
            const std::string& label, const std::string& style, double width, bool showValue) {
@@ -668,6 +817,7 @@ with the nuclei; the diagonal is shown for homonuclear spectra. Returns a Contou
         else if (py::isinstance<Contour>(h)) ref = {ObjectKind::Matrix, h.cast<Contour&>().id};
         else if (py::isinstance<MarkerH>(h)) ref = {ObjectKind::Marker, h.cast<MarkerH&>().id};
         else if (py::isinstance<AnnotationH>(h)) ref = {ObjectKind::Annotation, h.cast<AnnotationH&>().id};
+        else if (py::isinstance<PeakH>(h)) ref = {ObjectKind::Peak, h.cast<PeakH&>().id};
         else throw py::type_error("expected a Line, Contour, Marker or Annotation");
         inGui([&] { self->editor()->removeObject(ref); });
     });
@@ -676,6 +826,7 @@ with the nuclei; the diagonal is shown for homonuclear spectra. Returns a Contou
             PlotEditor* ed = self->editor();
             PlotModel* m = self->model();
             ed->undoStack()->beginMacro("Clear figure");
+            while (!m->peaks().empty()) ed->removePeak(m->peaks().back().id);
             while (!m->annotations().empty()) ed->removeAnnotation(m->annotations().back().id);
             while (!m->markers().empty()) ed->removeMarker(m->markers().back().id);
             while (!m->matrices().empty()) ed->removeMatrix(m->matrices().back().id);
@@ -768,6 +919,8 @@ with the nuclei; the diagonal is shown for homonuclear spectra. Returns a Contou
         auto [g1, s1] = axesFlag(&AxesInfo::xReversed);
         auto [g2, s2] = axesFlag(&AxesInfo::yReversed);
         auto [g3, s3] = axesFlag(&AxesInfo::showDiagonal);
+        auto [g4, s4] = axesFlag(&AxesInfo::showPeakLabels);
+        fig.def_property("peak_labels", g4, s4, "Show peak labels on the plot.");
         fig.def_property("x_reversed", g1, s1, "High x values on the left (NMR convention).");
         fig.def_property("y_reversed", g2, s2);
         fig.def_property("diagonal", g3, s3, "Show the dashed y = x diagonal.");
@@ -1023,6 +1176,48 @@ with the nuclei; the diagonal is shown for homonuclear spectra. Returns a Contou
                 return "<Marker '" + m.label.toStdString() + "' " +
                        (m.orientation == Orientation::Vertical ? "x=" : "y=") +
                        QString::number(m.position, 'g', 6).toStdString() + ">";
+            });
+        });
+
+    // ---- Peak ----------------------------------------------------------------------------------
+    py::class_<PeakH>(mod, "Peak", "Handle to a picked peak.")
+        .def_property("position",
+                      [](PeakH& h) {
+                          const Peak p = inGui([&] { return h.get(); });
+                          return py::make_tuple(p.x, p.y);
+                      },
+                      [](PeakH& h, std::pair<double, double> v) {
+                          h.edit([&](Peak& p) { p.x = v.first; p.y = v.second; }, "Move peak");
+                      })
+        .def_property_readonly("x", [](PeakH& h) { return inGui([&] { return h.get().x; }); })
+        .def_property_readonly("y", [](PeakH& h) { return inGui([&] { return h.get().y; }); })
+        .def_property_readonly("intensity", [](PeakH& h) { return inGui([&] { return h.get().intensity; }); })
+        .def_property("label",
+                      [](PeakH& h) { return inGui([&] { return h.get().label.toStdString(); }); },
+                      [](PeakH& h, const std::string& v) {
+                          h.edit([&](Peak& p) { p.label = QString::fromStdString(v); }, "Edit peak label");
+                      })
+        .def_property("comment",
+                      [](PeakH& h) { return inGui([&] { return h.get().comment.toStdString(); }); },
+                      [](PeakH& h, const std::string& v) {
+                          h.edit([&](Peak& p) { p.comment = QString::fromStdString(v); }, "Edit peak comment");
+                      }, "Free-text notes; never drawn on the plot.")
+        .def_property("label_offset",
+                      [](PeakH& h) {
+                          const Peak p = inGui([&] { return h.get(); });
+                          return py::make_tuple(p.labelOffset.x(), p.labelOffset.y());
+                      },
+                      [](PeakH& h, std::pair<double, double> v) {
+                          h.edit([&](Peak& p) { p.labelOffset = QPointF(v.first, v.second); }, "Move peak label");
+                      }, "Label position relative to the peak, in pixels (x right, y down).")
+        .def("remove", [](PeakH& h) { inGui([&] { h.fig->editor()->removePeak(h.id); }); })
+        .def("__repr__", [](PeakH& h) {
+            return inGui([&]() -> std::string {
+                if (!h.fig->alive() || !h.fig->model()->peak(h.id)) return "<Peak (removed)>";
+                const Peak p = h.get();
+                return "<Peak (" + QString::number(p.x, 'f', 4).toStdString() + ", " +
+                       QString::number(p.y, 'f', 4).toStdString() + ")" +
+                       (p.label.isEmpty() ? "" : " '" + p.label.toStdString() + "'") + ">";
             });
         });
 

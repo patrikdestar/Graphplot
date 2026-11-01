@@ -63,6 +63,14 @@ public:
     std::optional<Annotation> takeAnnotation(ObjectId id);
     bool updateAnnotation(const Annotation& a);
 
+    // ---- Peaks -----------------------------------------------------------
+    const std::vector<Peak>& peaks() const { return m_peaks; }
+    const Peak* peak(ObjectId id) const;
+    int peakIndex(ObjectId id) const;
+    ObjectId insertPeak(Peak p, int index = -1);
+    std::optional<Peak> takePeak(ObjectId id);
+    bool updatePeak(const Peak& p);
+
     // ---- Region selection ----------------------------------------------
     const Region& region() const { return m_region; }
     void setRegion(const Region& r);  // normalises xmin <= xmax
@@ -100,6 +108,10 @@ signals:
     void annotationRemoved(gp::ObjectId id);
     void annotationChanged(gp::ObjectId id);
 
+    void peakAdded(gp::ObjectId id);
+    void peakRemoved(gp::ObjectId id);
+    void peakChanged(gp::ObjectId id);
+
     void regionChanged();
     void axesInfoChanged();
 
@@ -110,6 +122,7 @@ private:
     std::vector<Matrix> m_matrices;
     std::vector<Marker> m_markers;
     std::vector<Annotation> m_annotations;
+    std::vector<Peak> m_peaks;
     Region m_region;
     AxesInfo m_axes;
     ObjectId m_lastId = 0;

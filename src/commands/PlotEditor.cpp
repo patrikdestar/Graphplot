@@ -4,6 +4,7 @@
 #include "model/Contour.h"
 
 #include <QUndoStack>
+#include <cmath>
 
 namespace gp {
 
@@ -117,6 +118,73 @@ void PlotEditor::scaleContourLevels(const QList<ObjectId>& ids, double factor)
     if (macro) m_stack->endMacro();
 }
 
+ObjectId PlotEditor::addPeak(Peak p)
+{
+    if (p.id == kInvalidId) p.id = m_model->allocateId();
+    const ObjectId id = p.id;
+    m_stack->push(new AddPeakCommand(m_model, std::move(p)));
+    return id;
+}
+
+QList<ObjectId> PlotEditor::addPeaks(std::vector<Peak> peaks, const QString& text)
+{
+    QList<ObjectId> ids;
+    if (peaks.empty()) return ids;
+    m_stack->beginMacro(text);
+    for (Peak& p : peaks) ids.push_back(addPeak(std::move(p)));
+    m_stack->endMacro();
+    return ids;
+}
+
+QList<ObjectId> PlotEditor::pickPeaks(ObjectId matrixId, PeakPickOptions opt)
+{
+    const Matrix* m = m_model->matrix(matrixId);
+    if (!m) return {};
+    if (!(opt.threshold > 0)) {
+        opt.threshold = m->style.baseLevel;
+        if (opt.negative && !m->style.showNegative) opt.negative = false;
+    }
+    std::vector<Peak> found = gp::pickPeaks(*m, opt);
+    // Skip peaks that duplicate existing ones.
+    const double dx = std::abs(m->x1 - m->x0) / std::max(1, m->nx - 1);
+    const double dy = std::abs(m->y1 - m->y0) / std::max(1, m->ny - 1);
+    const double r = std::max(1, opt.minDistance);
+    std::vector<Peak> fresh;
+    for (Peak& p : found) {
+        bool dup = false;
+        for (const Peak& e : m_model->peaks())
+            if (std::abs(e.x - p.x) < r * dx && std::abs(e.y - p.y) < r * dy) {
+                dup = true;
+                break;
+            }
+        if (!dup) fresh.push_back(std::move(p));
+    }
+    return addPeaks(std::move(fresh), "Pick peaks");
+}
+
+void PlotEditor::removePeak(ObjectId id)
+{
+    if (m_model->peak(id)) m_stack->push(new RemovePeakCommand(m_model, id));
+}
+
+void PlotEditor::removePeaks(const QList<ObjectId>& ids, const QString& text)
+{
+    if (ids.isEmpty()) return;
+    m_stack->beginMacro(text);
+    for (ObjectId id : ids) removePeak(id);
+    m_stack->endMacro();
+}
+
+void PlotEditor::updatePeak(const Peak& after, std::optional<Peak> before, bool mergeable,
+                            const QString& text)
+{
+    const Peak* cur = m_model->peak(after.id);
+    if (!cur) return;
+    const Peak b = before.value_or(*cur);
+    if (b == after) return;
+    m_stack->push(new EditPeakCommand(m_model, b, after, text, mergeable));
+}
+
 ObjectId PlotEditor::addMarker(Marker m)
 {
     if (m.id == kInvalidId) m.id = m_model->allocateId();
@@ -190,6 +258,7 @@ void PlotEditor::removeObject(const ObjectRef& ref)
     case ObjectKind::Annotation: removeAnnotation(ref.id); break;
     case ObjectKind::Region: clearRegion(); break;
     case ObjectKind::Matrix: removeMatrix(ref.id); break;
+    case ObjectKind::Peak: removePeak(ref.id); break;
     case ObjectKind::None: break;
     }
 }

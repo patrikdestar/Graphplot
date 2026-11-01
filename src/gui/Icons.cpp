@@ -125,6 +125,21 @@ void draw(QPainter& p, Kind kind)
         p.drawLine(QPointF(17, 17), QPointF(20, 20));
         p.drawLine(QPointF(23, 17), QPointF(20, 20));
         break;
+    case Kind::Peak: {
+        // A contour blob with a pick cross and a label.
+        p.setPen(QPen(kAccent, 1.3));
+        p.drawEllipse(QPointF(10, 14), 6, 5);
+        p.drawEllipse(QPointF(10, 14), 3, 2.4);
+        p.setPen(QPen(kInk, 1.8, Qt::SolidLine, Qt::FlatCap));
+        p.drawLine(QPointF(4, 14), QPointF(16, 14));
+        p.drawLine(QPointF(10, 8), QPointF(10, 20));
+        QFont f;
+        f.setPixelSize(8);
+        f.setBold(true);
+        p.setFont(f);
+        p.drawText(QRectF(14, 1, 10, 9), Qt::AlignCenter, "A");
+        break;
+    }
     case Kind::Export:
         p.drawRect(QRectF(4, 10, 16, 10));
         p.drawLine(QPointF(12, 3), QPointF(12, 15));

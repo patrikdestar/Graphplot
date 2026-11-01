@@ -233,6 +233,46 @@ class PlotterTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.fig.open_bruker("/nonexistent")
 
+    def test_nmr_cross_peak_workflow(self):
+        """Open a COSY, pick off-diagonal cross peaks, assign and export them."""
+        import importlib.util
+        here = os.path.dirname(os.path.abspath(__file__))
+        spec = importlib.util.spec_from_file_location(
+            "make_sample_nmr", os.path.join(here, "..", "examples", "make_sample_nmr.py"))
+        gen = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gen)
+        with tempfile.TemporaryDirectory() as d:
+            import contextlib
+            import io
+            with contextlib.redirect_stdout(io.StringIO()):
+                gen.main(d)
+            c = self.fig.open_bruker(os.path.join(d, "cosy", "1"))
+            self.assertTrue(self.fig.diagonal)  # homonuclear -> diagonal shown
+            cross = self.fig.pick_peaks(exclude_diagonal=0.1, region="all")
+            expected = {(round(gen.SHIFTS[a], 2), round(gen.SHIFTS[b], 2))
+                        for pair in gen.COUPLED for a, b in (pair, pair[::-1])}
+            found = {(round(p.x, 2), round(p.y, 2)) for p in cross}
+            self.assertEqual(found, expected)
+            self.assertEqual(self.fig.pick_peaks(exclude_diagonal=0.1, region="all"), [])
+            # Assign: label shown on the plot, comment only in the table/CSV.
+            for p in cross:
+                a = min(gen.SHIFTS, key=lambda k: abs(gen.SHIFTS[k] - p.x))
+                b = min(gen.SHIFTS, key=lambda k: abs(gen.SHIFTS[k] - p.y))
+                p.label = f"{a.split()[0]}/{b.split()[0]}"
+                p.comment = f"{a} couples to {b}, 3J"
+            self.assertEqual(len(self.fig.peak_table()), 8)
+            csv = os.path.join(d, "peaks.csv")
+            self.fig.export_peaks(csv)
+            labels = sorted(p.label for p in self.fig.peaks())
+            self.fig.clear_peaks()
+            self.assertEqual(self.fig.peaks(), [])
+            self.fig.import_peaks(csv)
+            self.assertEqual(sorted(p.label for p in self.fig.peaks()), labels)
+            self.assertIn("3J", self.fig.peaks()[0].comment)
+            manual = self.fig.add_peak(1.17, 2.30, label="snap")
+            self.assertAlmostEqual(manual.x, 1.15, places=2)  # snapped to the maximum
+            self.assertGreater(manual.intensity, c.base_level)
+
     def test_savefig(self):
         self.fig.plot(self.x, np.sin(self.x), label="s")
         self.fig.marker(50, label="M")

@@ -34,13 +34,13 @@ from __future__ import annotations
 
 import sys as _sys
 
-from ._plotter import Annotation, Contour, Figure, Line, Marker
+from ._plotter import Annotation, Contour, Figure, Line, Marker, Peak
 from ._plotter import process_events as _process_events
 from ._plotter import _run_until_closed
 
 __all__ = [
     "figure", "show", "pause", "figures", "close_all",
-    "Figure", "Line", "Contour", "Marker", "Annotation",
+    "Figure", "Line", "Contour", "Marker", "Annotation", "Peak",
 ]
 
 _figures: list[Figure] = []

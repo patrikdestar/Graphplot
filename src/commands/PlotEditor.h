@@ -10,6 +10,7 @@
 // commits the change with the before-state captured at drag start.
 #pragma once
 
+#include "model/PeakPicker.h"
 #include "model/PlotModel.h"
 
 #include <QObject>
@@ -65,6 +66,21 @@ public:
     void updateAnnotation(const Annotation& after, std::optional<Annotation> before = std::nullopt,
                           bool mergeable = false, const QString& text = "Edit annotation");
     void previewAnnotation(const Annotation& a) { m_model->updateAnnotation(a); }
+
+    // ---- peaks -----------------------------------------------------------
+    ObjectId addPeak(Peak p);
+    // Adds many peaks as one undo step ("Pick peaks"); returns their ids.
+    QList<ObjectId> addPeaks(std::vector<Peak> peaks, const QString& text = "Pick peaks");
+    void removePeak(ObjectId id);
+    void removePeaks(const QList<ObjectId>& ids, const QString& text = "Delete peaks");
+    void updatePeak(const Peak& after, std::optional<Peak> before = std::nullopt,
+                    bool mergeable = false, const QString& text = "Edit peak");
+    void previewPeak(const Peak& p) { m_model->updatePeak(p); }
+    // Runs automatic peak picking on a 2D dataset and adds the result as one
+    // undo step. threshold <= 0 uses the dataset's lowest contour level (so
+    // "what you see is what gets picked"). Peaks closer than minDistance grid
+    // points to an existing peak are skipped, so picking twice adds nothing.
+    QList<ObjectId> pickPeaks(ObjectId matrixId, PeakPickOptions opt);
 
     // ---- region ----------------------------------------------------------
     void setRegion(const Region& after, std::optional<Region> before = std::nullopt);

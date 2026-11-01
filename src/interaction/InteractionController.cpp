@@ -1,6 +1,8 @@
 #include "InteractionController.h"
 
 #include "commands/PlotEditor.h"
+#include "model/PeakPicker.h"
+#include "render/PeakOverlay.h"
 #include "qcustomplot.h"
 
 #include <QApplication>
@@ -38,6 +40,9 @@ InteractionController::InteractionController(PlotRenderer* renderer, PlotEditor*
     connect(model, &PlotModel::datasetRemoved, this, [this](ObjectId id) {
         if (m_selection == ObjectRef{ObjectKind::Dataset, id}) setSelection({});
     });
+    connect(model, &PlotModel::peakRemoved, this, [this](ObjectId id) {
+        if (m_selection == ObjectRef{ObjectKind::Peak, id}) setSelection({});
+    });
     connect(model, &PlotModel::matrixRemoved, this, [this](ObjectId id) {
         if (m_selection == ObjectRef{ObjectKind::Matrix, id}) setSelection({});
     });
@@ -48,8 +53,9 @@ InteractionController::InteractionController(PlotRenderer* renderer, PlotEditor*
 
 void InteractionController::setMode(InteractionMode mode)
 {
+    // Navigation modes and the (sticky) peak tool are restored after one-shot tools.
     if (mode == InteractionMode::Zoom || mode == InteractionMode::Pan ||
-        mode == InteractionMode::Region)
+        mode == InteractionMode::Region || mode == InteractionMode::AddPeak)
         m_navMode = mode;
     if (mode == m_mode) return;
     m_mode = mode;
@@ -179,6 +185,36 @@ void InteractionController::mousePress(QMouseEvent* e)
 
     // 2) Grabbing existing objects has priority over navigation.
     const ObjectRef hit = m_renderer->hitTestObject(px);
+    if (hit.kind == ObjectKind::Peak) {
+        setSelection(hit);
+        m_dragStartPeak = *model->peak(hit.id);
+        const auto h = m_renderer->peakOverlay()->hitTest(px, 5.0);
+        m_drag = (h.id == hit.id && h.onLabel) ? Drag::PeakLabel : Drag::Peak;
+        return;
+    }
+    // Peak tool: click picks the nearest maximum (Shift: exactly at the cursor).
+    if (inside && m_mode == InteractionMode::AddPeak) {
+        const Matrix* m = m_renderer->matrixAt(m_pressData);
+        Peak p;
+        p.x = m_pressData.x();
+        p.y = m_pressData.y();
+        if (m) {
+            p.matrixId = m->id;
+            p.intensity = sampleMatrix(*m, p.x, p.y);
+            if (!(e->modifiers() & Qt::ShiftModifier)) {
+                // Search radius: ~10 screen pixels expressed in grid points.
+                const double gx = std::abs(m_plot->xAxis->coordToPixel(m->x1) -
+                                           m_plot->xAxis->coordToPixel(m->x0)) / std::max(1, m->nx - 1);
+                const double gy = std::abs(m_plot->yAxis->coordToPixel(m->y1) -
+                                           m_plot->yAxis->coordToPixel(m->y0)) / std::max(1, m->ny - 1);
+                const int radius = std::clamp(int(std::ceil(10.0 / std::max(1e-9, std::min(gx, gy)))), 1, 50);
+                if (auto s = snapToPeak(*m, p.x, p.y, radius)) p = *s;
+            }
+        }
+        const ObjectRef ref{ObjectKind::Peak, m_editor->addPeak(p)};
+        setSelection(ref);
+        return;
+    }
     if (hit.kind == ObjectKind::Marker) {
         setSelection(hit);
         m_dragStartMarker = *model->marker(hit.id);
@@ -303,6 +339,20 @@ void InteractionController::mouseMove(QMouseEvent* e)
         if (model->marker(m.id)) m_editor->previewMarker(m);
         break;
     }
+    case Drag::Peak: {
+        Peak p = m_dragStartPeak;
+        p.x += data.x() - m_pressData.x();
+        p.y += data.y() - m_pressData.y();
+        if (const Matrix* m = m_renderer->matrixAt({p.x, p.y})) p.intensity = sampleMatrix(*m, p.x, p.y);
+        if (model->peak(p.id)) m_editor->previewPeak(p);
+        break;
+    }
+    case Drag::PeakLabel: {
+        Peak p = m_dragStartPeak;
+        p.labelOffset += px - QPointF(m_pressPx);
+        if (model->peak(p.id)) m_editor->previewPeak(p);
+        break;
+    }
     case Drag::Annotation: {
         Annotation a = m_dragStartAnnotation;
         a.x += data.x() - m_pressData.x();
@@ -356,6 +406,14 @@ void InteractionController::mouseRelease(QMouseEvent* e)
         if (m_dragMoved) {
             if (const Marker* m = model->marker(m_dragStartMarker.id))
                 m_editor->updateMarker(*m, m_dragStartMarker, false, "Move marker");
+        }
+        break;
+    case Drag::Peak:
+    case Drag::PeakLabel:
+        if (m_dragMoved) {
+            if (const Peak* p = model->peak(m_dragStartPeak.id))
+                m_editor->updatePeak(*p, m_dragStartPeak, false,
+                                     drag == Drag::Peak ? "Move peak" : "Move peak label");
         }
         break;
     case Drag::Annotation:
@@ -433,6 +491,8 @@ bool InteractionController::key(QKeyEvent* e)
             PlotModel* model = m_editor->model();
             if (m_drag == Drag::Marker && model->marker(m_dragStartMarker.id))
                 m_editor->previewMarker(m_dragStartMarker);
+            else if ((m_drag == Drag::Peak || m_drag == Drag::PeakLabel) && model->peak(m_dragStartPeak.id))
+                m_editor->previewPeak(m_dragStartPeak);
             else if (m_drag == Drag::Annotation && model->annotation(m_dragStartAnnotation.id))
                 m_editor->previewAnnotation(m_dragStartAnnotation);
             else if (m_drag == Drag::RegionCreate || m_drag == Drag::RegionMin ||
@@ -444,6 +504,8 @@ bool InteractionController::key(QKeyEvent* e)
             m_drag = Drag::None;
         } else if (m_mode != m_navMode) {
             setMode(m_navMode);
+        } else if (m_mode == InteractionMode::AddPeak) {
+            setMode(InteractionMode::Zoom);  // leave the sticky peak tool
         } else {
             setSelection({});
         }
@@ -459,6 +521,10 @@ void InteractionController::updateHoverCursor(const QPointF& px)
         m_plot->setCursor(Qt::CrossCursor);
         return;
     }
+    if (m_mode == InteractionMode::AddPeak && !m_renderer->hitTestObject(px).isValid()) {
+        m_plot->setCursor(Qt::CrossCursor);
+        return;
+    }
     const ObjectRef hit = m_renderer->hitTestObject(px);
     if (hit.kind == ObjectKind::Marker) {
         const Marker* m = m_editor->model()->marker(hit.id);
@@ -466,7 +532,7 @@ void InteractionController::updateHoverCursor(const QPointF& px)
                                                                          : Qt::SizeVerCursor);
         return;
     }
-    if (hit.kind == ObjectKind::Annotation) {
+    if (hit.kind == ObjectKind::Annotation || hit.kind == ObjectKind::Peak) {
         m_plot->setCursor(Qt::SizeAllCursor);
         return;
     }

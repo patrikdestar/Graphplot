@@ -22,6 +22,7 @@ enum CommandId {
     CmdEditAnnotation,
     CmdSetRegion,
     CmdEditMatrix,
+    CmdEditPeak,
 };
 
 // ---- Traits -----------------------------------------------------------------
@@ -47,6 +48,17 @@ struct MatrixTraits {
     static void insert(PlotModel& m, const Type& v, int i) { m.insertMatrix(v, i); }
     static std::optional<Type> take(PlotModel& m, ObjectId id) { return m.takeMatrix(id); }
     static void update(PlotModel& m, const Type& v) { m.setMatrixAppearance(v.id, v.name, v.style); }
+};
+
+struct PeakTraits {
+    using Type = Peak;
+    static constexpr const char* kName = "Peak";
+    static constexpr int kEditId = CmdEditPeak;
+    static const Type* get(PlotModel& m, ObjectId id) { return m.peak(id); }
+    static int index(PlotModel& m, ObjectId id) { return m.peakIndex(id); }
+    static void insert(PlotModel& m, const Type& v, int i) { m.insertPeak(v, i); }
+    static std::optional<Type> take(PlotModel& m, ObjectId id) { return m.takePeak(id); }
+    static void update(PlotModel& m, const Type& v) { m.updatePeak(v); }
 };
 
 struct MarkerTraits {
@@ -163,6 +175,9 @@ using EditDatasetCommand = EditCommand<DatasetTraits>;
 using AddMatrixCommand = AddCommand<MatrixTraits>;
 using RemoveMatrixCommand = RemoveCommand<MatrixTraits>;
 using EditMatrixCommand = EditCommand<MatrixTraits>;
+using AddPeakCommand = AddCommand<PeakTraits>;
+using RemovePeakCommand = RemoveCommand<PeakTraits>;
+using EditPeakCommand = EditCommand<PeakTraits>;
 using AddMarkerCommand = AddCommand<MarkerTraits>;
 using RemoveMarkerCommand = RemoveCommand<MarkerTraits>;
 using EditMarkerCommand = EditCommand<MarkerTraits>;

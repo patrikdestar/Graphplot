@@ -16,6 +16,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPainter>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
@@ -129,6 +130,7 @@ PropertiesPanel::PropertiesPanel(PlotEditor* editor, InteractionController* cont
     connect(m_model, &PlotModel::datasetAppearanceChanged, this, changed(ObjectKind::Dataset));
     connect(m_model, &PlotModel::datasetDataChanged, this, changed(ObjectKind::Dataset));
     connect(m_model, &PlotModel::markerChanged, this, changed(ObjectKind::Marker));
+    connect(m_model, &PlotModel::peakChanged, this, changed(ObjectKind::Peak));
     connect(m_model, &PlotModel::annotationChanged, this, changed(ObjectKind::Annotation));
     connect(m_model, &PlotModel::regionChanged, this, [this] {
         rebuildTree();
@@ -250,8 +252,9 @@ void PropertiesPanel::buildUi()
     m_annotationPage = buildAnnotationPage();
     m_regionPage = buildRegionPage();
     m_matrixPage = buildMatrixPage();
+    m_peakPage = buildPeakPage();
     for (QWidget* w : {m_emptyPage, m_datasetPage, m_markerPage, m_annotationPage, m_regionPage,
-                       m_matrixPage})
+                       m_matrixPage, m_peakPage})
         m_stack->addWidget(w);
     layout->addWidget(m_stack);
     setMinimumWidth(250);
@@ -374,6 +377,46 @@ QWidget* PropertiesPanel::buildRegionPage()
     connect(m_rgMax, &QDoubleSpinBox::valueChanged, this, &PropertiesPanel::commitRegion);
     connect(clear, &QPushButton::clicked, this, [this] { m_editor->clearRegion(); });
     return box;
+}
+
+QWidget* PropertiesPanel::buildPeakPage()
+{
+    auto* box = new QGroupBox("Peak");
+    auto* form = new QFormLayout(box);
+    m_pkLabel = new QLineEdit;
+    m_pkLabel->setPlaceholderText("e.g. H3/C5  (shown on the plot)");
+    m_pkX = makeCoordSpin();
+    m_pkY = makeCoordSpin();
+    m_pkIntensity = new QLabel;
+    m_pkComment = new QPlainTextEdit;
+    m_pkComment->setPlaceholderText("Notes (not shown on the plot; exported with the peak list)");
+    m_pkComment->setMinimumHeight(110);
+    form->addRow("Label", m_pkLabel);
+    form->addRow("x", m_pkX);
+    form->addRow("y", m_pkY);
+    form->addRow("Intensity", m_pkIntensity);
+    form->addRow(new QLabel("Comment"));
+    form->addRow(m_pkComment);
+    connect(m_pkLabel, &QLineEdit::editingFinished, this,
+            [this] { commitPeak(false, "Edit peak label"); });
+    connect(m_pkX, &QDoubleSpinBox::valueChanged, this, [this] { commitPeak(true, "Move peak"); });
+    connect(m_pkY, &QDoubleSpinBox::valueChanged, this, [this] { commitPeak(true, "Move peak"); });
+    // Typing merges into one undo step per pause (see kMergeWindowMs).
+    connect(m_pkComment, &QPlainTextEdit::textChanged, this,
+            [this] { commitPeak(true, "Edit peak comment"); });
+    return box;
+}
+
+void PropertiesPanel::commitPeak(bool mergeable, const QString& text)
+{
+    const Peak* cur = m_model->peak(m_current.id);
+    if (m_current.kind != ObjectKind::Peak || !cur) return;
+    Peak p = *cur;
+    p.label = m_pkLabel->text();
+    p.x = m_pkX->value();
+    p.y = m_pkY->value();
+    p.comment = m_pkComment->toPlainText();
+    m_editor->updatePeak(p, std::nullopt, mergeable, text);
 }
 
 QWidget* PropertiesPanel::buildMatrixPage()
@@ -554,7 +597,8 @@ void PropertiesPanel::refreshTreeItem(const ObjectRef& ref)
             item->setToolTip(0, QString("%1 x %2 grid").arg(m->nx).arg(m->ny));
         }
         break;
-    case ObjectKind::None: break;
+    case ObjectKind::None:
+    case ObjectKind::Peak: break;  // peaks are listed in the peak table
     }
     m_updatingTree = wasUpdating;
 }
@@ -567,7 +611,8 @@ void PropertiesPanel::showObject(const ObjectRef& refIn)
         (ref.kind == ObjectKind::Marker && !m_model->marker(ref.id)) ||
         (ref.kind == ObjectKind::Annotation && !m_model->annotation(ref.id)) ||
         (ref.kind == ObjectKind::Region && !m_model->region().active) ||
-        (ref.kind == ObjectKind::Matrix && !m_model->matrix(ref.id)))
+        (ref.kind == ObjectKind::Matrix && !m_model->matrix(ref.id)) ||
+        (ref.kind == ObjectKind::Peak && !m_model->peak(ref.id)))
         ref = {};
     m_current = ref;
 
@@ -586,6 +631,7 @@ void PropertiesPanel::showObject(const ObjectRef& refIn)
     case ObjectKind::Annotation: m_stack->setCurrentWidget(m_annotationPage); break;
     case ObjectKind::Region: m_stack->setCurrentWidget(m_regionPage); break;
     case ObjectKind::Matrix: m_stack->setCurrentWidget(m_matrixPage); break;
+    case ObjectKind::Peak: m_stack->setCurrentWidget(m_peakPage); break;
     case ObjectKind::None: m_stack->setCurrentWidget(m_emptyPage); break;
     }
     refreshCurrentPage();
@@ -598,6 +644,7 @@ void PropertiesPanel::beginEdit(const ObjectRef& ref)
                        : ref.kind == ObjectKind::Marker   ? m_mkLabel
                        : ref.kind == ObjectKind::Dataset  ? m_dsName
                        : ref.kind == ObjectKind::Matrix   ? m_mxBase
+                       : ref.kind == ObjectKind::Peak     ? m_pkLabel
                                                           : nullptr;
     if (field) {
         field->setFocus(Qt::OtherFocusReason);
@@ -665,6 +712,19 @@ void PropertiesPanel::refreshCurrentPage()
         m_rgMin->setValue(r.xmin);
         m_rgMax->setValue(r.xmax);
         m_rgWidth->setText(fmt(r.xmax - r.xmin));
+        break;
+    }
+    case ObjectKind::Peak: {
+        const Peak* p = m_model->peak(m_current.id);
+        if (!p) return;
+        const QSignalBlocker b1(m_pkLabel), b2(m_pkX), b3(m_pkY), b4(m_pkComment);
+        if (!m_pkLabel->hasFocus()) m_pkLabel->setText(p->label);
+        m_pkX->setValue(p->x);
+        m_pkY->setValue(p->y);
+        m_pkIntensity->setText(QString::number(p->intensity, 'g', 6));
+        if (!m_pkComment->hasFocus() || m_pkComment->toPlainText() != p->comment) {
+            if (m_pkComment->toPlainText() != p->comment) m_pkComment->setPlainText(p->comment);
+        }
         break;
     }
     case ObjectKind::Matrix: {

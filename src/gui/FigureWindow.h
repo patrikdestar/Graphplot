@@ -26,6 +26,7 @@ class PlotModel;
 class PlotEditor;
 class PlotRenderer;
 class PropertiesPanel;
+class PeakTable;
 
 class FigureWindow : public QMainWindow {
     Q_OBJECT
@@ -45,6 +46,8 @@ public:
     // dir) with ppm axes, NMR axis orientation and nucleus axis labels.
     // Returns the new 2D dataset id (kInvalidId on error).
     ObjectId openBruker(const QString& path, QString* error = nullptr);
+    PeakTable* peakTable() const { return m_peakTable; }
+    void showPeakTable();
     bool exportTo(const QString& fileName, int width = 0, int height = 0, double scale = 2.0,
                   QString* error = nullptr);
 
@@ -70,6 +73,8 @@ private:
     InteractionController* m_controller;
     PropertiesPanel* m_panel;
     QDockWidget* m_dock;
+    PeakTable* m_peakTable = nullptr;
+    QDockWidget* m_peakDock = nullptr;
     QActionGroup* m_modeGroup = nullptr;
     QComboBox* m_zoomAxes = nullptr;
     QLabel* m_cursorLabel = nullptr;

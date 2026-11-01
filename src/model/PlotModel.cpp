@@ -227,6 +227,38 @@ bool PlotModel::updateAnnotation(const Annotation& a)
     return true;
 }
 
+// ---- Peaks ----------------------------------------------------------------
+
+const Peak* PlotModel::peak(ObjectId id) const { return find(m_peaks, id); }
+int PlotModel::peakIndex(ObjectId id) const { return indexOf(m_peaks, id); }
+
+ObjectId PlotModel::insertPeak(Peak p, int index)
+{
+    if (p.id == kInvalidId) p.id = newId();
+    else m_lastId = std::max(m_lastId, p.id);
+    const ObjectId id = p.id;
+    insertAt(m_peaks, std::move(p), index);
+    emit peakAdded(id);
+    return id;
+}
+
+std::optional<Peak> PlotModel::takePeak(ObjectId id)
+{
+    auto p = take(m_peaks, id);
+    if (p) emit peakRemoved(id);
+    return p;
+}
+
+bool PlotModel::updatePeak(const Peak& p)
+{
+    const int i = peakIndex(p.id);
+    if (i < 0) return false;
+    if (m_peaks[i] == p) return true;
+    m_peaks[i] = p;
+    emit peakChanged(p.id);
+    return true;
+}
+
 // ---- Region / axes ----------------------------------------------------------
 
 void PlotModel::setRegion(const Region& rIn)
@@ -277,6 +309,7 @@ bool PlotModel::dataBounds(double& xmin, double& xmax, double& ymin, double& yma
 
 void PlotModel::clear()
 {
+    while (!m_peaks.empty()) takePeak(m_peaks.back().id);
     while (!m_annotations.empty()) takeAnnotation(m_annotations.back().id);
     while (!m_markers.empty()) takeMarker(m_markers.back().id);
     while (!m_datasets.empty()) takeDataset(m_datasets.back().id);

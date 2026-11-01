@@ -1,6 +1,7 @@
 #include "PlotRenderer.h"
 
 #include "ContourPlottable.h"
+#include "PeakOverlay.h"
 #include "qcustomplot.h"
 
 #include <algorithm>
@@ -96,6 +97,12 @@ PlotRenderer::PlotRenderer(PlotModel* model, QCustomPlot* plot, QObject* parent)
         applyMatrixData(id);
         replot();
     });
+    for (auto sig : {&PlotModel::peakAdded, &PlotModel::peakRemoved, &PlotModel::peakChanged})
+        connect(m_model, sig, this, [this](ObjectId id) {
+            if (m_highlight.kind == ObjectKind::Peak && m_highlight.id == id && !m_model->peak(id))
+                m_highlight = {};
+            replotObjectLayers();
+        });
     connect(m_model, &PlotModel::markerAdded, this, &PlotRenderer::onMarkerAdded);
     connect(m_model, &PlotModel::markerRemoved, this, &PlotRenderer::onMarkerRemoved);
     connect(m_model, &PlotModel::markerChanged, this, [this](ObjectId id) {
@@ -208,6 +215,9 @@ void PlotRenderer::setupAppearance()
     m_region.rect->topLeft->setTypeY(QCPItemPosition::ptAxisRectRatio);
     m_region.rect->bottomRight->setTypeY(QCPItemPosition::ptAxisRectRatio);
     m_region.rect->setVisible(false);
+    m_peaks = new PeakOverlay(p, p->xAxis, p->yAxis, m_model);
+    m_peaks->setLayer(m_objectLayer);
+
     // Diagonal y = x (plot coordinates on both axes), below the curves.
     m_diagonal = new QCPItemStraightLine(p);
     m_diagonal->setLayer(m_regionLayer);
@@ -336,6 +346,11 @@ ObjectRef PlotRenderer::hitTestObject(const QPointF& px, double tol) const
             if (d >= 0 && d <= textTol) return {ObjectKind::Annotation, it->id};
         }
     }
+    // Peaks (crosses and their labels) come next.
+    if (m_peaks) {
+        const PeakOverlay::Hit h = m_peaks->hitTest(px, tol);
+        if (h.id != kInvalidId) return {ObjectKind::Peak, h.id};
+    }
     if (!isInsidePlotArea(px)) return {};
     const auto& markers = m_model->markers();
     ObjectRef best;
@@ -383,12 +398,14 @@ void PlotRenderer::setHighlight(const ObjectRef& ref)
         if (r.kind == ObjectKind::Marker) applyMarker(r.id);
         else if (r.kind == ObjectKind::Annotation) applyAnnotation(r.id);
     }
+    m_peaks->setHighlight(ref.kind == ObjectKind::Peak ? ref.id : kInvalidId);
     replotObjectLayers();
 }
 
 void PlotRenderer::setExportMode(bool on)
 {
     m_exportMode = on;
+    m_peaks->setExportMode(on);
     if (m_highlight.kind == ObjectKind::Marker) applyMarker(m_highlight.id);
     else if (m_highlight.kind == ObjectKind::Annotation) applyAnnotation(m_highlight.id);
 }
@@ -494,6 +511,18 @@ void PlotRenderer::syncLegend()
 ContourPlottable* PlotRenderer::contourPlottable(ObjectId id) const
 {
     return m_matrices.value(id).contour;
+}
+
+const Matrix* PlotRenderer::matrixAt(const QPointF& d) const
+{
+    const auto& ms = m_model->matrices();
+    for (auto it = ms.rbegin(); it != ms.rend(); ++it) {
+        if (!it->style.visible) continue;
+        if (d.x() >= std::min(it->x0, it->x1) && d.x() <= std::max(it->x0, it->x1) &&
+            d.y() >= std::min(it->y0, it->y1) && d.y() <= std::max(it->y0, it->y1))
+            return &*it;
+    }
+    return nullptr;
 }
 
 QList<ObjectId> PlotRenderer::levelTargets() const
@@ -753,6 +782,10 @@ void PlotRenderer::applyAxesInfo()
     m_plot->yAxis->setRangeReversed(info.yReversed);
     m_plot->yAxis2->setRangeReversed(info.yReversed);
     m_diagonal->setVisible(info.showDiagonal);
+    PeakAppearance pa = m_peaks->appearance();
+    pa.showLabels = info.showPeakLabels;
+    m_peaks->setAppearance(pa);
+    replotObjectLayers();
 
     if (!info.title.isEmpty()) {
         if (!m_title) {

@@ -4,6 +4,7 @@
 #pragma once
 
 #include <QColor>
+#include <QPointF>
 #include <QString>
 #include <QVector>
 #include <QtGlobal>
@@ -18,7 +19,7 @@ enum class ScatterShape { None, Circle, Square, Triangle, Cross, Plus, Diamond }
 enum class Orientation { Vertical, Horizontal };
 
 // Kind of an interactive plot object; used by selection and hit-testing.
-enum class ObjectKind { None, Dataset, Marker, Annotation, Region, Matrix };
+enum class ObjectKind { None, Dataset, Marker, Annotation, Region, Matrix, Peak };
 
 struct ObjectRef {
     ObjectKind kind = ObjectKind::None;
@@ -96,6 +97,21 @@ struct Annotation {
     bool operator==(const Annotation&) const = default;
 };
 
+// A picked peak (typically a cross peak in a 2D spectrum). The label is
+// drawn next to the peak; the comment is free text that is only shown in
+// the peak table / properties panel and exported with the peak list.
+struct Peak {
+    ObjectId id = kInvalidId;
+    ObjectId matrixId = kInvalidId;  // 2D dataset it was picked on (may be invalid)
+    double x = 0.0;                   // data coordinates (ppm)
+    double y = 0.0;
+    double intensity = 0.0;
+    QString label;
+    QString comment;
+    QPointF labelOffset = QPointF(6, -6);  // label position relative to the peak, pixels
+    bool operator==(const Peak&) const = default;
+};
+
 // Region selected along the X axis, in data coordinates.
 struct Region {
     bool active = false;
@@ -113,6 +129,7 @@ struct AxesInfo {
     bool xReversed = false;     // high values on the left (NMR ppm convention)
     bool yReversed = false;     // high values at the bottom
     bool showDiagonal = false;  // dashed y = x line (homonuclear 2D spectra)
+    bool showPeakLabels = true;
     bool operator==(const AxesInfo&) const = default;
 };
 

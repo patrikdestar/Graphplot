@@ -7,6 +7,8 @@
 #include "qcustomplot.h"
 #include "model/BrukerReader.h"
 #include "model/Contour.h"
+#include "model/PeakPicker.h"
+#include "render/PeakOverlay.h"
 #include "render/ContourPlottable.h"
 #include "render/PlotRenderer.h"
 
@@ -578,6 +580,133 @@ private slots:
         w->controller()->setMode(InteractionMode::Pan);
         drag(w->plot(), a, b);
         QVERIFY(std::abs(w->renderer()->pixelToData(b).x() - before) < 0.02);
+    }
+
+    // ---- peaks ------------------------------------------------------------------------------
+    // Gaussian peaks on a 201x201 grid over [0,10]^2 at off-grid positions.
+    static Matrix spots()
+    {
+        Matrix m;
+        m.nx = m.ny = 201;
+        m.x0 = m.y0 = 0;
+        m.x1 = m.y1 = 10;
+        m.z.resize(201 * 201);
+        struct P { double x, y, a; };
+        const P ps[] = {{2.013, 2.013, 1.0}, {5.0, 5.0, 1.0}, {2.017, 5.031, 0.3},
+                        {5.031, 2.017, 0.3}, {7.5, 3.0, -0.4}, {8.0, 8.2, 0.05}};
+        for (int iy = 0; iy < 201; ++iy)
+            for (int ix = 0; ix < 201; ++ix) {
+                const double x = ix * 0.05, y = iy * 0.05;
+                double z = 0;
+                for (const P& p : ps)
+                    z += p.a * std::exp(-((x - p.x) * (x - p.x) + (y - p.y) * (y - p.y)) / (2 * 0.15 * 0.15));
+                m.z[iy * 201 + ix] = z;
+            }
+        return m;
+    }
+
+    void pickPeaksBasics()
+    {
+        const Matrix m = spots();
+        PeakPickOptions o;
+        o.threshold = 0.1;
+        auto all = pickPeaks(m, o);
+        QCOMPARE(int(all.size()), 4);  // the 0.05 peak is below threshold, negative off
+        // Strongest first; sub-grid interpolation recovers off-grid positions.
+        bool found = false;
+        for (const Peak& p : all)
+            if (std::abs(p.x - 2.017) < 0.005 && std::abs(p.y - 5.031) < 0.005) found = true;
+        QVERIFY(found);
+
+        o.diagonalExclusion = 0.5;  // only off-diagonal cross peaks
+        auto cross = pickPeaks(m, o);
+        QCOMPARE(int(cross.size()), 2);
+        for (const Peak& p : cross) QVERIFY(std::abs(p.x - p.y) > 0.5);
+
+        o.negative = true;
+        o.diagonalExclusion = 0;
+        auto withNeg = pickPeaks(m, o);
+        QCOMPARE(int(withNeg.size()), 5);
+        QVERIFY(std::any_of(withNeg.begin(), withNeg.end(), [](const Peak& p) { return p.intensity < 0; }));
+
+        o.restrictToRect = true;  // only the lower-left quadrant
+        o.xmin = 0; o.xmax = 4; o.ymin = 0; o.ymax = 4;
+        QCOMPARE(int(pickPeaks(m, o).size()), 1);
+
+        const auto s = snapToPeak(m, 4.8, 5.2, 8);
+        QVERIFY(s && std::abs(s->x - 5.0) < 0.01 && std::abs(s->y - 5.0) < 0.01);
+    }
+
+    void pickPeaksUndoAndNoDuplicates()
+    {
+        PlotModel model;
+        PlotEditor ed(&model);
+        Matrix m = spots();
+        const ObjectId id = ed.addMatrix(m);
+        ContourStyle st = model.matrix(id)->style;
+        st.baseLevel = 0.1;  // threshold defaults to the lowest contour
+        ed.setMatrixAppearance(id, "spots", st);
+        PeakPickOptions o;
+        QCOMPARE(int(ed.pickPeaks(id, o).size()), 4);
+        QCOMPARE(int(ed.pickPeaks(id, o).size()), 0);  // second pick: no duplicates
+        QCOMPARE(int(model.peaks().size()), 4);
+        ed.undo();  // the empty pick produced no command; this undoes the first pick
+        QCOMPARE(int(model.peaks().size()), 0);
+        ed.redo();
+        QCOMPARE(int(model.peaks().size()), 4);
+    }
+
+    void peakToolSnapsAndLabelDrags()
+    {
+        auto w = makeWindow();
+        w->editor()->addMatrix(spots());
+        w->renderer()->setViewRange({0, 10, 0, 10});
+        w->plot()->replot();
+        w->controller()->setMode(InteractionMode::AddPeak);
+        QTest::mouseClick(w->plot(), Qt::LeftButton, {}, px(w.get(), 5.06, 4.95));
+        QCOMPARE(int(w->model()->peaks().size()), 1);
+        Peak p = w->model()->peaks()[0];
+        QVERIFY(std::abs(p.x - 5.0) < 0.01 && std::abs(p.y - 5.0) < 0.01);  // snapped
+        QCOMPARE(w->controller()->mode(), InteractionMode::AddPeak);           // sticky tool
+        // Shift+click: exactly at the cursor.
+        QTest::mouseClick(w->plot(), Qt::LeftButton, Qt::ShiftModifier, px(w.get(), 6.5, 6.5));
+        QVERIFY(std::abs(w->model()->peaks()[1].x - 6.5) < 0.05);
+
+        // Label: set text, then drag the label (not the peak).
+        p.label = "H3/C5";
+        w->editor()->updatePeak(p);
+        w->plot()->replot();
+        const QRectF lr = w->renderer()->peakOverlay()->labelRect(*w->model()->peak(p.id));
+        drag(w->plot(), lr.center().toPoint(), lr.center().toPoint() + QPoint(40, -30));
+        const Peak* moved = w->model()->peak(p.id);
+        QCOMPARE(moved->x, p.x);  // the peak itself did not move
+        QVERIFY(std::abs(moved->labelOffset.x() - (p.labelOffset.x() + 40)) < 1.5);
+        w->editor()->undo();
+        QCOMPARE(w->model()->peak(p.id)->labelOffset, p.labelOffset);
+
+        // Escape leaves the sticky peak tool.
+        QTest::keyClick(w->plot(), Qt::Key_Escape);
+        QTest::keyClick(w->plot(), Qt::Key_Escape);
+        QVERIFY(w->controller()->mode() != InteractionMode::AddPeak);
+    }
+
+    void peakCsvRoundTrip()
+    {
+        std::vector<Peak> ps(2);
+        ps[0].x = 1.5; ps[0].y = 2.25; ps[0].intensity = 1e6;
+        ps[0].label = "H3/C5";
+        ps[0].comment = "Multiplet, J = 7.2 Hz, \"tentative\"\nsee HMBC";
+        ps[1].x = -0.5; ps[1].y = 3; ps[1].label = "a,b";
+        QTemporaryDir dir;
+        const QString fn = dir.filePath("p.csv");
+        QVERIFY(writePeakCsv(fn, ps, "F2 (ppm)", "F1 (ppm)"));
+        QString err;
+        const auto back = readPeakCsv(fn, &err);
+        QVERIFY2(err.isEmpty(), qPrintable(err));
+        QCOMPARE(int(back.size()), 2);
+        QCOMPARE(back[0].comment, ps[0].comment);
+        QCOMPARE(back[1].label, QString("a,b"));
+        QCOMPARE(back[0].intensity, 1e6);
     }
 
     // ---- data loading -----------------------------------------------------------------------
