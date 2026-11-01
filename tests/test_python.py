@@ -611,6 +611,8 @@ class PlotterTests(unittest.TestCase):
         f.undo()  # set_errors is undoable
         self.assertEqual(list(line.yerr[0]), [0.5] * 4)
         self.assertEqual(f.plot([1, 2], [1, 2], label=3).label, "3")
+        with self.assertRaises(ValueError):
+            f.plot([1, 2], [1, 2], yerr=[0.1, -0.1])
         f.contour(np.ones((3, 500)), x=np.linspace(0, 1, 500, dtype=np.float32))
         # A figure that was never shown survives show(block=False).
         g = plotter.figure()

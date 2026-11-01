@@ -98,22 +98,27 @@ py::array_t<double> toNumpy(const QVector<double>& v)
 }
 
 // Error specification: None, scalar, length-n array, or (2, n) array / pair (low, high).
+// Negative sizes are rejected like in matplotlib (NaN is allowed: no bar).
 std::pair<QVector<double>, QVector<double>> toErrors(const py::object& obj, qsizetype n, const char* what)
 {
+    auto checked = [what](double v) {
+        if (v < 0) throw py::value_error(std::string(what) + " must not contain negative values");
+        return v;
+    };
     if (obj.is_none()) return {};
     if (py::isinstance<py::float_>(obj) || py::isinstance<py::int_>(obj)) {
-        QVector<double> v(n, std::abs(obj.cast<double>()));
+        QVector<double> v(n, checked(obj.cast<double>()));
         return {v, v};
     }
     auto arr = py::array_t<double, py::array::c_style | py::array::forcecast>::ensure(obj);
     if (!arr) throw py::type_error(std::string(what) + " must be a number or an array");
     if (arr.ndim() == 0) {  // numpy scalar (np.float32(0.1), np.int64(2), ...)
-        QVector<double> v(n, std::abs(*arr.data()));
+        QVector<double> v(n, checked(*arr.data()));
         return {v, v};
     }
     auto copy = [&](const double* p) {
         QVector<double> v(n);
-        for (qsizetype i = 0; i < n; ++i) v[i] = std::abs(p[i]);
+        for (qsizetype i = 0; i < n; ++i) v[i] = checked(p[i]);
         return v;
     };
     if (arr.ndim() == 1 && arr.size() == n) {
