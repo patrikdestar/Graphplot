@@ -1308,6 +1308,30 @@ class PlotterTests(unittest.TestCase):
         self.assertEqual(ax.get_ylim(), (10.0, 100000.0))
         plt.close("all")
 
+    def test_round12_user_fixes(self):
+        import plotter.pyplot as plt
+        x = np.linspace(0, 10, 50)
+        fig, ax = plt.subplots()
+        ax.plot(x, x)
+        t = ax.twinx()
+        t.plot(x * 3, x)
+        self.assertEqual(ax.get_xlim(), (0.0, 30.0))  # twin data widens the shared x
+        fig, axs = plt.subplots(2, 1)
+        axs[0].set_ylabel("ya")
+        fig.supylabel("SY")
+        fig.supxlabel("SX")
+        self.assertEqual(axs[0].get_ylabel(), "ya")  # panel labels stay
+        self.assertEqual(fig._fig.supylabel, "SY")
+        plt.close("all")
+        f = plotter.figure()
+        line = f.plot(x, x, label="")
+        self.assertFalse(line.in_legend)
+        f.fill_between(x, 1, 2)  # scalar y1
+        g = plotter.figure()
+        c = g.contour(np.random.rand(10, 10), x=(0, 1), y=(0, 1), image=True)
+        c.set_data(np.random.rand(10, 10), x=(10, 20), y=(10, 20))
+        self.assertGreater(g.xlim()[0], 9)  # re-fitted to the new grid
+
     def test_round6_correctness(self):
         import plotter.pyplot as plt
         f = self.fig

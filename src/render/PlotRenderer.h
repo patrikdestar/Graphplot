@@ -141,7 +141,8 @@ public:
     }
     void applyLegendLoc(const Style& st);
     void placeLegendBest();
-    void resetFollowIfEmpty();  // legend.loc 'best': the corner over the fewest data points
+    void resetFollowIfEmpty();
+    bool measureTwinMargin();  // twin: right-axis width into the host padding; true if changed  // legend.loc 'best': the corner over the fewest data points
     // Draw the region also in exports (default: no, it is a selection aid).
     void setRegionInExports(bool on) { m_regionInExports = on; }
 
@@ -229,6 +230,9 @@ private:
     QCPLayer* m_regionLayer = nullptr;
     QCPLayer* m_objectLayer = nullptr;
     HeaderElement* m_header = nullptr;
+    QCPAbstractItem* m_supX = nullptr;  // figure-wide axis labels (primary panel)
+    QCPAbstractItem* m_supY = nullptr;
+    void applyFigureMargins(const Style& st);
     RichAxisLabels* m_axisLabels = nullptr;
     RichTextItem* m_insideLabel = nullptr;
     QCPItemStraightLine* m_diagonal = nullptr;

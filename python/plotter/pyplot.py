@@ -1261,19 +1261,13 @@ class _PltFigure:
         return list(self.axes)
 
     def supxlabel(self, s, **_):
-        """x label shared by the panels: drawn on the bottom row."""
-        cells = [a for a in self.axes if not hasattr(a, "_twin_of")]
-        bottom = [a for a in cells if hasattr(a, "_grid_pos")
-                  and a._grid_pos[2] // a._grid_pos[1] == a._grid_pos[0] - 1]
-        for a in bottom or cells[-1:]:
-            a.set_xlabel(s)
+        """x label shared by the panels: one label under the bottom row (centred
+        on the figure); the panels' own labels stay."""
+        self._fig.supxlabel = str(s)
 
     def supylabel(self, s, **_):
-        """y label shared by the panels: drawn on the left column."""
-        cells = [a for a in self.axes if not hasattr(a, "_twin_of")]
-        left = [a for a in cells if hasattr(a, "_grid_pos") and a._grid_pos[2] % a._grid_pos[1] == 0]
-        for a in left or cells[:1]:
-            a.set_ylabel(s)
+        """y label shared by the panels: one label left of the left column."""
+        self._fig.supylabel = str(s)
 
     @property
     def canvas(self):

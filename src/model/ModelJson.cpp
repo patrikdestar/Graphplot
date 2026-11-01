@@ -289,7 +289,7 @@ QJsonObject axesToJson(const AxesInfo& a)
             {"legend", a.legendVisible}, {"grid", a.gridVisible},  {"xReversed", a.xReversed},
             {"yReversed", a.yReversed}, {"diagonal", a.showDiagonal}, {"peakLabels", a.showPeakLabels},
             {"xLog", a.xLog},         {"yLog", a.yLog}, {"xTime", a.xTime},
-            {"legendLoc", a.legendLoc}, {"legendWithTwin", a.legendWithTwin}, {"xTickRotation", a.xTickRotation},
+            {"legendLoc", a.legendLoc}, {"supXLabel", a.supXLabel}, {"supYLabel", a.supYLabel}, {"legendWithTwin", a.legendWithTwin}, {"xTickRotation", a.xTickRotation},
             {"yTickRotation", a.yTickRotation}};
 }
 
@@ -326,6 +326,8 @@ AxesInfo axesFromJson(const QJsonObject& o)
     a.xLog = o["xLog"].toBool();
     a.xTime = o["xTime"].toBool();
     a.legendLoc = o["legendLoc"].toString();
+    a.supXLabel = o["supXLabel"].toString();
+    a.supYLabel = o["supYLabel"].toString();
     a.legendWithTwin = o["legendWithTwin"].toBool();
     a.xTickRotation = std::clamp(o["xTickRotation"].toDouble(), -90.0, 90.0);
     a.yTickRotation = std::clamp(o["yTickRotation"].toDouble(), -90.0, 90.0);

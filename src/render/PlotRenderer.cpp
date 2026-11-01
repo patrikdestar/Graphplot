@@ -75,6 +75,41 @@ public:
     }
 };
 
+// A figure-wide axis label (supxlabel / supylabel), drawn in the space the
+// figure layout reserves below / left of all panels; the y label is rotated.
+class FigureLabelItem : public QCPAbstractItem {
+public:
+    FigureLabelItem(QCustomPlot* plot, bool vertical) : QCPAbstractItem(plot), m_vertical(vertical)
+    {
+        setClipToAxisRect(false);
+        setSelectable(false);
+    }
+    QString text;
+    QFont font;
+    QColor color;
+    QPointF centre;
+    double selectTest(const QPointF&, bool, QVariant*) const override { return -1; }
+    double thickness() const { return text.isEmpty() ? 0 : QFontMetricsF(font).height() + 6; }
+
+protected:
+    void draw(QCPPainter* painter) override
+    {
+        if (text.isEmpty()) return;
+        painter->save();
+        painter->setFont(font);
+        painter->setPen(color);
+        painter->translate(centre);
+        if (m_vertical) painter->rotate(-90);
+        const QFontMetricsF fm(font);
+        const double w = fm.horizontalAdvance(text) + 4, h = fm.height();
+        painter->drawText(QRectF(-w / 2, -h / 2, w, h), Qt::AlignCenter, text);
+        painter->restore();
+    }
+
+private:
+    bool m_vertical;
+};
+
 // Annotation arrow that starts at the edge of its label's box (plus a small
 // gap) instead of at the text anchor, so the shaft never crosses the text.
 class TextArrow : public QCPItemLine {
@@ -243,16 +278,37 @@ PlotRenderer::PlotRenderer(PlotModel* model, QCustomPlot* plot, QCPAxisRect* rec
         m_rect->setOuterRect(m_twinHost->m_rect->rect());
         m_rect->update(QCPLayoutElement::upPreparation);  // tick positions and labels
         m_rect->update(QCPLayoutElement::upLayout);       // its legend and axes
+        // Exports lay out without a replot (no beforeReplot): measure the right
+        // axis now and, if the host needs another margin, lay out again.
+        if (measureTwinMargin()) {
+            QCPLayoutGrid* layout = m_plot->plotLayout();
+            layout->update(QCPLayoutElement::upPreparation);
+            layout->update(QCPLayoutElement::upMargins);
+            layout->update(QCPLayoutElement::upLayout);
+            m_rect->setOuterRect(m_twinHost->m_rect->rect());
+            m_rect->update(QCPLayoutElement::upPreparation);
+            m_rect->update(QCPLayoutElement::upLayout);
+            if (m_twinHost->m_legendBest) m_twinHost->placeLegendBest();
+        }
         if (m_legendBest) placeLegendBest();              // after the host's legend
     });
     connect(m_plot, &QCustomPlot::beforeReplot, this, &PlotRenderer::updateTwinMargin);
     applyStyle();
     applyAxesInfo();
+    // Copying the host's x range above is not a user limit: the shared x
+    // follows the data as the host's does, the twin's own y starts fresh.
+    m_followX = host->m_followX;
+    m_followY = true;
 }
 
 void PlotRenderer::updateTwinMargin()
 {
-    if (!m_twinHost || !m_panelVisible) return;
+    if (measureTwinMargin()) m_plot->replot(QCustomPlot::rpQueuedReplot);
+}
+
+bool PlotRenderer::measureTwinMargin()
+{
+    if (!m_twinHost || !m_panelVisible) return false;
     // Tick labels and label of the right axis need room in the host's right margin.
     // Width of the right axis: outward ticks, tick labels and the axis label.
     const QFontMetrics fm(m_y->tickLabelFont());
@@ -261,11 +317,10 @@ void PlotRenderer::updateTwinMargin()
     if (labels == 0) labels = fm.horizontalAdvance("0.000");  // before the first layout
     const int need = std::max(0, m_y->tickLengthOut()) + m_y->tickLabelPadding() + labels + 6 +
                      int(std::ceil(m_axisLabels->ySize().height()));
-    if (need != m_twinHost->m_twinMargin) {
-        m_twinHost->m_twinMargin = need;
-        m_twinHost->updateRightPadding();
-        m_plot->replot(QCustomPlot::rpQueuedReplot);
-    }
+    if (need == m_twinHost->m_twinMargin) return false;
+    m_twinHost->m_twinMargin = need;
+    m_twinHost->updateRightPadding();
+    return true;
 }
 
 void PlotRenderer::updateRightPadding()
@@ -310,6 +365,7 @@ PlotRenderer::PlotRenderer(PlotModel* model, QCustomPlot* plot, QCPAxisRect* rec
     });
     connect(m_model, &PlotModel::matrixDataChanged, this, [this](ObjectId id) {
         applyMatrixData(id);
+        if ((m_followX || m_followY) && m_autoHome) autoscale(m_followX, m_followY);  // as for lines
         replot();
     });
     for (auto sig : {&PlotModel::peakAdded, &PlotModel::peakRemoved, &PlotModel::peakChanged})
@@ -450,6 +506,12 @@ void PlotRenderer::setupAppearance()
     // Filled areas (bars, fill_between, histograms) below the lines, as in
     // matplotlib (patches below lines). Added for figures made before it existed too.
     if (!p->layer("fills")) p->addLayer("fills", p->layer("regions"), QCustomPlot::limAbove);
+    // Every panel's grid on the grid layer (axis rects made after the first
+    // put it on the current layer, above images): images cover the grid in all panels.
+    for (QCPAxis* a : m_rect->axes()) {
+        a->grid()->setLayer(QLatin1String("grid"));
+        a->setLayer(QLatin1String("axes"));
+    }
     m_imageLayer = p->layer("images");
     m_regionLayer = p->layer("regions");
     m_objectLayer = p->layer("objects");
@@ -557,7 +619,11 @@ void PlotRenderer::autoscale(bool doX, bool doY)
             else ymin = std::min(ymin, c), ymax = std::max(ymax, d);
         }
     };
-    if (doX) unite(m_shareX, true);
+    // A twin and its host share x too (the twin's x axis follows the host's).
+    QList<PlotRenderer*> shareX = m_shareX;
+    if (m_twin && !shareX.contains(m_twin)) shareX << m_twin;
+    if (m_twinHost && !shareX.contains(m_twinHost)) shareX << m_twinHost;
+    if (doX) unite(shareX, true);
     if (doY) unite(m_shareY, false);
     if (!(xmax >= xmin) || !(ymax >= ymin)) return;  // no data anywhere
     // A fitted axis follows the data from now on (the other keeps its state).
@@ -566,12 +632,12 @@ void PlotRenderer::autoscale(bool doX, bool doY)
     // Partners linked to the fitted axes receive the range through the link:
     // that is a fit for them too, not a manual change.
     QList<PlotRenderer*> partners;
-    if (doX) partners += m_shareX;
+    if (doX) partners += shareX;
     if (doY) partners += m_shareY;
     for (PlotRenderer* p : partners) p->m_autoscaling = true;
     // ...and they follow their data again, like this panel.
     if (doX)
-        for (PlotRenderer* p : m_shareX) p->m_followX = true;
+        for (PlotRenderer* p : shareX) p->m_followX = true;
     if (doY)
         for (PlotRenderer* p : m_shareY) p->m_followY = true;
     struct PartnerGuard {
@@ -1467,8 +1533,7 @@ void PlotRenderer::applyStyle()
     if (m_primary) {  // figure-level settings come from the first panel
         p->setFont(font(st.fontSize));
         p->setBackground(st.figureFace);
-        const int pad = int(std::lround(st.figurePadding));
-        p->plotLayout()->setMargins(QMargins(pad, pad, pad, pad));
+        applyFigureMargins(st);
     }
     m_rect->setBackground(m_twinHost ? QBrush(Qt::NoBrush) : QBrush(st.axesFace));  // a twin is see-through
     QPen diagPen(st.axesEdge, 1, Qt::DashLine);  // the y = x line follows the frame colour
@@ -1566,9 +1631,39 @@ void PlotRenderer::setOwnTitle(bool on)
     replot();
 }
 
+void PlotRenderer::applyFigureMargins(const Style& st)
+{
+    // Figure padding plus room for the figure-wide axis labels.
+    const AxesInfo& info = m_model->axesInfo();
+    auto make = [this](QCPAbstractItem*& item, bool vertical) {
+        if (!item) {
+            item = new FigureLabelItem(m_plot, vertical);
+            item->setLayer(QLatin1String("axes"));
+            connect(m_plot, &QCustomPlot::afterLayout, this, [this, item, vertical] {
+                auto* l = static_cast<FigureLabelItem*>(item);
+                const QRect r = m_plot->plotLayout()->rect();  // inside the margins
+                l->centre = vertical ? QPointF(r.left() - l->thickness() / 2, r.center().y())
+                                     : QPointF(r.center().x(), r.bottom() + l->thickness() / 2);
+            });
+        }
+        return static_cast<FigureLabelItem*>(item);
+    };
+    FigureLabelItem* sx = make(m_supX, false);
+    FigureLabelItem* sy = make(m_supY, true);
+    for (FigureLabelItem* l : {sx, sy}) {
+        l->font = font(st.labelSize);
+        l->color = st.labelColor;
+    }
+    sx->text = info.supXLabel;
+    sy->text = info.supYLabel;
+    const int pad = int(std::lround(st.figurePadding));
+    m_plot->plotLayout()->setMargins(QMargins(pad + int(sy->thickness()), pad, pad, pad + int(sx->thickness())));
+}
+
 void PlotRenderer::updateHeader()
 {
     if (!m_primary) return;  // one header per figure
+    applyFigureMargins(displayStyle());
     const AxesInfo& info = m_model->axesInfo();
     const Style st = displayStyle();
     // The header carries the figure title: the suptitle, or (single panel)

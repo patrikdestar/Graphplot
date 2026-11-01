@@ -322,6 +322,7 @@ def _fill_between(self: Figure, x, y1, y2=0.0, *, label=None, color=None, alpha=
     from ._plotter import _rgba
 
     x = np.asarray(x, dtype=float)
+    y1 = np.broadcast_to(np.asarray(y1, dtype=float), x.shape)  # scalars too, as documented
     y2 = np.broadcast_to(np.asarray(y2, dtype=float), x.shape)
     if color is None:
         color = self._take_color()

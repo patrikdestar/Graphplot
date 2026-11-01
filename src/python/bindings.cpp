@@ -913,7 +913,7 @@ PYBIND11_MODULE(_plotter, mod)
                 throw py::value_error("x and y must have the same length");
             Dataset d;
             if (!label.is_none()) d.name = QString::fromStdString(py::str(label).cast<std::string>());
-            d.style.inLegend = !label.is_none();  // like matplotlib: only labelled lines
+            d.style.inLegend = !label.is_none() && !d.name.isEmpty();  // like matplotlib: only labelled lines
             d.style.color = toColor(color);
             d.style.lineWidth = width;
             d.style.lineStyle = toLineStyle(style);
@@ -1578,6 +1578,104 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
             });
         },
         "Figure-wide title above all panels (each panel's own title is `title`).");
+    // Custom ticks: positions and optional labels; None = automatic ticks.
+    for (const bool isX : {true, false}) {
+        fig.def(
+            isX ? "set_xticks" : "set_yticks",
+            [isX](FigurePtr self, const py::object& ticks, const py::object& labels) {
+                bool custom = !ticks.is_none();
+                QVector<double> pos;
+                QStringList text;
+                if (custom) {
+                    pos = toVector(ticks, "ticks");
+                    for (double v : pos)
+                        if (!std::isfinite(v)) throw py::value_error("tick positions must be finite");
+                    if (!labels.is_none()) {
+                        for (const py::handle& l : labels) text << QString::fromStdString(py::str(l).cast<std::string>());
+                        if (text.size() != pos.size())
+                            throw py::value_error("give one label per tick position");
+                    }
+                }
+                inGui([&] {
+                    AxesInfo a = self->model()->axesInfo();
+                    (isX ? a.customXTicks : a.customYTicks) = custom;
+                    (isX ? a.xTicks : a.yTicks) = pos;
+                    (isX ? a.xTickLabels : a.yTickLabels) = text;
+                    self->editor()->setAxesInfo(a);
+                });
+            },
+            py::arg("ticks"), py::arg("labels") = py::none(),
+            "Tick positions (and optional text labels); [] hides the ticks, None restores automatic ticks.");
+        fig.def(isX ? "get_xticks" : "get_yticks", [isX](FigurePtr self) -> py::object {
+            const AxesInfo a = inGui([&] { return self->model()->axesInfo(); });
+            if (!(isX ? a.customXTicks : a.customYTicks)) return py::none();
+            std::vector<std::string> labels;
+            for (const QString& t : isX ? a.xTickLabels : a.yTickLabels) labels.push_back(t.toStdString());
+            return py::make_tuple(toNumpy(isX ? a.xTicks : a.yTicks), labels);
+        }, "(positions, labels) of custom ticks, or None for automatic ticks.");
+    }
+    fig.def_property(
+        "supylabel",
+        [](FigurePtr self) {
+            return inGui([&] { return self->w()->axes(0).model->axesInfo().supYLabel.toStdString(); });
+        },
+        [](FigurePtr self, const Text& t) {
+            inGui([&] {
+                AxesInfo a = self->w()->axes(0).model->axesInfo();
+                a.supYLabel = QString::fromStdString(t);
+                self->w()->axes(0).editor->setAxesInfo(a);
+            });
+        },
+        "Figure-wide y label left of all panels (each panel keeps its own ylabel).");
+    // Custom ticks: positions and optional labels; None = automatic ticks.
+    for (const bool isX : {true, false}) {
+        fig.def(
+            isX ? "set_xticks" : "set_yticks",
+            [isX](FigurePtr self, const py::object& ticks, const py::object& labels) {
+                bool custom = !ticks.is_none();
+                QVector<double> pos;
+                QStringList text;
+                if (custom) {
+                    pos = toVector(ticks, "ticks");
+                    for (double v : pos)
+                        if (!std::isfinite(v)) throw py::value_error("tick positions must be finite");
+                    if (!labels.is_none()) {
+                        for (const py::handle& l : labels) text << QString::fromStdString(py::str(l).cast<std::string>());
+                        if (text.size() != pos.size())
+                            throw py::value_error("give one label per tick position");
+                    }
+                }
+                inGui([&] {
+                    AxesInfo a = self->model()->axesInfo();
+                    (isX ? a.customXTicks : a.customYTicks) = custom;
+                    (isX ? a.xTicks : a.yTicks) = pos;
+                    (isX ? a.xTickLabels : a.yTickLabels) = text;
+                    self->editor()->setAxesInfo(a);
+                });
+            },
+            py::arg("ticks"), py::arg("labels") = py::none(),
+            "Tick positions (and optional text labels); [] hides the ticks, None restores automatic ticks.");
+        fig.def(isX ? "get_xticks" : "get_yticks", [isX](FigurePtr self) -> py::object {
+            const AxesInfo a = inGui([&] { return self->model()->axesInfo(); });
+            if (!(isX ? a.customXTicks : a.customYTicks)) return py::none();
+            std::vector<std::string> labels;
+            for (const QString& t : isX ? a.xTickLabels : a.yTickLabels) labels.push_back(t.toStdString());
+            return py::make_tuple(toNumpy(isX ? a.xTicks : a.yTicks), labels);
+        }, "(positions, labels) of custom ticks, or None for automatic ticks.");
+    }
+    fig.def_property(
+        "supxlabel",
+        [](FigurePtr self) {
+            return inGui([&] { return self->w()->axes(0).model->axesInfo().supXLabel.toStdString(); });
+        },
+        [](FigurePtr self, const Text& t) {
+            inGui([&] {
+                AxesInfo a = self->w()->axes(0).model->axesInfo();
+                a.supXLabel = QString::fromStdString(t);
+                self->w()->axes(0).editor->setAxesInfo(a);
+            });
+        },
+        "Figure-wide x label below all panels (each panel keeps its own xlabel).");
     // Custom ticks: positions and optional labels; None = automatic ticks.
     for (const bool isX : {true, false}) {
         fig.def(

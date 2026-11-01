@@ -165,6 +165,7 @@ struct Region {
 struct AxesInfo {
     QString title;
     QString suptitle;  // figure-wide title (multi-panel figures; used from the first panel)
+    QString supXLabel, supYLabel;  // figure-wide axis labels (first panel; fig.supxlabel / supylabel)
     QString xLabel;
     QString yLabel;
     bool legendVisible = true;
