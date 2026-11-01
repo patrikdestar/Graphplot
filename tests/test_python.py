@@ -643,6 +643,61 @@ class PlotterTests(unittest.TestCase):
                     os.environ["HOME"] = home
             self.assertTrue((pathlib.Path(d) / "q.svg").exists())
 
+    def test_audit_round3(self):
+        import datetime as dt
+        f = self.fig
+        f.plot([0, 1], [0, 1])
+        with tempfile.TemporaryDirectory() as d:
+            f.savefig(filename=os.path.join(d, "a.png"))  # keyword still works
+        # Style colours: alpha scaled on its own; NumPy values; all-or-nothing set().
+        f.set_style({"axes.facecolor": (255, 0, 0, 0.5)})
+        self.assertEqual(f.get_style_param("axes.facecolor"), "#80ff0000")
+        size = plotter.style.get("font.size")
+        with self.assertRaises(ValueError):
+            plotter.style.set({"font.size": 13, "axes.formatter": "bogus"})
+        self.assertEqual(plotter.style.get("font.size"), size)
+        # off() removes a bound method.
+
+        class C:
+            n = 0
+
+            def cb(self, *a):
+                C.n += 1
+        c = C()
+        f.on("region_changed", c.cb)
+        self.assertTrue(f.off("region_changed", c.cb))
+        # Colour setters reject None; widths must be >= 0.
+        m = f.marker(1.0, color="red")
+        with self.assertRaises(ValueError):
+            m.color = None
+        with self.assertRaises(ValueError):
+            m.width = -2
+        # Timeline: duplicate names kept apart, NaT origin, naive datetimes UTC,
+        # clear_pins is one step, resampled export has no NaN at the edges.
+        tl = plotter.timeline()
+        base = np.datetime64("2024-05-01T12:00:00")
+        t = base + np.arange(10) * np.timedelta64(1, "s")
+        t[0] = np.datetime64("NaT")
+        tl.add_row("imu").plot(t, np.arange(10.0), label="ax")
+        self.assertAlmostEqual(tl.time_origin, 1714564801.0)
+        tl.add_row("imu").plot([dt.datetime(2024, 5, 1, 12, 0, i) for i in range(10)],
+                               np.arange(10.0), label="ax")
+        self.assertEqual(len(tl.signals()), 2)
+        self.assertAlmostEqual(tl.signals()["imu / ax #2"].x[1], 0.0)  # UTC, aligned
+        for k in range(3):
+            tl.pin(1.0 + k)
+        tl.clear_pins()
+        tl.undo()
+        self.assertEqual(len(tl.pins()), 3)
+        self.assertIn(tl.pins()[0], tl.pins())
+        tl.window = (0.5, 7.5)
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "r.csv")
+            tl.export_csv(p, resample=1.0)
+            rows = open(p).read().splitlines()
+        self.assertNotIn("nan", rows[1].split(",")[1])
+        tl.figure.close()
+
     def test_pyplot_compat_round2(self):
         import io
         import plotter.pyplot as plt

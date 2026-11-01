@@ -351,13 +351,23 @@ def _to_seconds(t):
     datetime-like objects (pandas Timestamps, datetime.datetime)."""
     import numpy as np
 
+    import datetime as _dt
+
     a = np.asarray(t)
-    if a.dtype.kind == "M":  # datetime64 -> Unix epoch seconds
-        return a.astype("datetime64[ns]").astype(np.int64) / 1e9, True
-    if a.dtype.kind == "m":  # timedelta64 -> seconds
-        return a.astype("timedelta64[ns]").astype(np.int64) / 1e9, False
+    if a.dtype.kind in "Mm":  # datetime64 -> Unix epoch seconds, timedelta64 -> seconds
+        ns = a.astype("datetime64[ns]" if a.dtype.kind == "M" else "timedelta64[ns]")
+        out = ns.astype(np.int64) / 1e9
+        out[np.isnat(ns)] = np.nan  # NaT is a gap, not year -292
+        return out, a.dtype.kind == "M"
     if a.dtype == object and a.size and hasattr(a.flat[0], "timestamp"):
-        return np.array([x.timestamp() for x in a.ravel()], dtype=float), True
+        def seconds(x):
+            if x is None or x != x:  # None / NaT
+                return np.nan
+            # Naive datetimes are UTC, as for numpy and pandas (not local time).
+            if isinstance(x, _dt.datetime) and x.tzinfo is None:
+                x = x.replace(tzinfo=_dt.timezone.utc)
+            return x.timestamp()
+        return np.array([seconds(x) for x in a.ravel()], dtype=float), True
     return a.astype(float), False
 
 
@@ -371,10 +381,15 @@ class TimelineRow:
     def plot(self, t, y, label: str = "", color=None) -> Line:
         """Add a signal. ``t``: seconds since the timeline origin, or absolute
         times (datetime64 / pandas timestamps), which set the origin on first use."""
+        import numpy as np
+
         secs, absolute = _to_seconds(t)
         if absolute:
             if self._tl.time_origin is None:
-                self._tl.time_origin = float(secs[0])
+                finite = secs[np.isfinite(secs)]
+                if finite.size == 0:
+                    raise ValueError("no valid time values")
+                self._tl.time_origin = float(finite.min())
             secs = secs - self._tl.time_origin
         return self._tl.figure._tl_add_signal(self.index, "" if label is None else str(label),
                                               secs, y, color)
@@ -405,6 +420,25 @@ class TimelineRow:
         return f"<TimelineRow {self.index} {self.name!r}>"
 
 
+def _unique(d: dict, key):
+    """`key`, or (for a duplicate) the key with " #2", " #3", ... appended.
+    Rows or signals may share names; no entry may silently overwrite another."""
+    if key not in d:
+        return key
+    n = 2
+    while True:
+        k = (key[0], f"{key[1]} #{n}") if isinstance(key, tuple) else f"{key} #{n}"
+        if k not in d:
+            return k
+        n += 1
+
+
+def _require_number(v, what: str) -> float:
+    if v is None:
+        raise ValueError(f"{what} must be a number (Unix epoch seconds)")
+    return float(v)
+
+
 class TimePin:
     """A time marker drawn through all rows of a Timeline (undoable)."""
 
@@ -426,6 +460,12 @@ class TimePin:
 
     def remove(self):
         self._tl.figure._tl_remove_pin(self.id)
+
+    def __eq__(self, other):
+        return isinstance(other, TimePin) and other.id == self.id and other._tl.figure is self._tl.figure
+
+    def __hash__(self):
+        return hash(self.id)
 
     def jump(self):
         """Centre the visible window on this marker."""
@@ -474,13 +514,15 @@ class Timeline:
     def set_row_order(self, rows) -> None:
         self.figure._tl_set_order([r.index if isinstance(r, TimelineRow) else int(r) for r in rows])
 
-    def move_signal(self, line: Line, row: TimelineRow) -> Line:
-        """Move a signal to another row (one undo step); returns the new Line."""
-        return self.figure._tl_move_signal(line, row.index)
+    def move_signal(self, line: Line, row) -> Line:
+        """Move a signal to another row (a TimelineRow or its index; one undo
+        step); returns the new Line."""
+        return self.figure._tl_move_signal(line, row.index if isinstance(row, TimelineRow) else int(row))
 
-    def remove_row(self, row: TimelineRow) -> bool:
-        """Remove an empty row from the layout."""
-        return self.figure._tl_remove_row(row.index)
+    def remove_row(self, row) -> bool:
+        """Remove an empty row from the layout. Rows that still hold signals
+        are kept (returns False); move or remove their signals first."""
+        return self.figure._tl_remove_row(row.index if isinstance(row, TimelineRow) else int(row))
 
     def load_csv(self, *files, row_per_column: bool = False) -> None:
         """Load CSV logs (time column + signal columns); one row per file by default."""
@@ -507,7 +549,7 @@ class Timeline:
         """Interpolated value of every visible signal: {(row_name, signal): value}."""
         out = {}
         for row, name, value in self.figure._tl_values_at(float(t)):
-            out[(self.figure._tl_row_name(row), name)] = value
+            out[_unique(out, (self.figure._tl_row_name(row), name))] = value
         return out
 
     def format_time(self, t: float) -> str:
@@ -542,7 +584,7 @@ class Timeline:
     clock_time = property(lambda self: self.figure._tl_clock(),
                           lambda self, v: self.figure._tl_set_clock(bool(v)))
     time_origin = property(lambda self: self.figure._tl_origin(),
-                           lambda self, v: self.figure._tl_set_origin(float(v)),
+                           lambda self, v: self.figure._tl_set_origin(_require_number(v, "time_origin")),
                            doc="Unix epoch seconds of t = 0 (None if the data has no absolute time).")
 
     # ---- time markers ---------------------------------------------------------------
@@ -556,8 +598,16 @@ class Timeline:
         self.figure._tl_remove_pin(pin.id if isinstance(pin, TimePin) else int(pin))
 
     def clear_pins(self) -> None:
-        for pid, *_ in self.figure._tl_pins():
-            self.figure._tl_remove_pin(pid)
+        """Delete every time marker (one undo step)."""
+        pins = self.figure._tl_pins()
+        if not pins:
+            return
+        self.figure._begin_macro("Delete time markers")
+        try:
+            for pid, *_ in pins:
+                self.figure._tl_remove_pin(pid)
+        finally:
+            self.figure._end_macro()
 
     def next_pin(self):
         """Centres the window on the next time marker (keyboard: ]); returns it or None."""
@@ -575,7 +625,7 @@ class Timeline:
         out = {}
         for row in self.rows:
             for line in row.lines():
-                out[f"{row.name} / {line.label}"] = line
+                out[_unique(out, f"{row.name} / {line.label}")] = line
         return out
 
     def signal(self, name: str) -> Line:
@@ -588,9 +638,10 @@ class Timeline:
             raise KeyError(f"{name!r} matches {len(matches)} signals")
         return matches[0]
 
-    def window_data(self, window=None) -> dict:
+    def window_data(self, window=None, *, neighbours: bool = False) -> dict:
         """Samples inside the time window (default: the visible one):
-        {"row / signal": (t, y)} as numpy arrays."""
+        {"row / signal": (t, y)} as numpy arrays. ``neighbours=True`` adds
+        the sample just before and just after the window (for interpolation)."""
         import numpy as np
 
         t0, t1 = window if window is not None else self.window
@@ -598,6 +649,8 @@ class Timeline:
         for key, line in self.signals().items():
             x, y = line.x, line.y
             i0, i1 = np.searchsorted(x, t0, "left"), np.searchsorted(x, t1, "right")
+            if neighbours:
+                i0, i1 = max(i0 - 1, 0), min(i1 + 1, len(x))
             out[key] = (x[i0:i1], y[i0:i1])
         return out
 
@@ -620,7 +673,9 @@ class Timeline:
             win = self.full_range
         else:
             win = tuple(window)
-        data = self.window_data(win)
+        # Resampling interpolates up to the window edges: include one sample
+        # on each side so the first / last grid points are not NaN.
+        data = self.window_data(win, neighbours=resample is not None)
         origin = self.time_origin
 
         def iso(t):

@@ -84,7 +84,17 @@ QVector<double> toVector(const py::handle& obj, const char* what)
             QVector<double> v;
             for (py::handle item : raw.attr("ravel")()) {
                 const bool nat = item.is_none() || item.attr("__ne__")(item).cast<bool>();
-                v << (nat ? std::nan("") : item.attr("timestamp")().cast<double>());
+                if (nat) {
+                    v << std::nan("");
+                    continue;
+                }
+                py::object when = py::reinterpret_borrow<py::object>(item);
+                // Naive datetimes are UTC (as numpy / pandas do), not local time.
+                if (py::hasattr(when, "tzinfo") && when.attr("tzinfo").is_none()) {
+                    py::object utc = py::module_::import("datetime").attr("timezone").attr("utc");
+                    when = when.attr("replace")(py::arg("tzinfo") = utc);
+                }
+                v << when.attr("timestamp")().cast<double>();
             }
             if (raw.ndim() != 1) throw py::value_error(std::string(what) + " must be one-dimensional");
             return v;
@@ -165,6 +175,19 @@ QColor toColor(const py::handle& obj, const char* what = "color")
     }
     throw py::type_error(std::string(what) + " must be a name, '#rrggbb' or an (r, g, b[, a]) tuple");
 }
+
+// A colour that must be given (property setters: None is not "no colour").
+QColor requiredColor(const py::object& obj, const char* what)
+{
+    if (obj.is_none()) throw py::value_error(std::string(what) + " cannot be None");
+    return toColor(obj, what);
+}
+
+void checkWidth(double v)
+{
+    if (!(v >= 0) || !std::isfinite(v)) throw py::value_error("width must be a finite number >= 0");
+}
+
 
 std::string colorName(const QColor& c)
 {
@@ -255,12 +278,13 @@ public:
         m_callbacks.emplace_back(event, std::move(fn));
     }
     void clearCallbacks() { m_callbacks.clear(); }
-    // Removes one callback (compared by identity); returns whether it existed.
+    // Removes one callback (compared with ==, so a bound method obj.cb given
+    // again matches); returns whether it existed.
     bool removeCallback(const std::string& event, const py::function& fn)
     {
         const auto before = m_callbacks.size();
         m_callbacks.erase(std::remove_if(m_callbacks.begin(), m_callbacks.end(),
-                                         [&](const auto& c) { return c.first == event && c.second.is(fn); }),
+                                         [&](const auto& c) { return c.first == event && c.second.equal(fn); }),
                           m_callbacks.end());
         return m_callbacks.size() != before;
     }
@@ -659,6 +683,15 @@ PYBIND11_MODULE(_plotter, mod)
         QString err;
         if (!s.set(QString::fromStdString(key), QString::fromStdString(value), &err))
             throw py::value_error(err.toStdString());
+        setDefaultStyle(s);
+    });
+    mod.def("_style_set_many", [](const std::vector<std::pair<std::string, std::string>>& items) {
+        Style s = defaultStyle();  // applied to a copy: all or nothing
+        for (const auto& [key, value] : items) {
+            QString err;
+            if (!s.set(QString::fromStdString(key), QString::fromStdString(value), &err))
+                throw py::value_error(err.toStdString());
+        }
         setDefaultStyle(s);
     });
     mod.def("_style_text", [] { return defaultStyle().toText().toStdString(); });
@@ -1582,12 +1615,15 @@ Remove a callback with off(event, callback).)doc");
         .def_property("color",
                       [](Line& h) { return colorName(inGui([&] { return h.get().style.color; })); },
                       [](Line& h, const py::object& v) {
-                          const QColor c = toColor(v);
+                          const QColor c = requiredColor(v, "color");
                           h.setStyle([&](QString&, DatasetStyle& s) { s.color = c; });
                       })
         .def_property("width",
                       [](Line& h) { return inGui([&] { return h.get().style.lineWidth; }); },
-                      [](Line& h, double v) { h.setStyle([&](QString&, DatasetStyle& s) { s.lineWidth = v; }); })
+                      [](Line& h, double v) {
+                          checkWidth(v);
+                          h.setStyle([&](QString&, DatasetStyle& s) { s.lineWidth = v; });
+                      })
         .def_property("style",
                       [](Line& h) { return lineStyleName(inGui([&] { return h.get().style.lineStyle; })).toStdString(); },
                       [](Line& h, const std::string& v) {
@@ -1722,13 +1758,13 @@ Remove a callback with off(event, callback).)doc");
         .def_property("color",
                       [](Contour& h) { return colorName(inGui([&] { return h.get().style.positiveColor; })); },
                       [](Contour& h, const py::object& v) {
-                          const QColor c = toColor(v);
+                          const QColor c = requiredColor(v, "color");
                           h.setStyle([&](QString&, ContourStyle& s) { s.positiveColor = c; });
                       })
         .def_property("negative_color",
                       [](Contour& h) { return colorName(inGui([&] { return h.get().style.negativeColor; })); },
                       [](Contour& h, const py::object& v) {
-                          const QColor c = toColor(v, "negative_color");
+                          const QColor c = requiredColor(v, "negative_color");
                           h.setStyle([&](QString&, ContourStyle& s) { s.negativeColor = c; });
                       })
         .def("levels", [](Contour& h) {
@@ -1778,7 +1814,7 @@ Remove a callback with off(event, callback).)doc");
         .def_property("color",
                       [](MarkerH& h) { return colorName(inGui([&] { return h.get().color; })); },
                       [](MarkerH& h, const py::object& v) {
-                          const QColor c = toColor(v);
+                          const QColor c = requiredColor(v, "color");
                           h.edit([&](Marker& m) { m.color = c; });
                       })
         .def_property("style",
@@ -1789,7 +1825,10 @@ Remove a callback with off(event, callback).)doc");
                       })
         .def_property("width",
                       [](MarkerH& h) { return inGui([&] { return h.get().lineWidth; }); },
-                      [](MarkerH& h, double v) { h.edit([&](Marker& m) { m.lineWidth = v; }); })
+                      [](MarkerH& h, double v) {
+                          checkWidth(v);
+                          h.edit([&](Marker& m) { m.lineWidth = v; });
+                      })
         .def("remove", [](MarkerH& h) { inGui([&] { h.get(); h.editor()->removeMarker(h.id); }); })
         .def("__repr__", [](MarkerH& h) {
             return inGui([&]() -> std::string {
@@ -1809,7 +1848,16 @@ Remove a callback with off(event, callback).)doc");
                           return py::make_tuple(p.x, p.y);
                       },
                       [](PeakH& h, std::pair<double, double> v) {
-                          h.edit([&](Peak& p) { p.x = v.first; p.y = v.second; }, "Move peak");
+                          h.edit(
+                              [&](Peak& p) {
+                                  p.x = v.first;
+                                  p.y = v.second;
+                                  // Intensity follows the new position (as when dragging).
+                                  PlotRenderer* r = h.fig->w()->axes(h.ax).renderer;
+                                  if (const Matrix* m = r->matrixAt({p.x, p.y}))
+                                      p.intensity = sampleMatrix(*m, p.x, p.y);
+                              },
+                              "Move peak");
                       })
         .def_property_readonly("x", [](PeakH& h) { return inGui([&] { return h.get().x; }); })
         .def_property_readonly("y", [](PeakH& h) { return inGui([&] { return h.get().y; }); })

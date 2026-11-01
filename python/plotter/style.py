@@ -31,15 +31,29 @@ from . import _plotter
 
 
 def _to_text(value) -> str:
+    """A Python value as style-file text (colours as #aarrggbb)."""
+    import numbers
+
     if isinstance(value, bool):
         return "true" if value else "false"
-    if isinstance(value, (list, tuple)) and not (len(value) in (3, 4) and all(
-            isinstance(v, (int, float)) for v in value)):
+    if hasattr(value, "tolist") and not isinstance(value, str):  # NumPy array / scalar
+        value = value.tolist()
+    if isinstance(value, numbers.Real):
+        return repr(float(value)) if not isinstance(value, numbers.Integral) else str(int(value))
+    is_number = lambda v: isinstance(v, numbers.Real) and not isinstance(v, bool)  # noqa: E731
+    if isinstance(value, (list, tuple)) and len(value) in (3, 4) and all(is_number(v) for v in value):
+        # (r, g, b[, a]) colour: RGB as 0..1 or 0..255 (decided from RGB only);
+        # alpha is 0..1 unless it is above 1 (then 0..255), as in plotter.
+        rgb = [float(v) for v in value[:3]]
+        scale = 255 if all(v <= 1 for v in rgb) else 1
+        vals = [int(round(min(max(v * scale, 0), 255))) for v in rgb]
+        if len(value) == 4:
+            a = float(value[3])
+            alpha = int(round(min(max(a * 255 if a <= 1 else a, 0), 255)))
+            vals = [alpha] + vals
+        return "#" + "".join(f"{v:02x}" for v in vals)
+    if isinstance(value, (list, tuple)):
         return ", ".join(_to_text(v) for v in value)
-    if isinstance(value, (tuple, list)):  # (r, g, b[, a]) colour
-        scale = 255 if all(v <= 1 for v in value) else 1
-        vals = [int(round(v * scale)) for v in value]
-        return "#" + "".join(f"{v:02x}" for v in ([vals[3]] if len(vals) == 4 else []) + vals[:3])
     return str(value)
 
 
@@ -73,8 +87,8 @@ def set(params: Mapping | None = None, /, **kwargs) -> None:  # noqa: A001
     contain underscores, e.g. "axes.unicode_minus")."""
     items = dict(params or {})
     items.update({k.replace("_", "."): v for k, v in kwargs.items()})
-    for k, v in items.items():
-        _plotter._style_set(k, _to_text(v))
+    # All or nothing: nothing changes if one entry is invalid.
+    _plotter._style_set_many([(k, _to_text(v)) for k, v in items.items()])
 
 
 def text() -> str:
