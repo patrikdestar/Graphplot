@@ -317,9 +317,9 @@ NumPy, pins them, and adds a derived jerk signal.
 | Timeline action | How |
 |---|---|
 | Read values at a moment | move the mouse over the rows: the cursor line shows every signal's value |
-| Move the time window | drag the shaded band in the navigator; drag its edges to resize; wheel to zoom; click to jump; double-click for everything |
-| Zoom / pan time | wheel or drag in any row (zooms time only; Shift+wheel zooms that row's Y) |
-| Time marker | Ctrl+click in a row, or `M` at the cursor; drag to move; right-click to rename/delete; double-click a marker in the Timeline tab to jump to it |
+| Move the time window | drag the shaded band in the navigator; drag its edges to resize; drag outside it to draw a new window; wheel to zoom; click to jump; double-click for everything |
+| Zoom / pan time | wheel or drag in any row (zooms time only; Shift+wheel zooms that row's Y); double-click empty space in a row, or `Shift+Home`, shows the whole recording |
+| Time marker | Ctrl+click in a row, or `M` at the cursor; drag to move; double-click it (or right-click) to rename; right-click to delete; double-click a marker in the Timeline tab to jump to it |
 | Step through markers | `[` / `]` centre the window on the previous / next marker; the navigator label shows Δt from the nearest marker |
 | Rearrange | Timeline tab: drag rows; drag a signal onto another row; tick to hide; edit names and heights; *New row* |
 | Options | Timeline tab / menu: navigator signal, auto-fit Y, clock time |
@@ -341,21 +341,43 @@ plt.savefig("plot.pdf")
 
 ## Mouse and keyboard
 
+Single-letter keys work while the plot has focus (not while you type in a
+side panel). The timeline has its own table above.
+
+**Tools** (toolbar, *Tools* menu; Esc leaves a tool and cancels a drag)
+
 | Action | How |
 |---|---|
-| Zoom | `Z` tool and drag a rectangle; wheel (Ctrl: X only, Shift: Y only; over an axis: that axis) |
+| Zoom | `Z` tool and drag a rectangle; the wheel zooms in any tool (Ctrl: X only, Shift: Y only; over an axis: that axis). The toolbar's *Zoom X + Y / X only / Y only* box limits the rectangle |
 | Pan | `P` tool, or middle-drag in any tool |
-| Select an X region | `R` tool and drag; drag its edges; Shift+drag inside to move it |
+| Select an X region | `R` tool and drag; drag its edges; Shift+drag inside to move it; the region's statistics appear in Properties |
 | Markers / text | `V` / `H` / `T`, then click |
-| **Pick a peak** | `K` (Peak tool), then click (snaps to the maximum; Shift: exactly at the cursor); Esc leaves the tool |
-| **Automatic peak picking** | Peaks tab → *Pick peaks*, or `Ctrl+Shift+K` |
+| **Pick a peak** | `K` (Peak tool), then click (snaps to the maximum; Shift: exactly at the cursor) |
 | Move an object or a peak label | drag it (in any tool) |
-| Edit an object | double-click it, or use the Properties / Peaks tabs |
-| **Scroll contour levels** | **Alt + wheel**, or the plain wheel with **Levels** (`L`) on; `*` / `/` = ÷2 / ×2 |
-| Autoscale / reset view | `A` (or double-click the plot) / `Home` |
+| Edit an object | double-click it, or use the Properties / Peaks tabs; right-click for *Edit…* / *Delete* |
+| Right-click on empty space | *Vertical marker here*, *Horizontal marker here*, *Annotation here*, *Autoscale*, *Reset view* |
+
+**View and contours**
+
+| Action | How |
+|---|---|
+| Autoscale / X only / Y only | `A` (or double-click the plot) / *View → Autoscale X* / `Shift+A` |
+| Reset view / set home | `Home` / *View → Set current view as home* |
 | Previous / next view | `Alt+Left` / `Alt+Right` |
-| Copy figure | `Ctrl+Shift+C` (image on the clipboard) |
-| Delete / undo / redo | `Del` / `Ctrl+Z` / `Ctrl+Shift+Z` |
+| **Scroll contour levels** | **Alt + wheel**, or the plain wheel with **Levels** (`L`) on |
+| Lower / raise contour levels | `*` (÷2, more contours) / `/` (×2) |
+| **Automatic peak picking** | Peaks tab → *Pick peaks*, or `Ctrl+Shift+K` |
+
+**Files and editing**
+
+| Action | How |
+|---|---|
+| Open data / time series / Bruker | `Ctrl+O` / `Ctrl+T` / `Ctrl+B`; *File → Open 2D matrix…*; or drop files and folders on the window |
+| Export / copy figure | `Ctrl+E` (PNG, SVG, PDF) / `Ctrl+Shift+C` |
+| Close window | `Ctrl+W` |
+| Delete selected | `Del` or `Backspace` |
+| Undo / redo | `Ctrl+Z` / `Ctrl+Shift+Z` or `Ctrl+Y` |
+| Clear the region selection | *Edit → Clear region selection* |
 | Styles | *Style* menu: built-ins, *Edit style…*, load/save `.gpstyle`, *Use as my default style* |
 
 In multi-panel figures, the panel you click becomes current; the side panels

@@ -33,6 +33,8 @@ Graphplot/
 │   │   ├── PropertiesPanel.*      object tree + property editors
 │   │   ├── PeakTable.*            peak list, picking controls, CSV import/export
 │   │   ├── StyleEditor.*          dialog editing every style key
+│   │   ├── Timeline.*             timeline layout: rows, navigator, cursor line, pins, auto-fit
+│   │   ├── TimelinePanel.*        "Timeline" dock: rows / signals / markers editing
 │   │   └── Icons.*                toolbar icons drawn with QPainter
 │   ├── app/main.cpp            standalone executable
 │   └── python/                 6. Python binding layer
@@ -42,7 +44,8 @@ Graphplot/
 │                               fill_between, style module, pyplot compatibility layer
 ├── examples/                   Python example scripts
 ├── tests/                      QtTest suite (C++) and unittest suite (Python)
-└── docs/
+├── tools/                      gen_style_reference.py (regenerates docs/STYLE_REFERENCE.md)
+└── docs/                       references, file formats, troubleshooting, images
 ```
 
 CMake builds three static libraries, and the executable and the Python module
@@ -89,10 +92,14 @@ link the same code:
 5. **PropertiesPanel** shows the model and edits it through PlotEditor.
    Spin-box steps and wheel scrolling of contour levels use *mergeable*
    commands, so one gesture becomes one undo step (merging stops after 1.5 s
-   of inactivity).
-6. **Python bindings** hold `(figure, id)` handles and call PlotEditor, so
-   edits made from Python are undoable exactly like mouse edits. Results are
-   read from the model.
+   of inactivity, and never joins edits of different panels: all panels
+   share one undo stack, but object ids are only unique per panel). The
+   panel writes back only the fields the user changed, so values outside a
+   widget's range or precision are never clamped by accident.
+6. **Python bindings** hold `(figure, panel, id)` handles and call
+   PlotEditor, so edits made from Python are undoable exactly like mouse
+   edits. Results are read from the model. Calls through an `Axes` name
+   their target panel, so they cannot be redirected by a user click.
 
 Adding a new object type follows the existing pattern: a value type, model
 storage and signals, a traits struct for the generic commands, a renderer

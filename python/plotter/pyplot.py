@@ -15,12 +15,13 @@ after changing one import::
     rax.plot(x, y / mc_y, "k.")
     plt.savefig("plot.pdf"); plt.show()
 
-Supported: figure, subplots, gcf, gca, sca, close, show, pause, savefig,
-plot (with format strings like "r--o"), scatter, errorbar, hist, bar-like
-step histograms, fill_between, contour/contourf (geometric contour levels),
-axhline, axvline, axhspan-free markers, text, annotate, xlabel, ylabel,
-title, xlim, ylim, xscale, yscale, legend, grid, tight_layout (no-op),
-and the matching Axes methods (set_xlabel, set_xlim, set_yscale, ...).
+Supported: figure, subplots, fig.add_subplot, gcf, gca, sca, close, show,
+pause, savefig, plot (with format strings like "r--o" or "C1--"), scatter,
+errorbar, hist (one or several datasets), stairs, fill_between,
+contour/contourf (geometric contour levels), axhline, axvline (full-height
+markers), text, annotate, xlabel, ylabel, title, xlim, ylim, xscale, yscale,
+legend, grid, tight_layout (no-op), and the matching Axes methods
+(set_xlabel, set_xlim, set_yscale, ax.set(...), ...).
 Not supported: images (imshow), polar/3D axes, twin axes, colorbars.
 Differences: legend position / font are figure-wide (last call wins);
 contour levels are geometric (base * factor**k) as in NMR

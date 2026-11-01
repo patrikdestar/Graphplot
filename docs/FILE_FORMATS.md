@@ -72,7 +72,8 @@ timestamp,ax,ay,az
 ```
 
 - **Time column:** the first column whose header is `time`, `t`,
-  `timestamp`, `stamp`, `datetime`, `date_time`, `sec`, `seconds`, `ts`
+  `timestamp`, `stamp`, `datetime`, `date_time`, `date time`, `sec`, `secs`,
+  `seconds`, `ts`
   (any case; units in brackets and `_s`, `_ms`, `_us`, `_ns` suffixes are
   ignored for this test), otherwise the first column.
 - **Time values**, recognised automatically:

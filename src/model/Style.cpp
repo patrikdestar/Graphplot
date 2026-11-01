@@ -299,6 +299,9 @@ bool Style::parse(const QString& text, QStringList* errors, const QString& baseD
 {
     bool ok = true;
     int lineNo = 0;
+    // Keys already set in this file: an 'inherit' further down replaces the
+    // whole style, so they are applied again on top of it.
+    QList<QPair<QString, QString>> setHere;
     for (QString line : text.split('\n')) {
         ++lineNo;
         // Strip comments: '#' starts a comment unless it begins a colour (#rrggbb)
@@ -343,12 +346,15 @@ bool Style::parse(const QString& text, QStringList* errors, const QString& baseD
                 continue;
             }
             *this = base;
+            for (const auto& [k, v] : setHere) set(k, v, nullptr);
             continue;
         }
         QString err;
         if (!set(key, value, &err)) {
             if (errors) *errors << QString("line %1: %2").arg(lineNo).arg(err);
             ok = false;
+        } else {
+            setHere << qMakePair(key, value);
         }
     }
     return ok;
