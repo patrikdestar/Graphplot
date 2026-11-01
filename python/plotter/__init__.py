@@ -171,6 +171,25 @@ def _figure_show(self: Figure, block: bool | None = None, timeout: float | None 
 Figure.show = _figure_show
 
 
+def _figure_repr_png(self) -> bytes:
+    """PNG snapshot for Jupyter / IPython rich display (a figure shown as the
+    last expression of a notebook cell appears inline)."""
+    import os
+    import tempfile
+
+    fd, path = tempfile.mkstemp(suffix=".png")
+    os.close(fd)
+    try:
+        self.savefig(path, scale=1.0)
+        with open(path, "rb") as f:
+            return f.read()
+    finally:
+        os.remove(path)
+
+
+Figure._repr_png_ = _figure_repr_png
+
+
 def _accept_pathlike(name: str, keyword: str) -> None:
     """Let a Figure method take pathlib.Path (and other os.PathLike) paths,
     given positionally or by its keyword name."""

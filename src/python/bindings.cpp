@@ -1806,6 +1806,33 @@ Remove a callback with off(event, callback).)doc");
             },
             py::arg("xerr") = py::none(), py::arg("yerr") = py::none(),
             "Replace the error bars (None removes them; undoable).")
+        .def(
+            "append",
+            [](Line& h, const py::object& x, const py::object& y, const py::object& maxPoints) {
+                const QVector<double> xv = toVector(x, "x"), yv = toVector(y, "y");
+                if (xv.size() != yv.size()) throw py::value_error("x and y must have the same length");
+                const qsizetype keep = maxPoints.is_none() ? -1 : maxPoints.cast<qsizetype>();
+                if (!maxPoints.is_none() && keep < 1) throw py::value_error("max_points must be >= 1");
+                inGui([&] {
+                    const Dataset& d = h.get();
+                    QVector<double> nx = d.x, ny = d.y;
+                    nx += xv;
+                    ny += yv;
+                    if (keep > 0 && nx.size() > keep) {  // rolling window: drop the oldest points
+                        nx.remove(0, nx.size() - keep);
+                        ny.remove(0, ny.size() - keep);
+                    }
+                    h.editor()->setDatasetData(h.id, std::move(nx), std::move(ny), false);
+                });
+            },
+            py::arg("x"), py::arg("y"), py::kw_only(), py::arg("max_points") = py::none(),
+            "Append points (live data). max_points keeps only the newest points (a rolling window).\n"
+            "Like set_data, not recorded in the undo history; error bars are dropped.")
+        .def_property_readonly("xerr", [](Line& h) {
+            const Dataset d = inGui([&] { return h.get(); });
+            if (d.xErrLow.isEmpty()) return py::object(py::none());
+            return py::object(py::make_tuple(toNumpy(d.xErrLow), toNumpy(d.xErrHigh)));
+        }, "(low, high) arrays or None")
         .def_property_readonly("yerr", [](Line& h) {
             const Dataset d = inGui([&] { return h.get(); });
             if (d.yErrLow.isEmpty()) return py::object(py::none());

@@ -71,8 +71,14 @@ annotate, read the results back, process, and re-plot.
   shows **statistics** of every line (mean ± sd, min/max and where, RMS,
   integral).
 - Typed axis limits, and **Previous / Next view** history (Alt+Left/Right).
-- Drop data files, Bruker folders or `.gpstyle` files onto a window to open
-  them; copy the figure to the clipboard with Ctrl+Shift+C.
+- Drop data files, Bruker folders, figures or `.gpstyle` files onto a window
+  to open them; copy the figure to the clipboard with Ctrl+Shift+C.
+- **Save your work:** *File → Save figure* (Ctrl+S) keeps everything in one
+  `.gpfig` file (data, peaks with labels and comments, markers, notes,
+  styles, panels, timeline) to continue later; *Open recent* reopens files.
+- **Export data**, not only pictures: the visible curves (or just the
+  selected region) as CSV; *Copy statistics* puts the region statistics on
+  the clipboard for a spreadsheet.
 - Everything is draggable and editable, with undo/redo for every edit
   (mouse, panel or Python).
 
@@ -387,6 +393,8 @@ side panel). The timeline has its own table above.
 | Action | How |
 |---|---|
 | Open data / time series / Bruker | `Ctrl+O` / `Ctrl+T` / `Ctrl+B`; *File → Open 2D matrix…*; or drop files and folders on the window |
+| Save / open a figure | `Ctrl+S` (*Save figure*), `Ctrl+Shift+S` (*Save as*), `Ctrl+Shift+O` (*Open figure*); *File → Open recent* |
+| Export data | *File → Export data (CSV)…* / *Export region data (CSV)…*; Region page → *Copy statistics* |
 | Export / copy figure | `Ctrl+E` (PNG, SVG, PDF) / `Ctrl+Shift+C` |
 | Close window | `Ctrl+W` |
 | Delete selected | `Del` or `Backspace` |

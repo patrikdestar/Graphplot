@@ -12,6 +12,8 @@ comments, and empty lines are skipped.
 | [Bruker TopSpin 2D](#bruker-topspin-processed-2d-spectra) | *File → Open Bruker 2D spectrum…*, drag & drop the folder | `fig.open_bruker(path)` |
 | [Peak list](#peak-list-csv) | Peaks tab → *Import CSV…* / *Export CSV…* | `fig.import_peaks` / `fig.export_peaks` |
 | [Style file](#style-files-gpstyle) | *Style → Load style file…*, drag & drop | `fig.use_style(path)` |
+| [Figure file (.gpfig)](#figure-files-gpfig) | *File → Open figure…* / *Save figure* (Ctrl+S), drag & drop | `plotter.load(path)` / `fig.save(path)` |
+| [Data export (CSV)](#data-export-csv) | *File → Export data (CSV)…* | `fig.export_data(path)` |
 | [Exported figures](#exported-figures) | *File → Export…*, Ctrl+Shift+C (clipboard) | `fig.savefig(path)` |
 
 ## Separators and cells (all text tables)
@@ -143,6 +145,50 @@ Unknown keys and invalid values are reported and ignored; the rest of the
 file still applies. Your personal default style is
 `~/.config/Graphplot/default.gpstyle` (or the file named by the
 `GRAPHPLOT_STYLE` environment variable).
+
+## Figure files (.gpfig)
+
+A figure file keeps everything needed to continue working: every panel's
+datasets (with error bars and styles), 2D data, peaks (with labels, comments
+and label positions), markers, annotations, the region selection, axes
+settings and style; the panel grid and the visible ranges; for timelines the
+rows (names, heights, visibility), time markers, navigator signal, window,
+time origin and options. Undo history is not stored.
+
+It is a UTF-8 JSON document:
+
+```json
+{
+  "format": "graphplot-figure", "version": 1,
+  "title": "…", "size": [1000, 650], "current": 0,
+  "grid": {"rows": 2, "cols": 1, "heightRatios": [3, 1], "hspace": 0, "sharex": true, …},
+  "panels": [ {"model": {"datasets": […], "matrices": […], "markers": […],
+                         "annotations": […], "peaks": […], "region": [xmin, xmax],
+                         "axes": {…}, "style": "<.gpstyle text>"},
+               "view": [xmin, xmax, ymin, ymax]} ],
+  "timeline": {"rows": […], "pins": […], "window": [t0, t1], "origin": …}
+}
+```
+
+Number arrays (`x`, `y`, `z`, error bars) are base64-encoded little-endian
+float64, so values (including NaN) round-trip exactly; colours are
+`#aarrggbb`; object ids are strings. Files are written atomically (a failed
+save never damages the previous file). Opening a figure into a window that
+already holds data opens a new window.
+
+## Data export (CSV)
+
+The visible 1D datasets of the current panel (optionally only inside the
+selected X region):
+
+- **Same x for all datasets:** one wide table — x, then one column per
+  dataset (plus `err low` / `err high` columns for datasets with error bars).
+- **Different x:** a long table — `dataset, x, y` (and error columns), one row
+  per point.
+
+Numbers use the shortest form that reads back exactly (`0.1`); missing values
+are empty cells. Region statistics can be copied as tab-separated text
+(Region page → *Copy statistics*).
 
 ## Exported figures
 

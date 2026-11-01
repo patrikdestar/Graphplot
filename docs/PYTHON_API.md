@@ -26,6 +26,8 @@ File paths may be strings with `~` or `pathlib.Path` objects.
 | `pause(seconds=0.05)` | Run the event loop for a while (keeps windows responsive in loops). |
 | `figures()` | Figures that have not been closed (including ones not shown yet). |
 | `close_all()` | Close every figure. |
+| `load(path)` | Open a figure saved with `fig.save()` / *File → Save figure* (`.gpfig`); returns a `Figure`, or a `Timeline` for timeline figures (call `show()` to see it). |
+| `theme_options()` | `{"plots": bool, "exports": bool}` (see `theme`). |
 | `theme(name=None, *, plots=None, exports=None, save=False)` | Get or set the display theme of all windows (`'system'`, `'light'`, `'dark'`, `'dim'`, `'midnight'`, `'solarized-dark'`, `'high-contrast'`); `plots`: dark themes colour the plots on screen (default on); `exports`: exports use the theme too (default off, so files stay light); `save=True` remembers it like the menu does. Returns the theme id. |
 | `themes()` | `{id: description}` of the available themes. |
 | `tooltips(on=None, *, save=False)` | Get or switch the explanations shown when the mouse rests on a control. |
@@ -211,13 +213,16 @@ is released, not during a drag.
 
 | Member | Description |
 |---|---|
-| `xlim()`, `ylim()` | current limits |
-| `set_xlim(a, b)`, `set_ylim(a, b)` | set limits |
+| `xlim()`, `ylim()` | current limits (low, high) |
+| `set_xlim(a, b)`, `set_ylim(a, b)` | set limits; `a > b` also reverses the axis (as in matplotlib), `a < b` keeps the direction; equal or non-finite limits raise `ValueError` |
 | `autoscale(x=True, y=True)` | fit the data |
 | `reset_view()`, `set_home_view()` | home view (also the `Home` key) |
 | `title`, `xlabel`, `ylabel` | read/write properties |
 | `legend(visible=True)`, `grid(visible=True)` | toggles |
 | `undo()`, `redo()` | the same history as Ctrl+Z / Ctrl+Shift+Z in the window |
+| `save(filename)` | save everything (all panels' data, peaks with labels and comments, markers, annotations, region, styles, panel grid and views, timeline) as `.gpfig`; reopen with `plotter.load()` |
+| `export_data(filename, *, region=False)` | the visible 1D data of the current panel as CSV (wide table when all lines share x, else one row per point; `region=True`: only the selected X region) |
+| `_repr_png_()` | PNG snapshot: in Jupyter a figure as the last expression of a cell is shown inline |
 | `savefig(filename, *, width=0, height=0, scale=2.0)` | `.png` / `.svg` / `.pdf`; size in figure pixels (default: the figure size), 100 px = 1 inch in every format; `scale` multiplies the PNG resolution |
 | `screenshot(filename)` | image of the whole window |
 | `show(block=None, timeout=None)`, `close()`, `is_open` | window control (`timeout` in seconds for a blocking show) |
@@ -338,6 +343,10 @@ removed object raises `KeyError`. Setting a property is an undoable edit.
   `step`, `fill`.
 - `set_data(x, y, *, undoable=False)`: by default, streaming updates do not
   fill the undo history.
+- `append(x, y, *, max_points=None)`: add points (live data); `max_points`
+  keeps only the newest points (a rolling window). Not in the undo history;
+  drops error bars.
+- `xerr`: `(low, high)` arrays or `None` (like `yerr`).
 - `set_errors(xerr=None, yerr=None)`: replace the error bars (undoable).
 - `remove()`.
 
@@ -388,8 +397,11 @@ removed object raises `KeyError`. Setting a property is an undoable edit.
     (prompt idle, `show()`, `pause()`, `wait_for_region()`).
   - Do not block the main thread on such a worker (for example with
     `thread.join()`) without running the event loop.
-- **Jupyter notebooks:** the windows need a Qt event loop. In a notebook
-  kernel, call `plotter.show()` (blocking) or `plotter.pause()`; there is no
-  automatic kernel integration (terminal IPython uses `%gui plotter`).
+- **Jupyter notebooks:** a figure that is the last expression of a cell is
+  shown inline as an image (`_repr_png_`). Interactive windows need a Qt
+  event loop: call `plotter.show()` (blocking) or `plotter.pause()`; there is
+  no automatic kernel integration (terminal IPython uses `%gui plotter`).
+- **Text arguments** (labels, titles, comments) accept `None` (empty) and any
+  object, converted with `str()`.
 - **Data copies:** arrays are copied on the way in and on the way out, so
   later NumPy changes do not affect the plot until you send the data again.

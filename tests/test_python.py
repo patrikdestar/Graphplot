@@ -793,6 +793,18 @@ class PlotterTests(unittest.TestCase):
         plt.close("all")
         self.assertIn("plots", plotter.theme_options())
 
+    def test_append_xerr_and_inline_png(self):
+        f = self.fig
+        line = f.plot([0, 1], [0, 1], xerr=0.2)
+        self.assertEqual(list(line.xerr[0]), [0.2, 0.2])
+        line.append([2, 3], [4, 5])
+        self.assertEqual(list(line.x), [0, 1, 2, 3])
+        line.append(np.arange(4.0, 10.0), np.arange(4.0, 10.0), max_points=5)
+        self.assertEqual(list(line.x), [5, 6, 7, 8, 9])
+        with self.assertRaises(ValueError):
+            line.append([1], [1, 2])
+        self.assertEqual(f._repr_png_()[:4], b"\x89PNG")
+
     def test_pyplot_compat_round2(self):
         import io
         import plotter.pyplot as plt

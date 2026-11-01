@@ -15,6 +15,8 @@ Graphplot/
 │   │   ├── BrukerReader.*         Bruker TopSpin pdata (2rr + procs/proc2s) reader/writer
 │   │   ├── Style.*                all visual settings, .gpstyle files, built-in styles
 │   │   ├── Statistics.*           region statistics (mean, sd, min/max, RMS, integral)
+│   │   ├── ModelJson.*            panel content <-> JSON (figure files)
+│   │   ├── DataExport.*           data as CSV, statistics as TSV
 │   │   ├── TimeSeriesLoader.*     time-column detection for sensor logs
 │   │   └── DataLoader.*           column / matrix text file readers
 │   ├── commands/               5. history layer
@@ -31,6 +33,7 @@ Graphplot/
 │   │   └── InteractionController.*  mouse/keyboard → view changes and editor calls
 │   ├── gui/                    4. GUI layer
 │   │   ├── FigureWindow.*         main window: wiring, toolbar, menus, status bar
+│   │   ├── FigureFile.cpp         FigureWindow::saveFigure / loadFigure (.gpfig)
 │   │   ├── PropertiesPanel.*      object tree + property editors
 │   │   ├── PeakTable.*            peak list, picking controls, CSV import/export
 │   │   ├── StyleEditor.*          dialog editing every style key
@@ -102,7 +105,9 @@ link the same code:
 6. **Python bindings** hold `(figure, panel, id)` handles and call
    PlotEditor, so edits made from Python are undoable exactly like mouse
    edits. Results are read from the model. Calls through an `Axes` name
-   their target panel, so they cannot be redirected by a user click.
+   their target panel in a per-thread call context (`pyglue::CallContext`,
+   carried into the GUI-thread task of each call), so they cannot be
+   redirected by a user click and threads never wait on a shared lock.
 
 Adding a new object type follows the existing pattern: a value type, model
 storage and signals, a traits struct for the generic commands, a renderer
