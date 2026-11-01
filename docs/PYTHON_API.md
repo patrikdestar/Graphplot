@@ -45,9 +45,9 @@ File paths may be strings with `~` or `pathlib.Path` objects.
 | `contour(z, x=None, y=None, *, label, levels, factor, base=None, color, negative_color, negative=True, image=False, linewidth)` | `Contour` |
 | `image(z, x=None, y=None, *, cmap='viridis', colorbar=True, vmin=None, vmax=None, label=None)` | `Contour` drawn as a colour-mapped image only (heat map) |
 | `open_bruker(path)` | `Contour` (Bruker processed 2D spectrum, ppm axes) |
-| `marker(position, orientation='v', *, color, label='', style='--', width=1.5, show_value=True)` | `Marker` |
+| `marker(position, orientation='v', *, color, label='', style='--', width=1.5, show_value=True, span_to=None)` | `Marker` (with `span_to`: a translucent band from `position` to `span_to`) |
 | `vline(x, **kw)`, `hline(y, **kw)` | `Marker` |
-| `annotate(text, x, y, *, color=None, fontsize=None)` | `Annotation` (unset colour/size follow the style) |
+| `annotate(text, x, y, *, color=None, fontsize=None, ha='left', va='bottom', arrow_to=None, coords='data')` | `Annotation` (unset colour/size follow the style; `coords='axes'`: x, y are fractions of the axes box and stay put when the view changes) |
 | `lines()`, `contours()`, `markers()`, `annotations()` | lists of handles |
 | `line(label)` | the `Line` with that label |
 | `get_marker_positions()` | `[(label, 'v'/'h', position), …]` |
@@ -142,6 +142,8 @@ How `pick_peaks` works:
 |---|---|
 | `x_reversed`, `y_reversed` | high values on the left / bottom (set automatically by `open_bruker`) |
 | `x_log`, `y_log` | logarithmic axes |
+| `x_time` | x values are Unix times (UTC): date / time tick labels (set automatically for datetime x data) |
+| `legend_loc` | legend position of this panel (`'upper left'`, …); `None` = the style's `legend.loc` |
 | `diagonal` | dashed y = x line |
 
 ### Styles (figure-wide, undoable)
@@ -236,7 +238,7 @@ is released, not during a drag.
 | `save(filename)` | save everything (all panels' data, peaks with labels and comments, markers, annotations, region, styles, panel grid and views, timeline) as `.gpfig`; reopen with `plotter.load()` |
 | `export_data(filename, *, region=False)` | the visible 1D data of the current panel as CSV (wide table when all lines share x, else one row per point; `region=True`: only the selected X region) |
 | `_repr_png_()` | PNG snapshot: in Jupyter a figure as the last expression of a cell is shown inline |
-| `savefig(filename, *, width=0, height=0, scale=2.0)` | `.png` / `.svg` / `.pdf`; size in figure pixels (default: the figure size), 100 px = 1 inch in every format; `scale` multiplies the PNG resolution |
+| `savefig(filename, *, width=0, height=0, scale=2.0)` | `.png` / `.jpg` / `.svg` / `.pdf`; size in figure pixels (default: the figure size), 100 px = 1 inch in every format; `scale` multiplies the PNG/JPG resolution |
 | `screenshot(filename)` | image of the whole window |
 | `show(block=None, timeout=None)`, `close()`, `is_open` | window control (`timeout` in seconds for a blocking show) |
 
@@ -320,10 +322,10 @@ import plotter.pyplot as plt
 
 | Supported | Not supported |
 |---|---|
-| `figure`, `subplots` (incl. `gridspec_kw` height ratios / hspace), `subplot(211)`, `fig.add_subplot`, `clf`, `cla`, `suptitle`, `get_fignums`, `ion`/`ioff`/`draw` (no-ops), `fig.set_size_inches`, `fig.legend`, `gcf`, `gca`, `sca`, `close` (figure, number, name or `'all'`), `show`, `pause`, `savefig(dpi=, format=)` to a path or a binary file object | non-uniform `pcolormesh` grids |
-| `plot` with format strings (`'r--o'`, `'C1--'`, several x/y/fmt groups), `step`, `bar` (categories, colour lists, `yerr`), `barh`, `semilogx`/`semilogy`/`loglog`, `axis([...])`, `hlines`/`vlines`, `axvspan`/`axhspan` (cover the range at call time), `fill_betweenx`, `scatter` (incl. `c=values, cmap=`), `errorbar(fmt=)`, `hist` (one or several datasets; `step`, `stepfilled`/`bar`, `errorbar`), `stairs` | polar and 3D axes |
-| `fill_between` (incl. `where=`), `contour`/`contourf` (X, Y, Z), `imshow` (origin, extent, cmap, vmin/vmax), `pcolormesh` (uniform grids, edges or centres), `colorbar(mappable, label=)`, `axhline`, `axvline`, `text` (incl. `transform=ax.transAxes`), `annotate` | twin axes, RGB images |
-| `xlabel`, `ylabel`, `title`, `xlim`, `ylim`, `xscale`, `yscale`, `legend(labels, loc=name or code, frameon=)`, `ax.set(...)`, `xticks`/`yticks`, `minorticks_on`/`off` (figure-wide), `figtext`, `rcParams` (common keys map to style keys), `ax.set_xticks`/`set_xticklabels`, `grid`, `plt.style.use`; colours `'C0'`…, `'tab:blue'`…, `'0.5'` | `rcParams` (use `plotter.style.set`) |
+| `figure`, `subplots` (incl. `gridspec_kw` height ratios / hspace), `subplot(211)`, `fig.add_subplot`, `clf`, `cla`, `suptitle`, `get_fignums`, `ion`/`ioff`/`draw` (no-ops), `fig.set_size_inches`, `fig.legend`, `gcf`, `gca`, `sca`, `close` (figure, number, name or `'all'`), `show`, `pause`, `savefig(dpi=, format=)` to a path (no extension: `.png`) or a binary file object; `.png`, `.jpg`, `.svg`, `.pdf` | non-uniform `pcolormesh` grids (a clear error) |
+| `plot` with format strings (`'r--o'`, `'C1--'`, several x/y/fmt groups), `step`, `bar` (categories, colour lists, `yerr`), `barh` (categories), `semilogx`/`semilogy`/`loglog`, `axis([...])`, `hlines`/`vlines`, `axvspan`/`axhspan` (bands that always cover the full height / width), `fill_betweenx`, `scatter` (incl. `c=values, cmap=`, `edgecolors=`), `errorbar(fmt=)`, `hist` (one or several datasets; `step`, `stepfilled`/`bar`, `errorbar`, `log=True`), `stairs`; datetime x values get date tick labels | polar and 3D axes |
+| `fill_between` (incl. `where=`), `contour` (single colour: negative levels dashed), `contourf` (flat colour bands between round levels), `imshow` (origin, extent, cmap, vmin/vmax), `pcolormesh` (uniform grids, edges or centres), `colorbar(mappable, label=)`, `axhline`, `axvline`, `text` (incl. `transform=ax.transAxes`: stays in place when the view changes), `annotate` (`xycoords`/`textcoords` `'data'` or `'axes fraction'`; `'offset points'` puts the text at `xy`), `twinx` | RGB images |
+| `xlabel`, `ylabel`, `title`, `xlim`, `ylim`, `xscale`, `yscale`, `legend(labels, loc=name or code (per panel), frameon=, fontsize=)`, `ax.set(...)`, `xticks`/`yticks`, `minorticks_on`/`off` (figure-wide), `figtext`, `rcParams` (common keys map to style keys; named sizes like `'large'`, font lists, invalid values raise), `ax.set_xticks`/`set_xticklabels`, `grid`, `plt.style.use`; colours `'C0'`…, `'tab:blue'`…, `'0.5'`, basic names with matplotlib's exact values | other `rcParams` keys (kept, not used; see `plotter.style.set`) |
 
 Axes methods use the matplotlib names (`set_xlabel`, `set_xlim`,
 `set_yscale`, `invert_xaxis`, `get_xlim`, `autoscale`, …). `suptitle` sets the
@@ -336,10 +338,11 @@ Differences from matplotlib:
 
 - Figure sizes are converted at 100 px per inch; exports (PNG metadata, SVG,
   PDF) use the same scale, so `figsize=(8, 6)` is 8 × 6 inches in every format.
-- The legend position and font are figure-wide style settings: in a
-  multi-panel figure the last `legend(loc=...)` applies to all panels.
+- The legend position is per panel; the legend font size and frame are
+  figure-wide style settings.
 - Masked arrays are drawn with gaps; NaT / NaN values are gaps too.
-- Contour levels are geometric (NMR convention).
+- `contour` with a level count uses geometric levels (NMR convention); give a
+  list for exact levels. `contourf` uses evenly spaced round levels.
 - `hspace` / `wspace` (fractions of the panel size in matplotlib) are converted
   to pixels as fraction × 100; 0 still makes the frames touch.
 
@@ -352,11 +355,12 @@ removed object raises `KeyError`. Setting a property is an undoable edit.
 
 - **Read-only:** `x`, `y` (NumPy copies), `yerr` (`(low, high)` or `None`),
   `exists`.
-- **Properties:** `label`, `color`, `width`, `style`, `marker`, `visible`,
+- **Properties:** `label`, `color`, `width`, `style`, `marker`,
+  `markeredgecolor` (`None` = the line colour, `'none'` = no outline), `visible`,
   `step`, `fill`.
 - `set_data(x, y, *, undoable=False)`: by default, streaming updates do not
   fill the undo history.
-- `append(x, y, *, max_points=None)`: add points (live data); `max_points`
+- `append(x, y, *, max_points=None)`: add points or one point (live data); `max_points`
   keeps only the newest points (a rolling window). Not in the undo history;
   drops error bars.
 - `xerr`: `(low, high)` arrays or `None` (like `yerr`).
@@ -377,7 +381,8 @@ removed object raises `KeyError`. Setting a property is an undoable edit.
 
 - **Read-only:** `z` (2D array copy), `extent` (`(x0, x1, y0, y1)`).
 - **Properties:** `label`, `base_level`, `factor`, `n_levels`, `negative`,
-  `image`, `visible`, `color`, `negative_color`.
+  `image`, `visible`, `color`, `negative_color`, `negative_dashed`, `filled`
+  (the image in flat colour bands between the levels, as `contourf`).
 - `levels()`: all drawn levels, sorted.
 - `scale_levels(factor)`: `factor < 1` reveals weaker features.
 - `set_data(z, x=None, y=None)`: keeps the contour settings.

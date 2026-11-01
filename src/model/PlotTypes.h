@@ -39,6 +39,7 @@ struct DatasetStyle {
     LineStyle lineStyle = LineStyle::Solid;
     ScatterShape scatter = ScatterShape::None;
     double scatterSize = 0.0;  // <= 0: style default (lines.markersize)
+    QColor markerEdge;         // symbol outline: invalid = the line colour, transparent = none
     StepMode step = StepMode::None;
     QColor fillColor;          // invalid = no fill; otherwise fill to y = 0 or to fillTo
     ObjectId fillTo = kInvalidId;  // fill the band between this dataset and another one
@@ -79,6 +80,8 @@ struct ContourStyle {
     double vmin = 0.0, vmax = 1.0;  // a missing limit is -inf / +inf (taken from the data)
     QVector<double> levels;    // explicit contour levels (used exactly); empty = geometric levels
     bool smooth = true;        // image: interpolate between cells; false = blocky cells (imshow)
+    bool filled = false;       // image in flat colour bands between the levels (contourf)
+    bool negativeDashed = false;  // negative levels drawn dashed (single-colour contours)
     bool operator==(const ContourStyle&) const = default;
 };
 
@@ -122,7 +125,10 @@ struct Annotation {
     int alignment = 0x0001 | 0x0040;  // Qt::AlignLeft | Qt::AlignBottom
     // Optional arrow from the text to a point (annotate(..., xy=...)).
     bool arrow = false;
-    double arrowX = 0.0, arrowY = 0.0;
+    double arrowX = 0.0, arrowY = 0.0;  // always data coordinates
+    // (x, y) are fractions of the axes box (0..1 from the bottom-left corner)
+    // instead of data: the text keeps its place when the view changes.
+    bool axesCoords = false;
     bool operator==(const Annotation&) const = default;
 };
 
@@ -155,6 +161,7 @@ struct AxesInfo {
     QString xLabel;
     QString yLabel;
     bool legendVisible = true;
+    QString legendLoc;          // e.g. "upper left"; empty = the style's legend.loc
     bool gridVisible = true;
     bool xReversed = false;     // high values on the left (NMR ppm convention)
     bool yReversed = false;     // high values at the bottom
@@ -162,6 +169,8 @@ struct AxesInfo {
     bool showPeakLabels = true;
     bool xLog = false;          // logarithmic axes
     bool yLog = false;
+    // x values are Unix times (seconds since 1970, UTC): date / time tick labels.
+    bool xTime = false;
     // Custom ticks: positions (and optional text labels; empty = the numbers).
     // customXTicks = false: automatic ticks; true with no positions: no ticks.
     bool customXTicks = false, customYTicks = false;

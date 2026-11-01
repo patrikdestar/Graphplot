@@ -131,12 +131,9 @@ public:
     void setOwnTitle(bool on);
     // Upper limit for the number of y ticks (0 = the style's); short panels
     // such as timeline rows use fewer so labels do not overlap.
-    void setMaxTicksY(int n)
-    {
-        if (n == m_maxTicksY) return;
-        m_maxTicksY = n;
-        applyStyle();
-    }
+    // Takes effect in the current replot (it is called from afterLayout).
+    void setMaxTicksY(int n);
+    void applyLegendLoc(const Style& st);
     // Draw the region also in exports (default: no, it is a selection aid).
     void setRegionInExports(bool on) { m_regionInExports = on; }
 
@@ -162,6 +159,7 @@ private:
         ContourPlottable* contour = nullptr;
         QCPColorMap* image = nullptr;
         double lo = 0, hi = 0;  // finite data range (for automatic colour limits)
+        bool refined = false;   // image cells interpolated finer (filled contours)
     };
     struct RegionVisual {
         QCPItemRect* rect = nullptr;

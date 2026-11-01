@@ -1186,11 +1186,12 @@ void FigureWindow::onExport()
     QString selectedFilter;
     QString fn = QFileDialog::getSaveFileName(
         this, "Export figure", m_lastDir,
-        "PNG image (*.png);;SVG vector graphics (*.svg);;PDF document (*.pdf)", &selectedFilter);
+        "PNG image (*.png);;JPEG image (*.jpg);;SVG vector graphics (*.svg);;PDF document (*.pdf)", &selectedFilter);
     if (fn.isEmpty()) return;
     if (QFileInfo(fn).suffix().isEmpty()) {
         if (selectedFilter.contains("svg")) fn += ".svg";
         else if (selectedFilter.contains("pdf")) fn += ".pdf";
+        else if (selectedFilter.contains("jpg")) fn += ".jpg";
         else fn += ".png";
     }
     m_lastDir = QFileInfo(fn).absolutePath();

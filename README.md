@@ -240,8 +240,10 @@ The application:
 - `--demo2d` shows a synthetic 2D spectrum.
 - `--timeline a.csv b.csv` opens sensor logs as a timeline (one row per file;
   add `--row-per-column` for one row per signal).
-- `--export figure.pdf` renders the figure (plot only; `.png`, `.svg`, `.pdf`)
-  and exits; `--screenshot out.png` renders the whole window. Errors then go
+- `--export figure.pdf` renders the figure (plot only; `.png`, `.jpg`, `.svg`,
+  `.pdf`) and exits. `--size 800x600` sets the figure size in pixels;
+  `--scale 1` sets the pixel scale of PNG/JPG files (default 2, so an
+  800x600 figure gives a 1600x1200 image); `--screenshot out.png` renders the whole window. Errors then go
   to the terminal with a non-zero exit code (for scripts and CI).
 - `--version` prints the version.
 - `--theme dark` uses a display theme for this session (`system`, `light`,

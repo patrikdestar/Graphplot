@@ -401,7 +401,7 @@ class PlotterTests(unittest.TestCase):
         self.assertEqual(plt.xlim(), (0.0, 8.0))
         plt.yscale("log")
         plt.legend(loc="lower left", frameon=False)
-        self.assertEqual(plt.gcf().native.get_style_param("legend.loc"), "lower left")
+        self.assertEqual(plt.gca().panel.legend_loc, "lower left")  # per panel, as matplotlib
         fig, axs = plt.subplots(2, 2, sharex=True, figsize=(5, 5))
         self.assertEqual(len(axs), 2)
         axs[1][0].plot([1, 2], [3, 4])
@@ -1019,6 +1019,54 @@ class PlotterTests(unittest.TestCase):
             self.assertEqual(tuple(g.xlim()), (0, 0.5))
             self.assertGreaterEqual(g.ylim()[1], 9)
             plt.close("all")
+
+    def test_round7_features(self):
+        import datetime as dt
+        import plotter.pyplot as plt
+        with tempfile.TemporaryDirectory() as d:
+            fig, ax = plt.subplots()
+            ax.plot([0, 1], [0, 1])
+            t = ax.text(0.05, 0.95, "(a)", transform=ax.transAxes, va="top")
+            self.assertEqual(t.coords, "axes")
+            ax.annotate("note", xy=(0.5, 0.5), xytext=(5, 5), textcoords="offset points")
+            ax.legend(loc="upper left", fontsize="small")
+            self.assertEqual(ax.panel.legend_loc, "upper left")
+            with self.assertRaises(ValueError):
+                ax.panel.legend_loc = "nowhere"
+            ax.hist([1, 2, 2, 3, 3, 3], log=True)
+            ax.barh(["a", "b"], [1, 2])
+            s = ax.scatter([1, 2], [1, 2], edgecolors="k")
+            self.assertEqual(s.markeredgecolor, "#000000")
+            with self.assertRaises(ValueError):
+                ax.pcolormesh([0, 1, 3, 7], [0, 1, 2], np.ones((2, 3)))
+            x = np.linspace(-1, 1, 20)
+            cf = ax.contourf(x, x, np.outer(x, x), 6)
+            self.assertTrue(cf.filled)
+            self.assertFalse(cf.contours)
+            c = ax.contour(x, x, np.outer(x, x), [-0.5, 0.5], colors="k")
+            self.assertTrue(c.negative_dashed)
+            plt.savefig(os.path.join(d, "noext"))  # matplotlib's default: .png
+            self.assertTrue(os.path.exists(os.path.join(d, "noext.png")))
+            plt.savefig(os.path.join(d, "a.jpg"))
+            self.assertTrue(os.path.getsize(os.path.join(d, "a.jpg")) > 0)
+            plt.close("all")
+            # rcParams: named sizes, font lists, validation, get().
+            old = plt.rcParams["font.size"]
+            plt.rcParams["font.family"] = ["DejaVu Sans", "Arial"]
+            self.assertEqual(plt.rcParams["font.family"], "DejaVu Sans")
+            with self.assertRaises(ValueError):
+                plt.rcParams["font.size"] = "banana"
+            self.assertEqual(plt.rcParams.get("no.such.key", 3), 3)
+            plt.rcParams["font.size"] = old
+            # Datetime x data: date tick labels; Line.append takes one point.
+            f = plotter.figure()
+            line = f.plot([dt.datetime(2024, 5, 1, h) for h in range(5)], range(5))
+            self.assertTrue(f.x_time)
+            line.append(1714536000.0 + 5 * 3600, 5)
+            self.assertEqual(len(line.x), 6)
+            path = os.path.join(d, "t.gpfig")
+            f.save(path)
+            self.assertTrue(plotter.load(path).x_time)
 
     def test_round6_correctness(self):
         import plotter.pyplot as plt

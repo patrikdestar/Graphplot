@@ -94,6 +94,23 @@ QString toPath(const std::string& p)
     return s;
 }
 
+// Absolute times (datetime64, datetime / pandas Timestamp objects), which
+// toVector turns into Unix seconds; plotting them gives date tick labels.
+bool isDateLike(const py::handle& obj)
+{
+    if (py::hasattr(obj, "dt") || (py::hasattr(obj, "tz") && py::hasattr(obj, "tz_convert"))) return true;
+    try {
+        py::array a = py::module_::import("numpy").attr("asarray")(obj);
+        if (a.dtype().kind() == 'M') return true;
+        if (a.dtype().kind() == 'O' && a.size() > 0) {
+            py::object first = a.attr("ravel")()[py::int_(0)];
+            return py::hasattr(first, "timestamp");
+        }
+    } catch (const py::error_already_set&) {
+    }
+    return false;
+}
+
 QVector<double> toVector(const py::handle& obj, const char* what)
 {
     // Masked arrays: masked points become NaN (gaps), like matplotlib.
@@ -885,6 +902,7 @@ PYBIND11_MODULE(_plotter, mod)
                 xv = toVector(x, "x");
                 yv = toVector(y, "y");
             }
+            const bool xIsDate = !y.is_none() && isDateLike(x);
             if (xv.size() != yv.size())
                 throw py::value_error("x and y must have the same length");
             Dataset d;
@@ -933,6 +951,11 @@ PYBIND11_MODULE(_plotter, mod)
                     }
                 }
                 const bool first = self->model()->datasets().empty() && self->model()->matrices().empty();
+                if (first && xIsDate && !self->model()->axesInfo().xTime) {
+                    AxesInfo info = self->model()->axesInfo();
+                    info.xTime = true;  // datetime x: date tick labels, as in matplotlib
+                    ed->setAxesInfo(info);
+                }
                 const ObjectId nid = ed->addDataset(d);
                 if (first) {
                     self->renderer()->autoscale();
@@ -1213,7 +1236,10 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
     fig.def(
         "annotate",
         [](FigurePtr self, const Text& text, double x, double y, const py::object& color,
-           const py::object& fontsizeObj, const std::string& ha, const std::string& va, const py::object& arrowTo) {
+           const py::object& fontsizeObj, const std::string& ha, const std::string& va, const py::object& arrowTo,
+           const std::string& coords) {
+            if (coords != "data" && coords != "axes")
+                throw py::value_error("coords must be 'data' or 'axes'");
             const double fontsize = fontsizeObj.is_none() ? 0.0 : fontsizeObj.cast<double>();
             if (!fontsizeObj.is_none() && !(fontsize > 0 && std::isfinite(fontsize)))
                 throw py::value_error("fontsize must be a positive number");
@@ -1225,6 +1251,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
             if (c.isValid()) a.color = c;
             a.fontSize = fontsize;
             a.alignment = toAlignment(ha, va);
+            a.axesCoords = coords == "axes";
             if (!arrowTo.is_none()) {
                 const auto to = arrowTo.cast<std::pair<double, double>>();
                 a.arrow = true;
@@ -1235,8 +1262,9 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         },
         py::arg("text"), py::arg("x"), py::arg("y"), py::kw_only(), py::arg("color") = py::none(),
         py::arg("fontsize") = py::none(), py::arg("ha") = "left", py::arg("va") = "bottom",
-        py::arg("arrow_to") = py::none(),
-        "Add a text annotation at data (x, y). ha / va: which point of the text sits there\n"
+        py::arg("arrow_to") = py::none(), py::arg("coords") = "data",
+        "Add a text annotation at data (x, y), or at a fraction of the axes box with\n"
+        "coords='axes' ((0, 0) bottom-left, (1, 1) top-right; it stays put when the view changes). ha / va: which point of the text sits there\n"
         "('left', 'center', 'right' / 'bottom', 'center', 'top'); arrow_to=(x, y) draws an arrow\n"
         "from the text to that point."); 
 
@@ -1568,6 +1596,28 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
             });
         },
         py::arg("visible") = true);
+    fig.def_property(
+        "legend_loc",
+        [](FigurePtr self) -> py::object {
+            const QString loc = inGui([&] { return self->model()->axesInfo().legendLoc; });
+            if (loc.isEmpty()) return py::none();
+            return py::str(loc.toStdString());
+        },
+        [](FigurePtr self, const py::object& v) {
+            QString loc = v.is_none() ? QString() : QString::fromStdString(py::str(v).cast<std::string>()).trimmed();
+            if (loc == "right") loc = "center right";  // matplotlib's alias
+            static const QStringList ok = {"upper right", "upper left", "lower right", "lower left", "upper center",
+                                           "lower center", "center left", "center right", "center"};
+            if (!loc.isEmpty() && !ok.contains(loc))
+                throw py::value_error("legend_loc must be None or one of: " + ok.join(", ").toStdString());
+            inGui([&] {
+                AxesInfo a = self->model()->axesInfo();
+                a.legendLoc = loc;
+                self->editor()->setAxesInfo(a);
+            });
+        },
+        "Legend position of this panel ('upper left', 'lower right', 'center', ...);\n"
+        "None = the style's legend.loc.");
     auto axesFlag = [](bool AxesInfo::*field) {
         return std::make_pair(
             [field](FigurePtr self) { return inGui([&] { return self->model()->axesInfo().*field; }); },
@@ -1586,6 +1636,10 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         auto [g4, s4] = axesFlag(&AxesInfo::showPeakLabels);
         auto [g5, s5] = axesFlag(&AxesInfo::xLog);
         auto [g6, s6] = axesFlag(&AxesInfo::yLog);
+        auto [g7, s7] = axesFlag(&AxesInfo::xTime);
+        fig.def_property("x_time", g7, s7,
+                         "x values are Unix times (seconds, UTC): date / time tick labels.\n"
+                         "Set automatically when the first data plotted has datetime x values.");
         fig.def_property("x_log", g5, s5, "Logarithmic x axis.");
         fig.def_property("y_log", g6, s6, "Logarithmic y axis.");
         fig.def_property("peak_labels", g4, s4, "Show peak labels on the plot.");
@@ -1909,7 +1963,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         },
         py::arg("filename"), py::kw_only(), py::arg("width") = 0, py::arg("height") = 0,
         py::arg("scale") = 2.0,
-        "Export to .png, .svg or .pdf (format from the extension). width/height in pixels\n"
+        "Export to .png, .jpg, .svg or .pdf (format from the extension). width/height in pixels\n"
         "(0 = the figure size given to plotter.figure); scale multiplies the PNG resolution.");
     fig.def(
         "screenshot",
@@ -1975,6 +2029,20 @@ Remove a callback with off(event, callback).)doc");
                           const ScatterShape sh = toScatter(v);
                           h.setStyle([&](QString&, DatasetStyle& s) { s.scatter = sh; });
                       })
+        .def_property(
+            "markeredgecolor",
+            [](Line& h) -> py::object {
+                const QColor c = inGui([&] { return h.get().style.markerEdge; });
+                if (!c.isValid()) return py::none();
+                return py::str(colorName(c));
+            },
+            [](Line& h, const py::object& v) {
+                // None = the line colour; 'none' = no outline.
+                const bool none = py::isinstance<py::str>(v) && v.cast<std::string>() == "none";
+                const QColor c = none ? QColor(Qt::transparent) : toColor(v, "markeredgecolor");
+                h.setStyle([&](QString&, DatasetStyle& s) { s.markerEdge = c; });
+            },
+            "Outline colour of the symbols: None = the line colour, 'none' = no outline.")
         .def_property("visible",
                       [](Line& h) { return inGui([&] { return h.get().style.visible; }); },
                       [](Line& h, bool v) { h.setStyle([&](QString&, DatasetStyle& s) { s.visible = v; }); })
@@ -2008,7 +2076,14 @@ Remove a callback with off(event, callback).)doc");
         .def(
             "append",
             [](Line& h, const py::object& x, const py::object& y, const py::object& maxPoints) {
-                const QVector<double> xv = toVector(x, "x"), yv = toVector(y, "y");
+                // One point (two numbers) or sequences of points.
+                const auto vec = [](const py::object& v, const char* what) {
+                    if (py::isinstance<py::float_>(v) || py::isinstance<py::int_>(v) ||
+                        (py::hasattr(v, "ndim") && v.attr("ndim").cast<int>() == 0))
+                        return QVector<double>{v.cast<double>()};
+                    return toVector(v, what);
+                };
+                const QVector<double> xv = vec(x, "x"), yv = vec(y, "y");
                 if (xv.size() != yv.size()) throw py::value_error("x and y must have the same length");
                 const qsizetype keep = maxPoints.is_none() ? -1 : maxPoints.cast<qsizetype>();
                 if (!maxPoints.is_none() && keep < 1) throw py::value_error("max_points must be >= 1");
@@ -2116,6 +2191,19 @@ Remove a callback with off(event, callback).)doc");
         .def_property("negative",
                       [](Contour& h) { return inGui([&] { return h.get().style.showNegative; }); },
                       [](Contour& h, bool v) { h.setStyle([&](QString&, ContourStyle& s) { s.showNegative = v; }); })
+        .def_property("filled",
+                      [](Contour& h) { return inGui([&] { return h.get().style.filled; }); },
+                      [](Contour& h, bool v) {
+                          h.setStyle([&](QString&, ContourStyle& s) {
+                              s.filled = v;
+                              if (v) s.showImage = true;
+                          });
+                      },
+                      "Image in flat colour bands between the contour levels (contourf).")
+        .def_property("negative_dashed",
+                      [](Contour& h) { return inGui([&] { return h.get().style.negativeDashed; }); },
+                      [](Contour& h, bool v) { h.setStyle([&](QString&, ContourStyle& s) { s.negativeDashed = v; }); },
+                      "Draw negative levels dashed.")
         .def_property("image",
                       [](Contour& h) { return inGui([&] { return h.get().style.showImage; }); },
                       [](Contour& h, bool v) { h.setStyle([&](QString&, ContourStyle& s) { s.showImage = v; }); })
@@ -2326,6 +2414,14 @@ Remove a callback with off(event, callback).)doc");
                           const QColor c = toColor(v);
                           h.edit([&](Annotation& a) { a.color = c; });
                       })
+        .def_property(
+            "coords",
+            [](AnnotationH& h) { return std::string(inGui([&] { return h.get().axesCoords; }) ? "axes" : "data"); },
+            [](AnnotationH& h, const std::string& v) {
+                if (v != "data" && v != "axes") throw py::value_error("coords must be 'data' or 'axes'");
+                h.edit([&](Annotation& a) { a.axesCoords = v == "axes"; });
+            },
+            "'data': the position is in data coordinates; 'axes': fractions of the axes box.")
         .def_property(
             "arrow_to",
             [](AnnotationH& h) -> py::object {

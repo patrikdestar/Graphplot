@@ -30,6 +30,7 @@ software; figure sizes are converted at 100 pixels per inch.
 """
 from __future__ import annotations
 
+import os as _os
 import numpy as _np
 
 import plotter as _plotter
@@ -78,10 +79,23 @@ _TAB_COLORS = {  # matplotlib's "tab:" (Tableau 10) colours
     "grey": "#7f7f7f", "olive": "#bcbd22", "cyan": "#17becf"}
 
 
+# matplotlib's exact values for the names plotter maps to its own palette tones
+# (other CSS names are parsed with the same values by Qt).
+_EXACT_COLORS = {"b": "#0000ff", "g": "#008000", "r": "#ff0000", "c": "#00bfbf", "m": "#bf00bf",
+                 "y": "#bfbf00", "k": "#000000", "w": "#ffffff",
+                 "blue": "#0000ff", "orange": "#ffa500", "aqua": "#00ffff", "teal": "#008080",
+                 "yellow": "#ffff00", "magenta": "#ff00ff", "green": "#008000", "violet": "#ee82ee",
+                 "purple": "#800080", "red": "#ff0000", "black": "#000000", "cyan": "#00ffff",
+                 "gray": "#808080", "grey": "#808080"}
+
+
 def _mpl_color(c):
-    """matplotlib colour forms that plotter does not parse itself."""
+    """matplotlib colour forms that plotter does not parse itself, and the
+    exact matplotlib values of the basic colour names."""
     if isinstance(c, str) and c.startswith("tab:") and c[4:] in _TAB_COLORS:
         return _TAB_COLORS[c[4:]]
+    if isinstance(c, str) and c.strip().lower() in _EXACT_COLORS:
+        return _EXACT_COLORS[c.strip().lower()]
     if isinstance(c, str):
         try:
             v = float(c)  # grayscale "0.5"
@@ -182,6 +196,9 @@ class PltAxes:
         return lines
 
     def scatter(self, x, y, s=None, c=None, marker="o", cmap=None, vmin=None, vmax=None, **kw):
+        kw.pop("linewidths", None)  # the outline is 1 px
+        edge = kw.pop("edgecolors", kw.pop("edgecolor", None))
+        edge = None if edge in (None, "face") else ("none" if edge == "none" else _mpl_color(edge))
         if c is not None:
             arr = _np.asarray(c)
             npts = _np.size(x)
@@ -210,15 +227,20 @@ class PltAxes:
                                          markersize=size, color=colours[k],
                                          label=str(label) if (first is None and label is not None) else None,
                                          **{kk: vv for kk, vv in opts.items() if kk not in ("style", "marker", "color")})
+                    if edge is not None:
+                        line.markeredgecolor = edge
                     first = first or line
                 return first
             else:
                 kw["color"] = c
         size = None if s is None else float(_np.sqrt(_np.mean(s)))
         opts = _common(kw, self._ax)
-        return self._ax.plot(x, y, style="none", marker=_FMT_MARKERS.get(marker, "o"),
+        line = self._ax.plot(x, y, style="none", marker=_FMT_MARKERS.get(marker, "o"),
                              markersize=size, **{k: v for k, v in opts.items()
                                                  if k not in ("style", "marker")})
+        if edge is not None:
+            line.markeredgecolor = edge
+        return line
 
     def errorbar(self, x, y, yerr=None, xerr=None, fmt="", **kw):
         kw.pop("capsize", None)  # cap size comes from the style ('errorbar.capsize')
@@ -234,7 +256,14 @@ class PltAxes:
         return self._ax.plot(x, y, xerr=xerr, yerr=yerr, **opts)
 
     def hist(self, x, bins=10, range=None, density=False, weights=None,  # noqa: A002
-             histtype="bar", **kw):
+             histtype="bar", log=False, **kw):
+        """Histogram(s); log=True puts the count axis on a log scale."""
+        out = self._hist(x, bins, range, density, weights, histtype, **kw)
+        if log:
+            (self.set_xscale if kw.get("orientation") == "horizontal" else self.set_yscale)("log")
+        return out
+
+    def _hist(self, x, bins, range, density, weights, histtype, **kw):  # noqa: A002
         # Several datasets (a list of arrays or a 2-D array, one per column):
         # one histogram each, with shared bins, like matplotlib.
         many = (isinstance(x, (list, tuple)) and len(x) > 0 and _np.ndim(x[0]) > 0) or _np.ndim(x) == 2
@@ -322,15 +351,44 @@ class PltAxes:
         color = _mpl_color(colors) if isinstance(colors, (str, tuple)) else None
         c = self._ax.contour(z, x, y, levels=levels, color=color, negative_color=color, label=label,
                              negative=not isinstance(levels, list), cmap=cmap)
+        if color is not None:
+            c.negative_dashed = True  # single-colour contours: negative levels dashed, as matplotlib
         self._last_image = c
         return c
 
+    @staticmethod
+    def _nice_levels(z, n):
+        """About n+1 round level values spanning the data (like matplotlib's MaxNLocator)."""
+        z = _np.asarray(z, dtype=float)
+        lo, hi = _np.nanmin(z), _np.nanmax(z)
+        if not (_np.isfinite(lo) and _np.isfinite(hi)) or lo == hi:
+            return [float(lo) - 0.5, float(lo) + 0.5]
+        raw = (hi - lo) / max(1, n)
+        mag = 10.0 ** _np.floor(_np.log10(raw))
+        step = next(m * mag for m in (1, 2, 2.5, 5, 10) if m * mag >= raw)
+        first = _np.floor(lo / step) * step
+        last = _np.ceil(hi / step) * step
+        return [float(v) for v in _np.arange(first, last + step / 2, step)]
+
     def contourf(self, *args, **kw):
+        """Filled contours: flat colour bands between the levels (no lines)."""
+        import numbers
+
         cmap = kw.pop("cmap", None)
-        c = self.contour(*args, **kw)
-        c.image = True
+        args = list(args)
+        levels = kw.pop("levels", None)
+        if len(args) in (2, 4):
+            levels = args.pop()
+        z = args[0] if len(args) == 1 else args[2]
+        if levels is None or isinstance(levels, numbers.Integral):
+            levels = self._nice_levels(z, int(levels) if levels is not None else 7)
+        c = self.contour(*args, levels=list(levels), **kw)
+        c.filled = True
+        c.contours = False
         if cmap is not None:
             c.cmap = cmap
+        elif c.cmap == "auto":
+            c.cmap = "viridis"
         self._last_image = c
         return c
 
@@ -341,6 +399,13 @@ class PltAxes:
         a = _np.asarray(edges_or_centres, dtype=float)
         if a.size == n + 1:
             a = 0.5 * (a[:-1] + a[1:])
+        if a.size != n:
+            raise ValueError(f"grid coordinates: expected {n} centres or {n + 1} edges, got {a.size}")
+        if n > 2:
+            step = _np.diff(a)
+            if not _np.allclose(step, step[0], rtol=1e-3, atol=0):
+                raise ValueError("plotter draws images on evenly spaced grids only; "
+                                 "these coordinates are not evenly spaced (resample the data first)")
         return float(a[0]), float(a[-1])
 
     def imshow(self, X, cmap=None, vmin=None, vmax=None, origin=None, extent=None, aspect=None,
@@ -489,21 +554,35 @@ class PltAxes:
     def text(self, x, y, s, fontsize=None, color=None, ha=None, va=None, horizontalalignment=None,
              verticalalignment=None, **kw):
         transform = kw.pop("transform", None)
-        if isinstance(transform, tuple) and transform[:1] == ("axes",):
-            # Axes fraction -> data coordinates of the current view.
-            (x0, x1), (y0, y1) = self.get_xlim(), self.get_ylim()
-            x, y = x0 + x * (x1 - x0), y0 + y * (y1 - y0)
+        # transform=ax.transAxes: axes fractions, kept when the view changes.
+        coords = "axes" if isinstance(transform, tuple) and transform[:1] == ("axes",) else "data"
         ha = ha or horizontalalignment or "left"
         va = va or verticalalignment or "baseline"
-        return self._ax.annotate(str(s), x, y, fontsize=fontsize, color=_mpl_color(color), ha=ha, va=va)
+        return self._ax.annotate(str(s), float(x), float(y), fontsize=fontsize or kw.get("size"),
+                                 color=_mpl_color(color), ha=ha, va=va, coords=coords)
 
     def annotate(self, text, xy, xytext=None, arrowprops=None, ha=None, va=None, **kw):
-        """Text at xytext (or xy); with arrowprops an arrow from the text to xy."""
+        """Text at xytext (or xy); with arrowprops an arrow from the text to xy.
+        xycoords / textcoords: 'data' or 'axes fraction' (the arrow target xy is data)."""
         x, y = xytext if xytext is not None else xy
         fontsize = kw.get("fontsize", kw.get("size"))
         color = _mpl_color(kw.get("color"))
+        place = kw.get("textcoords") if xytext is not None else kw.get("xycoords")
+        place = place or kw.get("xycoords") or "data"
+        if place in ("offset points", "offset pixels"):
+            # A small offset in points from xy: the text goes at xy itself.
+            x, y = xy
+            xytext, place = None, kw.get("xycoords") or "data"
+        if place not in ("data", "axes fraction"):
+            import warnings
+            warnings.warn(f"plotter: coordinates {place!r} are not supported; using data coordinates",
+                          stacklevel=2)
+            place = "data"
         arrow = tuple(float(v) for v in xy) if arrowprops is not None and xytext is not None else None
-        return self._ax.annotate(str(text), x, y, fontsize=fontsize, color=color,
+        if arrow is not None and kw.get("xycoords", "data") != "data":
+            raise ValueError("the arrow target xy must be in 'data' coordinates")
+        return self._ax.annotate(str(text), float(x), float(y), fontsize=fontsize, color=color,
+                                 coords="axes" if place == "axes fraction" else "data",
                                  ha=ha or kw.get("horizontalalignment") or "left",
                                  va=va or kw.get("verticalalignment") or "baseline", arrow_to=arrow)
 
@@ -558,9 +637,13 @@ class PltAxes:
             self._ax.set_xticks(list(x), [str(t) for t in _np.atleast_1d(tick_label)])
         return line
 
-    def barh(self, y, width, height=0.8, left=0.0, color=None, label=None, **kw):
-        """Horizontal bars (filled)."""
-        y = _np.atleast_1d(_np.asarray(y, dtype=float))
+    def barh(self, y, width, height=0.8, left=0.0, color=None, label=None, tick_label=None, **kw):
+        """Horizontal bars (filled). y may be numbers or category names."""
+        ys0 = list(_np.atleast_1d(y))
+        if ys0 and isinstance(ys0[0], str):
+            tick_label = tick_label or ys0
+            ys0 = list(_np.arange(len(ys0)))
+        y = _np.asarray(ys0, dtype=float)
         wd = _np.broadcast_to(_np.asarray(width, dtype=float), y.shape)
         ht = _np.broadcast_to(_np.asarray(height, dtype=float), y.shape)
         lf = _np.broadcast_to(_np.asarray(left, dtype=float), y.shape)
@@ -569,7 +652,10 @@ class PltAxes:
                             **({"color": color} if color is not None else {})), self._ax)
         opts["style"] = "none"
         opts["color"] = opts.get("color") or self._ax._take_color()
-        return self._ax.plot(xs, ys, fill=opts["color"], **opts)
+        line = self._ax.plot(xs, ys, fill=opts["color"], **opts)
+        if tick_label is not None:
+            self._ax.set_yticks(list(y), [str(t) for t in _np.atleast_1d(tick_label)])
+        return line
 
     def step(self, x, y, *args, where="pre", **kw):
         """Step plot (where: 'pre', 'post', 'mid')."""
@@ -732,9 +818,11 @@ class PltAxes:
         if isinstance(loc, int):
             loc = self._LEGEND_CODES.get(loc)  # 0 = "best": keep the current position
         if isinstance(loc, str) and loc != "best":
-            params["legend.loc"] = loc
+            self._ax.legend_loc = loc  # this panel only, as in matplotlib
         if frameon is not None:
             params["legend.frameon"] = bool(frameon)
+        if isinstance(fontsize, str):
+            fontsize = rcParams._convert("legend.fontsize", fontsize)
         if fontsize is not None and not isinstance(fontsize, str):
             params["legend.fontsize"] = fontsize
         if params:
@@ -784,7 +872,8 @@ class _PltFigure:
         return next(a for a in self.axes if a.panel == self._fig.gca())
 
     def savefig(self, fname, dpi=None, format=None, **_):  # noqa: A002
-        """Save as png / svg / pdf. ``fname`` may be a path or a binary file object.
+        """Save as png / jpg / svg / pdf. ``fname`` may be a path or a binary file object;
+        a name without an extension gets ``.png`` (matplotlib's default).
 
         dpi defaults to 100 (the figure-size convention), as in matplotlib;
         bbox_inches, transparent, facecolor, ... are accepted and ignored."""
@@ -805,6 +894,8 @@ class _PltFigure:
         fname = str(fname)
         if format and not fname.lower().endswith("." + format.lower()):
             fname += "." + format.lower()
+        elif not _os.path.splitext(fname)[1]:
+            fname += ".png"
         self._fig.savefig(fname, width=self._size[0], height=self._size[1], scale=scale)
 
     def add_subplot(self, *args, **_):
@@ -1062,15 +1153,46 @@ class _RcParams(dict):
             "ytick.direction": "ytick.direction", "xtick.minor.visible": "xtick.minor.visible",
             "ytick.minor.visible": "ytick.minor.visible"}
 
+    # matplotlib's named font sizes, relative to font.size.
+    _SIZES = {"xx-small": 0.579, "x-small": 0.694, "small": 0.833, "medium": 1.0,
+              "large": 1.2, "x-large": 1.44, "xx-large": 1.728, "smaller": 0.833, "larger": 1.2}
+
+    def _convert(self, key, value):
+        if key == "font.family" and not isinstance(value, str):
+            value = list(value)[0] if len(value) else "sans-serif"  # first family of a list
+        if key.endswith("size") and isinstance(value, str) and value.lower() in self._SIZES:
+            try:
+                base = float(style.get("font.size"))
+            except (KeyError, ValueError):
+                base = 10.0
+            value = round(base * self._SIZES[value.lower()], 2)
+        return value
+
+    def __getitem__(self, key):
+        if not dict.__contains__(self, key) and key in self._MAP:
+            try:
+                return style.get(self._MAP[key])
+            except KeyError:
+                pass
+        return super().__getitem__(key)
+
+    def get(self, key, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
     def __setitem__(self, key, value):
-        super().__setitem__(key, value)
         if key == "figure.figsize":
             global _DEFAULT_FIGSIZE
-            _DEFAULT_FIGSIZE = tuple(value)
+            w, h = value
+            _DEFAULT_FIGSIZE = (float(w), float(h))
         elif key in self._MAP:
-            style.set({self._MAP[key]: value})
+            value = self._convert(key, value)
+            style.set({self._MAP[key]: value})  # raises for invalid values: nothing is stored
             if _current is not None and not _current.closed:
                 _current._fig.set_style({self._MAP[key]: value})
+        super().__setitem__(key, value)
 
     def update(self, *args, **kw):
         for k, v in dict(*args, **kw).items():

@@ -91,6 +91,7 @@ QJsonObject datasetToJson(const Dataset& d)
                   {"lineStyle", lineStyleName(s.lineStyle)},
                   {"symbol", scatterShapeName(s.scatter)},
                   {"symbolSize", s.scatterSize},
+                  {"markerEdge", colorText(s.markerEdge)},
                   {"step", stepModeName(s.step)},
                   {"fillColor", colorText(s.fillColor)},
                   {"fillTo", idText(s.fillTo)},
@@ -111,6 +112,7 @@ bool datasetFromJson(const QJsonObject& o, Dataset* d)
     s.lineStyle = parseLineStyle(o["lineStyle"].toString());
     s.scatter = parseScatterShape(o["symbol"].toString());
     s.scatterSize = o["symbolSize"].toDouble();
+    s.markerEdge = colorFrom(o["markerEdge"]);
     s.step = parseStepMode(o["step"].toString());
     s.fillColor = colorFrom(o["fillColor"]);
     s.fillTo = idFrom(o["fillTo"]);
@@ -148,6 +150,8 @@ QJsonObject matrixToJson(const Matrix& m)
             {"contours", s.showContours},
             {"colormap", s.colormap},
             {"smooth", s.smooth},
+            {"filled", s.filled},
+            {"negativeDashed", s.negativeDashed},
             {"levelValues", [&] {
                  QJsonArray a;
                  for (double l : s.levels) a << jnum(l);
@@ -179,6 +183,8 @@ bool matrixFromJson(const QJsonObject& o, Matrix* m)
     s.showContours = o["contours"].toBool(true);
     s.colormap = o["colormap"].toString();
     s.smooth = o["smooth"].toBool(true);
+    s.filled = o["filled"].toBool();
+    s.negativeDashed = o["negativeDashed"].toBool();
     for (const QJsonValue& l : o["levelValues"].toArray()) s.levels << jdbl(l);
     s.colorBar = o["colorBar"].toBool();
     const QJsonArray clim = o["clim"].toArray();
@@ -221,6 +227,7 @@ QJsonObject annotationToJson(const Annotation& a)
 {
     QJsonObject o{{"id", idText(a.id)}, {"x", jnum(a.x)}, {"y", jnum(a.y)}, {"text", a.text},
                   {"color", colorText(a.color)}, {"fontSize", a.fontSize}, {"alignment", a.alignment}};
+    if (a.axesCoords) o["coords"] = "axes";
     if (a.arrow) o["arrowTo"] = QJsonArray{jnum(a.arrowX), jnum(a.arrowY)};
     return o;
 }
@@ -235,6 +242,7 @@ Annotation annotationFromJson(const QJsonObject& o)
     a.color = colorFrom(o["color"]);
     a.fontSize = o["fontSize"].toDouble();
     a.alignment = o["alignment"].toInt(a.alignment);
+    a.axesCoords = o["coords"].toString() == "axes";
     const QJsonArray to = o["arrowTo"].toArray();
     a.arrow = to.size() == 2;
     if (a.arrow) a.arrowX = jdbl(to[0]), a.arrowY = jdbl(to[1]);
@@ -276,7 +284,8 @@ QJsonObject axesToJson(const AxesInfo& a)
             {"yTicks", ticksToJson(a.customYTicks, a.yTicks, a.yTickLabels)},{"title", a.title}, {"suptitle", a.suptitle},       {"xLabel", a.xLabel},       {"yLabel", a.yLabel},
             {"legend", a.legendVisible}, {"grid", a.gridVisible},  {"xReversed", a.xReversed},
             {"yReversed", a.yReversed}, {"diagonal", a.showDiagonal}, {"peakLabels", a.showPeakLabels},
-            {"xLog", a.xLog},         {"yLog", a.yLog}};
+            {"xLog", a.xLog},         {"yLog", a.yLog}, {"xTime", a.xTime},
+            {"legendLoc", a.legendLoc}};
 }
 
 QJsonValue ticksToJson(bool custom, const QVector<double>& pos, const QStringList& labels)
@@ -310,6 +319,8 @@ AxesInfo axesFromJson(const QJsonObject& o)
     a.showDiagonal = o["diagonal"].toBool();
     a.showPeakLabels = o["peakLabels"].toBool(true);
     a.xLog = o["xLog"].toBool();
+    a.xTime = o["xTime"].toBool();
+    a.legendLoc = o["legendLoc"].toString();
     a.yLog = o["yLog"].toBool();
     ticksFromJson(o["xTicks"], &a.customXTicks, &a.xTicks, &a.xTickLabels);
     ticksFromJson(o["yTicks"], &a.customYTicks, &a.yTicks, &a.yTickLabels);

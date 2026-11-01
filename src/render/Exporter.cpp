@@ -77,12 +77,15 @@ bool exportFigure(PlotRenderer* renderer, const QString& fileName, const ExportO
     if (ext == "png") {
         ok = plot->savePng(fileName, w, h, opts.scale > 0 ? opts.scale : 1.0, -1,
                            int(kDpi * (opts.scale > 0 ? opts.scale : 1.0)), QCP::ruDotsPerInch);
+    } else if (ext == "jpg" || ext == "jpeg") {
+        ok = plot->saveJpg(fileName, w, h, opts.scale > 0 ? opts.scale : 1.0, 95,
+                           int(kDpi * (opts.scale > 0 ? opts.scale : 1.0)), QCP::ruDotsPerInch);
     } else if (ext == "pdf") {
         ok = exportPdf(plot, fileName, w, h);
     } else if (ext == "svg") {
         ok = exportSvg(plot, fileName, w, h);
     } else {
-        if (error) *error = QString("Unsupported export format '.%1' (use .png, .svg or .pdf)").arg(ext);
+        if (error) *error = QString("Unsupported export format '.%1' (use .png, .jpg, .svg or .pdf)").arg(ext);
         renderer->setExportMode(false);
         return false;
     }

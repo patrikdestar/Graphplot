@@ -8,6 +8,7 @@
 #include "PeakOverlay.h"
 #include "RichElements.h"
 #include "qcustomplot.h"
+#include <QTimeZone>
 
 #include <algorithm>
 #include <limits>
@@ -42,6 +43,30 @@ Qt::PenStyle toPenStyle(LineStyle s)
     }
     return Qt::SolidLine;
 }
+
+// Date / time tick labels for x values in Unix seconds (UTC); the format
+// follows the visible span, from years down to milliseconds.
+class DateTicker : public QCPAxisTickerDateTime {
+public:
+    DateTicker()
+    {
+        setTimeZone(QTimeZone::utc());
+        setTickCount(5);
+    }
+    void generate(const QCPRange& range, const QLocale& locale, QChar formatChar, int precision,
+                  QVector<double>& ticks, QVector<double>* subTicks, QVector<QString>* tickLabels) override
+    {
+        const double span = range.size();
+        setDateTimeFormat(span > 3 * 365 * 86400.0 ? "yyyy"
+                          : span > 90 * 86400.0    ? "yyyy-MM"
+                          : span > 3 * 86400.0     ? "yyyy-MM-dd"
+                          : span > 86400.0         ? "MM-dd hh:mm"
+                          : span > 120             ? "hh:mm"
+                          : span > 2               ? "hh:mm:ss"
+                                                   : "ss.zzz");
+        QCPAxisTickerDateTime::generate(range, locale, formatChar, precision, ticks, subTicks, tickLabels);
+    }
+};
 
 QCPScatterStyle::ScatterShape toScatterShape(ScatterShape s)
 {
@@ -791,7 +816,9 @@ void PlotRenderer::applyDatasetAppearance(ObjectId id)
     p->setName(d->name);
     p->setVisible(s.visible);
     // Filled symbols (open symbols like x/+ ignore the brush).
-    const QCPScatterStyle scatter(toScatterShape(s.scatter), color, color, s.scatterSize);
+    const QColor edge = s.markerEdge.isValid() ? ink(s.markerEdge) : color;
+    QPen edgePen(edge.alpha() == 0 ? QColor(Qt::transparent) : edge, 1.0);
+    const QCPScatterStyle scatter(toScatterShape(s.scatter), edgePen, QBrush(color), s.scatterSize);
     // A QCPCurve (unsorted x) with NaN / inf points must not be filled: Qt's
     // polygon filler never finishes on such paths (the line is still drawn).
     bool fillable = true;
@@ -921,7 +948,8 @@ void PlotRenderer::applyMatrixAppearance(ObjectId id)
     // The colour map's cells only have to be rebuilt when it is switched on
     // (the data path rebuilds them too); level scrolling must not redo nx*ny
     // cells. Colours and limits are cheap.
-    if (m->style.showImage != (v.image != nullptr)) updateMatrixImage(id);
+    if (m->style.showImage != (v.image != nullptr) || (v.image && m->style.filled != v.refined))
+        updateMatrixImage(id);
     else if (v.image) applyImageAppearance(*m, m_matrices[id]);
     updateColorBar();
     syncLegend();  // contours on/off, name
@@ -945,6 +973,28 @@ void PlotRenderer::applyImageAppearance(const Matrix& m, MatrixVisual& v)
         range = QCPRange(-a, a);  // zero sits in the middle of the map
     } else {
         range = QCPRange(v.lo, v.hi > v.lo ? v.hi : v.lo + 1);
+    }
+    if (s.filled) {
+        // contourf: one flat colour per band between consecutive levels, the
+        // colours spread evenly over the map (as matplotlib does).
+        std::vector<double> lv = contourLevels(s);
+        std::sort(lv.begin(), lv.end());
+        lv.erase(std::unique(lv.begin(), lv.end()), lv.end());
+        if (lv.size() >= 2) {
+            const double lo = lv.front(), hi = lv.back();
+            const int bands = int(lv.size()) - 1;
+            QCPColorGradient banded;
+            banded.clearColorStops();
+            banded.setLevelCount(1000);
+            for (int i = 0; i < bands; ++i) {
+                const QColor c = g.color(bands > 1 ? double(i) / (bands - 1) : 0.5, QCPRange(0, 1));
+                const double p0 = (lv[i] - lo) / (hi - lo), p1 = (lv[i + 1] - lo) / (hi - lo);
+                banded.setColorStopAt(p0, c);
+                banded.setColorStopAt(std::max(p0, p1 - 1e-4), c);
+            }
+            g = banded;
+            range = QCPRange(lo, hi);
+        }
     }
     v.image->setGradient(g);
     v.image->setDataRange(range);
@@ -997,11 +1047,26 @@ void PlotRenderer::updateMatrixImage(ObjectId id)
         v.image->setInterpolate(true);
         v.image->setTightBoundary(false);
     }
-    auto* data = new QCPColorMapData(m->nx, m->ny, QCPRange(m->x0, m->x1), QCPRange(m->y0, m->y1));
+    // Filled contours: bands are drawn from the colour of each image cell, so
+    // the cells are made finer (bilinear interpolation) for smooth band edges.
+    const int maxN = std::max(m->nx, m->ny);
+    const int f = m->style.filled && m->nx > 1 && m->ny > 1 ? std::clamp(600 / std::max(1, maxN), 1, 8) : 1;
+    const int nx = (m->nx - 1) * f + 1, ny = (m->ny - 1) * f + 1;
+    v.refined = m->style.filled;
+    auto* data = new QCPColorMapData(nx, ny, QCPRange(m->x0, m->x1), QCPRange(m->y0, m->y1));
     double lo = std::numeric_limits<double>::infinity(), hi = -lo;
-    for (int iy = 0; iy < m->ny; ++iy)
-        for (int ix = 0; ix < m->nx; ++ix) {
-            const double z = m->z[qsizetype(iy) * m->nx + ix];
+    auto at = [m](int ix, int iy) { return m->z[qsizetype(iy) * m->nx + ix]; };
+    for (int iy = 0; iy < ny; ++iy)
+        for (int ix = 0; ix < nx; ++ix) {
+            double z;
+            if (f == 1) {
+                z = at(ix, iy);
+            } else {
+                const int x0 = std::min(ix / f, m->nx - 2), y0 = std::min(iy / f, m->ny - 2);
+                const double tx = double(ix - x0 * f) / f, ty = double(iy - y0 * f) / f;
+                z = (1 - ty) * ((1 - tx) * at(x0, y0) + tx * at(x0 + 1, y0)) +
+                    ty * ((1 - tx) * at(x0, y0 + 1) + tx * at(x0 + 1, y0 + 1));
+            }
             data->setCell(ix, iy, z);
             if (std::isfinite(z)) lo = std::min(lo, z), hi = std::max(hi, z);
         }
@@ -1161,7 +1226,13 @@ void PlotRenderer::applyAnnotation(ObjectId id)
     if (!a || !t) return;
     const Style st = displayStyle();
     const bool hl = !m_exportMode && m_highlight == ObjectRef{ObjectKind::Annotation, id};
-    t->position->setCoords(a->x, a->y);
+    const auto anchorType = a->axesCoords ? QCPItemPosition::ptAxisRectRatio : QCPItemPosition::ptPlotCoords;
+    const double anchorY = a->axesCoords ? 1.0 - a->y : a->y;  // the ratio counts from the top
+    t->position->setType(anchorType);
+    t->position->setCoords(a->x, anchorY);
+    // Text placed relative to the axes box may sit outside it (panel letters,
+    // notes above the frame); text at data points is clipped with the data.
+    t->setClipToAxisRect(!a->axesCoords);
     // Unset size/colour follow the style (annotation.size / annotation.color).
     t->setText(a->text.isEmpty() ? QStringLiteral(" ") : a->text,
                font(a->fontSize > 0 ? a->fontSize : st.annotationSize), st.mathText);
@@ -1183,7 +1254,8 @@ void PlotRenderer::applyAnnotation(ObjectId id)
         arrow = nullptr;
     }
     if (arrow) {
-        arrow->start->setCoords(a->x, a->y);
+        arrow->start->setType(anchorType);
+        arrow->start->setCoords(a->x, anchorY);
         arrow->end->setCoords(a->arrowX, a->arrowY);
         QPen pen(color, 1.2);
         pen.setCosmetic(true);
@@ -1300,12 +1372,7 @@ void PlotRenderer::applyStyle()
     lg->setBorderPen(st.legendFrame ? QPen(st.legendEdge) : QPen(Qt::NoPen));
     lg->setBrush(st.legendFrame ? QBrush(st.legendFace) : QBrush(Qt::NoBrush));
     lg->setRowSpacing(st.legendFrame ? 0 : 2);
-    Qt::Alignment legendAlign = locToAlignment(st.legendLoc);
-    if (m_twinHost) {  // the twin's legend on the other side, so the two do not overlap
-        if (legendAlign & Qt::AlignRight) legendAlign = (legendAlign & ~Qt::AlignRight) | Qt::AlignLeft;
-        else if (legendAlign & Qt::AlignLeft) legendAlign = (legendAlign & ~Qt::AlignLeft) | Qt::AlignRight;
-    }
-    m_rect->insetLayout()->setInsetAlignment(0, legendAlign);
+    applyLegendLoc(st);
 
     // In-frame label (e.g. "**CMS** *Simulation*")
     const Qt::Alignment ia = locToAlignment(st.labelInsideLoc);
@@ -1368,8 +1435,21 @@ void PlotRenderer::updateHeader()
     }
 }
 
+void PlotRenderer::applyLegendLoc(const Style& st)
+{
+    // The panel's own position, else the style's.
+    const QString loc = m_model->axesInfo().legendLoc;
+    Qt::Alignment legendAlign = locToAlignment(loc.isEmpty() ? st.legendLoc : loc);
+    if (m_twinHost) {  // the twin's legend on the other side, so the two do not overlap
+        if (legendAlign & Qt::AlignRight) legendAlign = (legendAlign & ~Qt::AlignRight) | Qt::AlignLeft;
+        else if (legendAlign & Qt::AlignLeft) legendAlign = (legendAlign & ~Qt::AlignLeft) | Qt::AlignRight;
+    }
+    m_rect->insetLayout()->setInsetAlignment(0, legendAlign);
+}
+
 void PlotRenderer::applyAxesInfo()
 {
+    applyLegendLoc(displayStyle());
     const AxesInfo& info = m_model->axesInfo();
     const Style st = displayStyle();
     // Rich-text labels: QCustomPlot reserves the space (a blank label in the
@@ -1453,6 +1533,17 @@ void PlotRenderer::applyAxesInfo()
     };
     setCustomTicks(m_x, m_x2, info.customXTicks, info.xTicks, info.xTickLabels, m_tickerBeforeCustomX);
     setCustomTicks(m_y, m_y2, info.customYTicks, info.yTicks, info.yTickLabels, m_tickerBeforeCustomY);
+    // Date / time labels on a linear x axis (custom ticks take precedence).
+    if (!info.customXTicks && !info.xLog) {
+        const bool isDate = !m_x->ticker().dynamicCast<DateTicker>().isNull();
+        if (info.xTime && !isDate) {
+            m_x->setTicker(QSharedPointer<DateTicker>::create());
+            m_x2->setTicker(m_x->ticker());
+        } else if (!info.xTime && isDate) {
+            m_x->setTicker(m_linTickerX);
+            m_x2->setTicker(m_linTickerX);
+        }
+    }
     // An axis switched back from log to linear gets the style's format again.
     for (QCPAxis* a : {m_x, m_y}) applyNumberFormat(a, st);
     m_x->setRangeReversed(info.xReversed);
@@ -1466,6 +1557,21 @@ void PlotRenderer::applyAxesInfo()
     updateHeader();
     syncLegend();
     replotObjectLayers();
+}
+
+void PlotRenderer::setMaxTicksY(int n)
+{
+    if (n == m_maxTicksY) return;
+    m_maxTicksY = n;
+    // Only the y tick count changes: update the ticker and recompute the tick
+    // vectors now, so the replot already in progress draws the new ticks
+    // (a full applyStyle would only show on the next replot).
+    if (auto t = m_y->ticker().dynamicCast<StyledTicker>()) {
+        int count = std::max(1, displayStyle().ytick.count);
+        if (n > 0) count = std::min(count, n);
+        t->setTickCount(count);
+    }
+    m_rect->update(QCPLayoutElement::upPreparation);
 }
 
 }  // namespace gp

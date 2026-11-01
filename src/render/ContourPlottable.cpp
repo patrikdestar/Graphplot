@@ -86,7 +86,8 @@ void ContourPlottable::draw(QCPPainter* painter)
             if (sx1 < xr.lower || sx0 > xr.upper || sy1 < yr.lower || sy0 > yr.upper) continue;
             px.push_back(QLineF(project(s.p1()), project(s.p2())));
         }
-        QPen pen(level.negative ? m_style.negativeColor : m_style.positiveColor, m_style.lineWidth);
+        QPen pen(level.negative ? m_style.negativeColor : m_style.positiveColor, m_style.lineWidth,
+                 level.negative && m_style.negativeDashed ? Qt::DashLine : Qt::SolidLine);
         pen.setCosmetic(true);
         painter->setPen(pen);
         painter->drawLines(px);

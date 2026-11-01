@@ -124,6 +124,9 @@ int main(int argc, char** argv)
     parser.addOption(exportOpt);
     QCommandLineOption sizeOpt("size", "Figure size for --export, in pixels (e.g. 800x600).", "WxH");
     parser.addOption(sizeOpt);
+    QCommandLineOption scaleOpt("scale",
+        "Pixel scale for PNG/JPG --export (default 2: a 800x600 figure gives a 1600x1200 image).", "factor");
+    parser.addOption(scaleOpt);
     QCommandLineOption timelineOpt("timeline", "Open the CSV files as a timeline (stacked sensor rows).");
     parser.addOption(timelineOpt);
     QCommandLineOption perColumn("row-per-column", "Timeline: one row per column instead of per file.");
@@ -198,12 +201,23 @@ int main(int argc, char** argv)
                 int width = 0, height = 0;
                 if (parser.isSet(sizeOpt)) {
                     const QStringList wh = parser.value(sizeOpt).toLower().split('x');
-                    width = wh.value(0).toInt();
-                    height = wh.value(1).toInt();
-                    if (width <= 0 || height <= 0) qCritical("--size expects WxH, e.g. 800x600");
+                    width = wh.size() == 2 ? wh[0].toInt() : 0;
+                    height = wh.size() == 2 ? wh[1].toInt() : 0;
+                    if (width <= 0 || height <= 0) {
+                        qCritical("--size expects WxH, e.g. 800x600");
+                        ok = false;
+                    }
                 }
-                ok = w.exportTo(parser.value(exportOpt), width, height, 2.0, &err);
-                if (!ok) qCritical("%s", qPrintable(err));
+                bool scaleOk = true;
+                const double scale = parser.isSet(scaleOpt) ? parser.value(scaleOpt).toDouble(&scaleOk) : 2.0;
+                if (!scaleOk || !(scale > 0 && scale <= 10)) {
+                    qCritical("--scale expects a number between 0 and 10, e.g. 1 or 2");
+                    ok = false;
+                }
+                if (ok) {
+                    ok = w.exportTo(parser.value(exportOpt), width, height, scale, &err);
+                    if (!ok) qCritical("%s", qPrintable(err));
+                }
             }
             app.exit(ok ? 0 : 1);
         });

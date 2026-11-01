@@ -423,8 +423,14 @@ void InteractionController::mouseMove(QMouseEvent* e)
     }
     case Drag::Annotation: {
         Annotation a = m_dragStartAnnotation;
-        a.x += data.x() - m_pressData.x();
-        a.y += data.y() - m_pressData.y();
+        if (a.axesCoords) {  // move by the fraction of the axes box the mouse moved
+            const QRect ar = m_renderer->axisRect()->rect();
+            a.x += (px.x() - m_pressPx.x()) / std::max(1, ar.width());
+            a.y -= (px.y() - m_pressPx.y()) / std::max(1, ar.height());
+        } else {
+            a.x += data.x() - m_pressData.x();
+            a.y += data.y() - m_pressData.y();
+        }
         if (model->annotation(a.id)) m_editor->previewAnnotation(a);
         break;
     }
