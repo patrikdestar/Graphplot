@@ -19,8 +19,11 @@ class QCPItemText;
 class QCPItemRect;
 class QCPLayer;
 class QCPTextElement;
+class QCPColorMap;
 
 namespace gp {
+
+class ContourPlottable;
 
 struct ViewRange {
     double xmin = 0, xmax = 1, ymin = 0, ymax = 1;
@@ -66,6 +69,12 @@ public:
     // Temporarily hide selection highlighting (used for export).
     void setExportMode(bool on);
 
+    // Contour plottable of a 2D dataset (nullptr if unknown); for tests/tools.
+    ContourPlottable* contourPlottable(ObjectId matrixId) const;
+    // Matrices affected by contour level scrolling: the selected one, or all
+    // visible ones when no matrix is selected.
+    QList<ObjectId> levelTargets() const;
+
     void replot();               // queued full replot
     void replotObjectLayers();   // immediate replot of marker/annotation/region layers only
 
@@ -76,6 +85,10 @@ private:
     struct MarkerVisual {
         QCPItemStraightLine* line = nullptr;
         QCPItemText* label = nullptr;
+    };
+    struct MatrixVisual {
+        ContourPlottable* contour = nullptr;
+        QCPColorMap* image = nullptr;
     };
     struct RegionVisual {
         QCPItemRect* rect = nullptr;
@@ -93,6 +106,12 @@ private:
     void applyDatasetData(ObjectId id);
     void syncLegend();
 
+    void onMatrixAdded(ObjectId id);
+    void onMatrixRemoved(ObjectId id);
+    void applyMatrixAppearance(ObjectId id);
+    void applyMatrixData(ObjectId id);
+    void updateMatrixImage(ObjectId id);
+
     void onMarkerAdded(ObjectId id);
     void onMarkerRemoved(ObjectId id);
     void applyMarker(ObjectId id);
@@ -107,11 +126,13 @@ private:
 
     PlotModel* m_model;
     QCustomPlot* m_plot;
+    QCPLayer* m_imageLayer = nullptr;
     QCPLayer* m_regionLayer = nullptr;
     QCPLayer* m_objectLayer = nullptr;
     QCPTextElement* m_title = nullptr;
 
     QHash<ObjectId, QCPAbstractPlottable*> m_plottables;
+    QHash<ObjectId, MatrixVisual> m_matrices;
     QHash<ObjectId, MarkerVisual> m_markers;
     QHash<ObjectId, QCPItemText*> m_annotations;
     RegionVisual m_region;

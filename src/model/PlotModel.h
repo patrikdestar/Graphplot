@@ -36,6 +36,17 @@ public:
     // through the default palette in fixed order.
     QColor takeNextDatasetColor();
 
+    // ---- 2D data (contour plots) ---------------------------------------
+    const std::vector<Matrix>& matrices() const { return m_matrices; }
+    const Matrix* matrix(ObjectId id) const;
+    int matrixIndex(ObjectId id) const;
+    ObjectId insertMatrix(Matrix m, int index = -1);
+    std::optional<Matrix> takeMatrix(ObjectId id);
+    bool setMatrixAppearance(ObjectId id, const QString& name, const ContourStyle& style);
+    // Replaces grid values and extent; nx*ny must equal z.size().
+    bool setMatrixData(ObjectId id, int nx, int ny, QVector<double> z, double x0, double x1,
+                       double y0, double y1);
+
     // ---- Markers -------------------------------------------------------
     const std::vector<Marker>& markers() const { return m_markers; }
     const Marker* marker(ObjectId id) const;
@@ -60,7 +71,7 @@ public:
     const AxesInfo& axesInfo() const { return m_axes; }
     void setAxesInfo(const AxesInfo& info);
 
-    // Bounding box of all visible datasets; returns false if there is no data.
+    // Bounding box of all visible datasets and matrices; returns false if there is no data.
     bool dataBounds(double& xmin, double& xmax, double& ymin, double& ymax,
                     bool visibleOnly = true) const;
 
@@ -75,6 +86,11 @@ signals:
     void datasetRemoved(gp::ObjectId id);
     void datasetAppearanceChanged(gp::ObjectId id);
     void datasetDataChanged(gp::ObjectId id);
+
+    void matrixAdded(gp::ObjectId id);
+    void matrixRemoved(gp::ObjectId id);
+    void matrixAppearanceChanged(gp::ObjectId id);
+    void matrixDataChanged(gp::ObjectId id);
 
     void markerAdded(gp::ObjectId id);
     void markerRemoved(gp::ObjectId id);
@@ -91,6 +107,7 @@ private:
     ObjectId newId() { return ++m_lastId; }
 
     std::vector<Dataset> m_datasets;
+    std::vector<Matrix> m_matrices;
     std::vector<Marker> m_markers;
     std::vector<Annotation> m_annotations;
     Region m_region;

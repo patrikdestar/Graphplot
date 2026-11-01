@@ -1,5 +1,6 @@
 #include "PlotRenderer.h"
 
+#include "ContourPlottable.h"
 #include "qcustomplot.h"
 
 #include <algorithm>
@@ -84,6 +85,17 @@ PlotRenderer::PlotRenderer(PlotModel* model, QCustomPlot* plot, QObject* parent)
         applyDatasetData(id);
         replot();
     });
+    connect(m_model, &PlotModel::matrixAdded, this, &PlotRenderer::onMatrixAdded);
+    connect(m_model, &PlotModel::matrixRemoved, this, &PlotRenderer::onMatrixRemoved);
+    connect(m_model, &PlotModel::matrixAppearanceChanged, this, [this](ObjectId id) {
+        applyMatrixAppearance(id);
+        syncLegend();
+        replot();
+    });
+    connect(m_model, &PlotModel::matrixDataChanged, this, [this](ObjectId id) {
+        applyMatrixData(id);
+        replot();
+    });
     connect(m_model, &PlotModel::markerAdded, this, &PlotRenderer::onMarkerAdded);
     connect(m_model, &PlotModel::markerRemoved, this, &PlotRenderer::onMarkerRemoved);
     connect(m_model, &PlotModel::markerChanged, this, [this](ObjectId id) {
@@ -165,7 +177,10 @@ void PlotRenderer::setupAppearance()
     // Dedicated layers: the region is drawn below the curves, markers and
     // annotations above them. Both are buffered so that dragging an object
     // only repaints that layer, independent of how much data is plotted.
-    p->addLayer("regions", p->layer("grid"), QCustomPlot::limAbove);
+    // Colour-map images sit directly above the grid, below everything else.
+    p->addLayer("images", p->layer("grid"), QCustomPlot::limAbove);
+    m_imageLayer = p->layer("images");
+    p->addLayer("regions", m_imageLayer, QCustomPlot::limAbove);
     p->addLayer("objects", p->layer("main"), QCustomPlot::limAbove);
     m_regionLayer = p->layer("regions");
     m_objectLayer = p->layer("objects");
@@ -211,6 +226,7 @@ void PlotRenderer::setupAppearance()
 void PlotRenderer::rebuildAll()
 {
     for (const auto& d : m_model->datasets()) onDatasetAdded(d.id);
+    for (const auto& m : m_model->matrices()) onMatrixAdded(m.id);
     for (const auto& m : m_model->markers()) onMarkerAdded(m.id);
     for (const auto& a : m_model->annotations()) onAnnotationAdded(a.id);
     applyRegion();
@@ -248,7 +264,10 @@ void PlotRenderer::autoscale(bool doX, bool doY)
         r.xmax = xmax;
     }
     if (doY) {
-        padRange(ymin, ymax, 0.05);
+        // Curves get headroom; a pure 2D (contour) view is fitted exactly.
+        bool anyCurve = false;
+        for (const auto& d : m_model->datasets()) anyCurve |= d.style.visible && !d.x.isEmpty();
+        padRange(ymin, ymax, anyCurve ? 0.05 : 0.0);
         r.ymin = ymin;
         r.ymax = ymax;
     }
@@ -451,8 +470,116 @@ void PlotRenderer::syncLegend()
         QCPAbstractPlottable* p = m_plottables.value(d.id);
         if (p && d.style.visible && !d.name.isEmpty()) p->addToLegend();
     }
+    for (const auto& m : m_model->matrices()) {
+        const MatrixVisual v = m_matrices.value(m.id);
+        if (v.contour && m.style.visible && !m.name.isEmpty()) v.contour->addToLegend();
+    }
     m_plot->legend->setVisible(m_model->axesInfo().legendVisible &&
                                m_plot->legend->itemCount() > 0);
+}
+
+// ---- 2D data ---------------------------------------------------------------------------
+
+ContourPlottable* PlotRenderer::contourPlottable(ObjectId id) const
+{
+    return m_matrices.value(id).contour;
+}
+
+QList<ObjectId> PlotRenderer::levelTargets() const
+{
+    if (m_highlight.kind == ObjectKind::Matrix && m_model->matrix(m_highlight.id))
+        return {m_highlight.id};
+    QList<ObjectId> ids;
+    for (const auto& m : m_model->matrices())
+        if (m.style.visible) ids.push_back(m.id);
+    return ids;
+}
+
+void PlotRenderer::onMatrixAdded(ObjectId id)
+{
+    if (!m_model->matrix(id) || m_matrices.contains(id)) return;
+    MatrixVisual v;
+    v.contour = new ContourPlottable(m_plot->xAxis, m_plot->yAxis);
+    m_matrices.insert(id, v);
+    applyMatrixData(id);
+    applyMatrixAppearance(id);
+    syncLegend();
+    maybeCaptureHome();
+    replot();
+}
+
+void PlotRenderer::onMatrixRemoved(ObjectId id)
+{
+    const MatrixVisual v = m_matrices.take(id);
+    if (v.contour) m_plot->removePlottable(v.contour);
+    if (v.image) m_plot->removePlottable(v.image);
+    if (m_highlight.kind == ObjectKind::Matrix && m_highlight.id == id) m_highlight = {};
+    syncLegend();
+    replot();
+}
+
+void PlotRenderer::applyMatrixData(ObjectId id)
+{
+    const Matrix* m = m_model->matrix(id);
+    const MatrixVisual v = m_matrices.value(id);
+    if (!m || !v.contour) return;
+    v.contour->setMatrix(*m);
+    updateMatrixImage(id);
+}
+
+void PlotRenderer::applyMatrixAppearance(ObjectId id)
+{
+    const Matrix* m = m_model->matrix(id);
+    const MatrixVisual v = m_matrices.value(id);
+    if (!m || !v.contour) return;
+    v.contour->setContourStyle(m->style);  // recomputes only if the levels changed
+    v.contour->setName(m->name);
+    v.contour->setVisible(m->style.visible);
+    updateMatrixImage(id);
+}
+
+void PlotRenderer::updateMatrixImage(ObjectId id)
+{
+    const Matrix* m = m_model->matrix(id);
+    MatrixVisual& v = m_matrices[id];
+    const bool want = m && m->style.showImage && m->nx > 0 && m->ny > 0;
+    if (!want) {
+        if (v.image) m_plot->removePlottable(v.image);
+        v.image = nullptr;
+        return;
+    }
+    if (!v.image) {
+        v.image = new QCPColorMap(m_plot->xAxis, m_plot->yAxis);
+        v.image->setLayer(m_imageLayer);
+        v.image->setSelectable(QCP::stNone);
+        v.image->setInterpolate(true);
+        v.image->setTightBoundary(false);
+    }
+    auto* data = new QCPColorMapData(m->nx, m->ny, QCPRange(m->x0, m->x1), QCPRange(m->y0, m->y1));
+    double lo = 0, hi = 0;
+    for (int iy = 0; iy < m->ny; ++iy)
+        for (int ix = 0; ix < m->nx; ++ix) {
+            const double z = m->z[qsizetype(iy) * m->nx + ix];
+            data->setCell(ix, iy, z);
+            if (std::isfinite(z)) lo = std::min(lo, z), hi = std::max(hi, z);
+        }
+    v.image->setData(data, false);
+    // Signed data: diverging blue-white-red around zero; otherwise white->blue.
+    QCPColorGradient g;
+    g.clearColorStops();
+    if (lo < 0 && hi > 0) {
+        const double a = std::max(-lo, hi);
+        g.setColorStopAt(0.0, QColor(0x2a, 0x78, 0xd6));
+        g.setColorStopAt(0.5, Qt::white);
+        g.setColorStopAt(1.0, QColor(0xe3, 0x49, 0x48));
+        v.image->setDataRange(QCPRange(-a, a));
+    } else {
+        g.setColorStopAt(0.0, Qt::white);
+        g.setColorStopAt(1.0, QColor(0x2a, 0x78, 0xd6));
+        v.image->setDataRange(QCPRange(lo, hi > lo ? hi : lo + 1));
+    }
+    v.image->setGradient(g);
+    v.image->setVisible(m->style.visible);
 }
 
 // ---- markers -------------------------------------------------------------------------

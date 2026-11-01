@@ -38,6 +38,15 @@ public:
     ZoomAxes zoomAxes() const { return m_zoomAxes; }
     void setZoomAxes(ZoomAxes axes) { m_zoomAxes = axes; }
 
+    // When on, the mouse wheel scrolls contour levels of 2D data instead of
+    // zooming (Alt+wheel always scrolls levels). Wheel up = lower levels,
+    // i.e. more contours become visible.
+    bool wheelAdjustsLevels() const { return m_wheelLevels; }
+    void setWheelAdjustsLevels(bool on);
+    // Multiplies the contour base level of the selected 2D dataset (or of all
+    // visible ones if none is selected). factor < 1 reveals weaker features.
+    void scaleContourLevels(double factor);
+
     ObjectRef selection() const { return m_selection; }
     void setSelection(const ObjectRef& ref);
     void deleteSelection();
@@ -45,6 +54,7 @@ public:
 signals:
     void modeChanged(gp::InteractionMode mode);
     void selectionChanged(gp::ObjectRef ref);
+    void wheelAdjustsLevelsChanged(bool on);
     void cursorMoved(QPointF dataPos, bool insidePlot);
     // Emitted on double-click / "Edit…" context action for an object.
     void editRequested(gp::ObjectRef ref);
@@ -74,6 +84,7 @@ private:
     InteractionMode m_mode = InteractionMode::Zoom;
     InteractionMode m_navMode = InteractionMode::Zoom;  // restored after one-shot modes
     ZoomAxes m_zoomAxes = ZoomAxes::Both;
+    bool m_wheelLevels = false;
     ObjectRef m_selection;
 
     Drag m_drag = Drag::None;

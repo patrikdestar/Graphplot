@@ -2,6 +2,7 @@
 
 #include "commands/PlotEditor.h"
 #include "interaction/InteractionController.h"
+#include "model/Contour.h"
 #include "model/PlotModel.h"
 
 #include <QCheckBox>
@@ -17,6 +18,8 @@
 #include <QPainter>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QSpinBox>
+#include <QDoubleValidator>
 #include <QStackedWidget>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -115,6 +118,10 @@ PropertiesPanel::PropertiesPanel(PlotEditor* editor, InteractionController* cont
     };
     connect(m_model, &PlotModel::datasetAdded, this, structural);
     connect(m_model, &PlotModel::datasetRemoved, this, structural);
+    connect(m_model, &PlotModel::matrixAdded, this, structural);
+    connect(m_model, &PlotModel::matrixRemoved, this, structural);
+    connect(m_model, &PlotModel::matrixAppearanceChanged, this, changed(ObjectKind::Matrix));
+    connect(m_model, &PlotModel::matrixDataChanged, this, changed(ObjectKind::Matrix));
     connect(m_model, &PlotModel::markerAdded, this, structural);
     connect(m_model, &PlotModel::markerRemoved, this, structural);
     connect(m_model, &PlotModel::annotationAdded, this, structural);
@@ -168,9 +175,10 @@ void PropertiesPanel::buildUi()
     m_tree->setSelectionMode(QAbstractItemView::SingleSelection);
     m_tree->setMinimumHeight(160);
     m_datasetsRoot = new QTreeWidgetItem(m_tree, {"Datasets"});
+    m_matricesRoot = new QTreeWidgetItem(m_tree, {"2D data"});
     m_markersRoot = new QTreeWidgetItem(m_tree, {"Markers"});
     m_annotationsRoot = new QTreeWidgetItem(m_tree, {"Annotations"});
-    for (auto* root : {m_datasetsRoot, m_markersRoot, m_annotationsRoot}) {
+    for (auto* root : {m_datasetsRoot, m_matricesRoot, m_markersRoot, m_annotationsRoot}) {
         root->setFlags(Qt::ItemIsEnabled);
         QFont f = root->font(0);
         f.setBold(true);
@@ -191,9 +199,18 @@ void PropertiesPanel::buildUi()
             });
     // Checkbox on dataset items toggles visibility (undoable).
     connect(m_tree, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem* item, int) {
-        if (m_updatingTree || ObjectKind(item->data(0, kKindRole).toInt()) != ObjectKind::Dataset)
-            return;
+        if (m_updatingTree) return;
+        const ObjectKind kind = ObjectKind(item->data(0, kKindRole).toInt());
         const ObjectId id = item->data(0, kIdRole).toULongLong();
+        if (kind == ObjectKind::Matrix) {
+            if (const Matrix* m = m_model->matrix(id)) {
+                ContourStyle s = m->style;
+                s.visible = item->checkState(0) == Qt::Checked;
+                m_editor->setMatrixAppearance(id, m->name, s);
+            }
+            return;
+        }
+        if (kind != ObjectKind::Dataset) return;
         if (const Dataset* d = m_model->dataset(id)) {
             DatasetStyle s = d->style;
             s.visible = item->checkState(0) == Qt::Checked;
@@ -220,7 +237,9 @@ void PropertiesPanel::buildUi()
     m_markerPage = buildMarkerPage();
     m_annotationPage = buildAnnotationPage();
     m_regionPage = buildRegionPage();
-    for (QWidget* w : {m_emptyPage, m_datasetPage, m_markerPage, m_annotationPage, m_regionPage})
+    m_matrixPage = buildMatrixPage();
+    for (QWidget* w : {m_emptyPage, m_datasetPage, m_markerPage, m_annotationPage, m_regionPage,
+                       m_matrixPage})
         m_stack->addWidget(w);
     layout->addWidget(m_stack);
     setMinimumWidth(250);
@@ -345,12 +364,83 @@ QWidget* PropertiesPanel::buildRegionPage()
     return box;
 }
 
+QWidget* PropertiesPanel::buildMatrixPage()
+{
+    auto* box = new QGroupBox("2D data (contours)");
+    auto* form = new QFormLayout(box);
+    m_mxName = new QLineEdit;
+    m_mxBase = new QLineEdit;
+    auto* validator = new QDoubleValidator(m_mxBase);
+    validator->setBottom(0);
+    validator->setNotation(QDoubleValidator::ScientificNotation);
+    m_mxBase->setValidator(validator);
+    m_mxBase->setToolTip("Lowest positive contour level. Scroll the wheel with Alt held "
+                         "(or with 'Levels' enabled) to change it; '*' halves it, '/' doubles it.");
+    auto* lower = new QToolButton;
+    lower->setText("÷2");
+    lower->setToolTip("Lower all levels (show weaker features), key '*'");
+    auto* higher = new QToolButton;
+    higher->setText("×2");
+    higher->setToolTip("Raise all levels, key '/'");
+    auto* baseRow = new QHBoxLayout;
+    baseRow->addWidget(m_mxBase, 1);
+    baseRow->addWidget(lower);
+    baseRow->addWidget(higher);
+    m_mxFactor = new QDoubleSpinBox;
+    m_mxFactor->setRange(1.01, 10);
+    m_mxFactor->setSingleStep(0.05);
+    m_mxFactor->setDecimals(3);
+    m_mxFactor->setKeyboardTracking(false);
+    m_mxCount = new QSpinBox;
+    m_mxCount->setRange(1, 100);
+    m_mxCount->setKeyboardTracking(false);
+    m_mxPosColor = new ColorButton;
+    m_mxNegColor = new ColorButton;
+    m_mxNegative = new QCheckBox("Negative levels");
+    m_mxWidth = new QDoubleSpinBox;
+    m_mxWidth->setRange(0.1, 10);
+    m_mxWidth->setSingleStep(0.25);
+    m_mxWidth->setKeyboardTracking(false);
+    m_mxImage = new QCheckBox("Colour-map image");
+    m_mxVisible = new QCheckBox("Visible");
+    m_mxInfo = new QLabel;
+    m_mxInfo->setWordWrap(true);
+    m_mxInfo->setStyleSheet("color: #52514e;");
+    form->addRow("Name", m_mxName);
+    form->addRow("Base level", baseRow);
+    form->addRow("Level factor", m_mxFactor);
+    form->addRow("Levels", m_mxCount);
+    form->addRow("Positive colour", m_mxPosColor);
+    form->addRow("Negative colour", m_mxNegColor);
+    form->addRow("Line width", m_mxWidth);
+    form->addRow(m_mxNegative);
+    form->addRow(m_mxImage);
+    form->addRow(m_mxVisible);
+    form->addRow(m_mxInfo);
+
+    connect(m_mxName, &QLineEdit::editingFinished, this, [this] { commitMatrix(false); });
+    connect(m_mxBase, &QLineEdit::editingFinished, this, [this] { commitMatrix(false); });
+    connect(lower, &QToolButton::clicked, this,
+            [this] { m_controller->scaleContourLevels(0.5); });
+    connect(higher, &QToolButton::clicked, this,
+            [this] { m_controller->scaleContourLevels(2.0); });
+    connect(m_mxFactor, &QDoubleSpinBox::valueChanged, this, [this] { commitMatrix(true); });
+    connect(m_mxCount, &QSpinBox::valueChanged, this, [this] { commitMatrix(true); });
+    connect(m_mxPosColor, &ColorButton::colorPicked, this, [this] { commitMatrix(false); });
+    connect(m_mxNegColor, &ColorButton::colorPicked, this, [this] { commitMatrix(false); });
+    connect(m_mxWidth, &QDoubleSpinBox::valueChanged, this, [this] { commitMatrix(true); });
+    connect(m_mxNegative, &QCheckBox::toggled, this, [this] { commitMatrix(false); });
+    connect(m_mxImage, &QCheckBox::toggled, this, [this] { commitMatrix(false); });
+    connect(m_mxVisible, &QCheckBox::toggled, this, [this] { commitMatrix(false); });
+    return box;
+}
+
 // ---- tree ------------------------------------------------------------------------
 
 void PropertiesPanel::rebuildTree()
 {
     m_updatingTree = true;
-    for (auto* root : {m_datasetsRoot, m_markersRoot, m_annotationsRoot})
+    for (auto* root : {m_datasetsRoot, m_matricesRoot, m_markersRoot, m_annotationsRoot})
         qDeleteAll(root->takeChildren());
     if (m_regionItem) {
         delete m_regionItem;
@@ -366,6 +456,11 @@ void PropertiesPanel::rebuildTree()
         auto* item = addItem(m_datasetsRoot, ObjectKind::Dataset, d.id);
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
     }
+    for (const auto& m : m_model->matrices()) {
+        auto* item = addItem(m_matricesRoot, ObjectKind::Matrix, m.id);
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+    }
+    m_matricesRoot->setHidden(m_model->matrices().empty());
     for (const auto& m : m_model->markers()) addItem(m_markersRoot, ObjectKind::Marker, m.id);
     for (const auto& a : m_model->annotations())
         addItem(m_annotationsRoot, ObjectKind::Annotation, a.id);
@@ -378,6 +473,7 @@ void PropertiesPanel::rebuildTree()
         m_regionItem->setFont(0, f);
     }
     for (const auto& d : m_model->datasets()) refreshTreeItem({ObjectKind::Dataset, d.id});
+    for (const auto& m : m_model->matrices()) refreshTreeItem({ObjectKind::Matrix, m.id});
     for (const auto& m : m_model->markers()) refreshTreeItem({ObjectKind::Marker, m.id});
     for (const auto& a : m_model->annotations()) refreshTreeItem({ObjectKind::Annotation, a.id});
     if (m_regionItem) refreshTreeItem({ObjectKind::Region, 0});
@@ -391,6 +487,7 @@ QTreeWidgetItem* PropertiesPanel::findItem(const ObjectRef& ref) const
 {
     if (ref.kind == ObjectKind::Region) return m_regionItem;
     QTreeWidgetItem* root = ref.kind == ObjectKind::Dataset    ? m_datasetsRoot
+                            : ref.kind == ObjectKind::Matrix   ? m_matricesRoot
                             : ref.kind == ObjectKind::Marker   ? m_markersRoot
                             : ref.kind == ObjectKind::Annotation ? m_annotationsRoot
                                                                  : nullptr;
@@ -437,6 +534,14 @@ void PropertiesPanel::refreshTreeItem(const ObjectRef& ref)
         item->setText(0, QString("Region  [%1, %2]").arg(fmt(r.xmin), fmt(r.xmax)));
         break;
     }
+    case ObjectKind::Matrix:
+        if (const Matrix* m = m_model->matrix(ref.id)) {
+            item->setText(0, QString("%1  (base %2)").arg(m->name, fmt(m->style.baseLevel)));
+            item->setIcon(0, swatchIcon(m->style.positiveColor));
+            item->setCheckState(0, m->style.visible ? Qt::Checked : Qt::Unchecked);
+            item->setToolTip(0, QString("%1 x %2 grid").arg(m->nx).arg(m->ny));
+        }
+        break;
     case ObjectKind::None: break;
     }
     m_updatingTree = wasUpdating;
@@ -449,7 +554,8 @@ void PropertiesPanel::showObject(const ObjectRef& refIn)
     if ((ref.kind == ObjectKind::Dataset && !m_model->dataset(ref.id)) ||
         (ref.kind == ObjectKind::Marker && !m_model->marker(ref.id)) ||
         (ref.kind == ObjectKind::Annotation && !m_model->annotation(ref.id)) ||
-        (ref.kind == ObjectKind::Region && !m_model->region().active))
+        (ref.kind == ObjectKind::Region && !m_model->region().active) ||
+        (ref.kind == ObjectKind::Matrix && !m_model->matrix(ref.id)))
         ref = {};
     m_current = ref;
 
@@ -467,6 +573,7 @@ void PropertiesPanel::showObject(const ObjectRef& refIn)
     case ObjectKind::Marker: m_stack->setCurrentWidget(m_markerPage); break;
     case ObjectKind::Annotation: m_stack->setCurrentWidget(m_annotationPage); break;
     case ObjectKind::Region: m_stack->setCurrentWidget(m_regionPage); break;
+    case ObjectKind::Matrix: m_stack->setCurrentWidget(m_matrixPage); break;
     case ObjectKind::None: m_stack->setCurrentWidget(m_emptyPage); break;
     }
     refreshCurrentPage();
@@ -478,6 +585,7 @@ void PropertiesPanel::beginEdit(const ObjectRef& ref)
     QLineEdit* field = ref.kind == ObjectKind::Annotation ? m_anText
                        : ref.kind == ObjectKind::Marker   ? m_mkLabel
                        : ref.kind == ObjectKind::Dataset  ? m_dsName
+                       : ref.kind == ObjectKind::Matrix   ? m_mxBase
                                                           : nullptr;
     if (field) {
         field->setFocus(Qt::OtherFocusReason);
@@ -547,6 +655,30 @@ void PropertiesPanel::refreshCurrentPage()
         m_rgWidth->setText(fmt(r.xmax - r.xmin));
         break;
     }
+    case ObjectKind::Matrix: {
+        const Matrix* m = m_model->matrix(m_current.id);
+        if (!m) return;
+        const QSignalBlocker b1(m_mxName), b2(m_mxBase), b3(m_mxFactor), b4(m_mxCount),
+            b5(m_mxNegative), b6(m_mxWidth), b7(m_mxImage), b8(m_mxVisible);
+        if (!m_mxName->hasFocus()) m_mxName->setText(m->name);
+        if (!m_mxBase->hasFocus()) m_mxBase->setText(QString::number(m->style.baseLevel, 'g', 6));
+        m_mxFactor->setValue(m->style.factor);
+        m_mxCount->setValue(m->style.levelCount);
+        m_mxPosColor->setColor(m->style.positiveColor);
+        m_mxNegColor->setColor(m->style.negativeColor);
+        m_mxNegative->setChecked(m->style.showNegative);
+        m_mxWidth->setValue(m->style.lineWidth);
+        m_mxImage->setChecked(m->style.showImage);
+        m_mxVisible->setChecked(m->style.visible);
+        const std::vector<double> lv = contourLevels(m->style);
+        double top = m->style.baseLevel;
+        for (double l : lv) top = std::max(top, l);
+        m_mxInfo->setText(QString("%1 × %2 grid\nx ∈ [%3, %4], y ∈ [%5, %6]\nlevels %7 … %8")
+                              .arg(m->nx).arg(m->ny)
+                              .arg(fmt(m->x0), fmt(m->x1), fmt(m->y0), fmt(m->y1))
+                              .arg(fmt(m->style.baseLevel), fmt(top)));
+        break;
+    }
     case ObjectKind::None: break;
     }
 }
@@ -609,6 +741,25 @@ void PropertiesPanel::commitRegion()
 {
     if (m_current.kind != ObjectKind::Region) return;
     m_editor->setRegion(Region{true, m_rgMin->value(), m_rgMax->value()});
+}
+
+void PropertiesPanel::commitMatrix(bool mergeable)
+{
+    const Matrix* m = m_model->matrix(m_current.id);
+    if (m_current.kind != ObjectKind::Matrix || !m) return;
+    ContourStyle s = m->style;
+    bool ok = false;
+    const double base = m_mxBase->text().toDouble(&ok);
+    if (ok && base > 0) s.baseLevel = base;
+    s.factor = m_mxFactor->value();
+    s.levelCount = m_mxCount->value();
+    s.positiveColor = m_mxPosColor->color();
+    s.negativeColor = m_mxNegColor->color();
+    s.showNegative = m_mxNegative->isChecked();
+    s.lineWidth = m_mxWidth->value();
+    s.showImage = m_mxImage->isChecked();
+    s.visible = m_mxVisible->isChecked();
+    m_editor->setMatrixAppearance(m->id, m_mxName->text(), s, mergeable);
 }
 
 void PropertiesPanel::commitAxes()

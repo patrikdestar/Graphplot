@@ -17,6 +17,7 @@ class QComboBox;
 class QCheckBox;
 class QLabel;
 class QPushButton;
+class QSpinBox;
 
 namespace gp {
 
@@ -53,6 +54,7 @@ private:
     QWidget* buildMarkerPage();
     QWidget* buildAnnotationPage();
     QWidget* buildRegionPage();
+    QWidget* buildMatrixPage();
 
     void rebuildTree();
     void refreshTreeItem(const ObjectRef& ref);
@@ -65,6 +67,7 @@ private:
     void commitMarker(bool mergeable);
     void commitAnnotation(bool mergeable);
     void commitRegion();
+    void commitMatrix(bool mergeable);
     void commitAxes();
 
     PlotEditor* m_editor;
@@ -75,6 +78,7 @@ private:
 
     QTreeWidget* m_tree = nullptr;
     QTreeWidgetItem* m_datasetsRoot = nullptr;
+    QTreeWidgetItem* m_matricesRoot = nullptr;
     QTreeWidgetItem* m_markersRoot = nullptr;
     QTreeWidgetItem* m_annotationsRoot = nullptr;
     QTreeWidgetItem* m_regionItem = nullptr;
@@ -85,6 +89,7 @@ private:
     QWidget* m_markerPage = nullptr;
     QWidget* m_annotationPage = nullptr;
     QWidget* m_regionPage = nullptr;
+    QWidget* m_matrixPage = nullptr;
 
     // axes
     QLineEdit* m_title = nullptr;
@@ -102,6 +107,19 @@ private:
     QDoubleSpinBox* m_dsScatterSize = nullptr;
     QCheckBox* m_dsVisible = nullptr;
     QLabel* m_dsInfo = nullptr;
+
+    // 2D data / contours
+    QLineEdit* m_mxName = nullptr;
+    QLineEdit* m_mxBase = nullptr;
+    QDoubleSpinBox* m_mxFactor = nullptr;
+    QSpinBox* m_mxCount = nullptr;
+    ColorButton* m_mxPosColor = nullptr;
+    ColorButton* m_mxNegColor = nullptr;
+    QCheckBox* m_mxNegative = nullptr;
+    QDoubleSpinBox* m_mxWidth = nullptr;
+    QCheckBox* m_mxImage = nullptr;
+    QCheckBox* m_mxVisible = nullptr;
+    QLabel* m_mxInfo = nullptr;
 
     // marker
     QLabel* m_mkOrientation = nullptr;

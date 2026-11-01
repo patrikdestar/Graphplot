@@ -61,6 +61,44 @@ static void addDemoData(FigureWindow& w)
     w.renderer()->captureHomeView();
 }
 
+// Synthetic 2D spectrum: cross peaks of varying intensity, one negative
+// peak and a little noise - useful to try contour level scrolling.
+static void addDemo2D(FigureWindow& w)
+{
+    constexpr int n = 512;
+    Matrix m;
+    m.name = "2D spectrum";
+    m.nx = m.ny = n;
+    m.x0 = 0.0;
+    m.x1 = 10.0;
+    m.y0 = 0.0;
+    m.y1 = 10.0;
+    m.z.resize(n * n);
+    struct Peak { double x, y, a, w; };
+    const Peak peaks[] = {{2.0, 2.0, 1.0, 0.12}, {5.5, 5.5, 0.8, 0.12}, {8.0, 8.0, 0.6, 0.1},
+                          {2.0, 5.5, 0.15, 0.1}, {5.5, 2.0, 0.15, 0.1}, {5.5, 8.0, 0.05, 0.1},
+                          {8.0, 5.5, 0.05, 0.1}, {3.5, 7.0, -0.2, 0.15}};
+    quint32 seed = 12345;
+    for (int iy = 0; iy < n; ++iy)
+        for (int ix = 0; ix < n; ++ix) {
+            const double x = 10.0 * ix / (n - 1), y = 10.0 * iy / (n - 1);
+            double z = 0;
+            for (const Peak& p : peaks)
+                z += p.a * std::exp(-((x - p.x) * (x - p.x) + (y - p.y) * (y - p.y)) / (2 * p.w * p.w));
+            seed = seed * 1664525u + 1013904223u;
+            z += 0.002 * ((seed >> 8) / double(1 << 24) - 0.5);
+            m.z[iy * n + ix] = z;
+        }
+    w.editor()->addMatrix(m);
+    AxesInfo info = w.model()->axesInfo();
+    info.xLabel = "F2 (ppm)";
+    info.yLabel = "F1 (ppm)";
+    w.model()->setAxesInfo(info);
+    w.editor()->undoStack()->clear();
+    w.renderer()->autoscale();
+    w.renderer()->captureHomeView();
+}
+
 int main(int argc, char** argv)
 {
     QApplication app(argc, argv);
@@ -72,12 +110,16 @@ int main(int argc, char** argv)
     parser.addHelpOption();
     QCommandLineOption shot("screenshot", "Render the window to <file> and exit.", "file");
     parser.addOption(shot);
+    QCommandLineOption demo2d("demo2d", "Show a synthetic 2D spectrum (contour demo).");
+    parser.addOption(demo2d);
     parser.addPositionalArgument("files", "Column data files to open (CSV/TSV/whitespace).");
     parser.process(app);
 
     FigureWindow w;
     const QStringList files = parser.positionalArguments();
-    if (files.isEmpty()) {
+    if (parser.isSet(demo2d)) {
+        addDemo2D(w);
+    } else if (files.isEmpty()) {
         addDemoData(w);
     } else {
         for (const QString& f : files) {

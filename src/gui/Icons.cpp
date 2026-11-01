@@ -112,6 +112,19 @@ void draw(QPainter& p, Kind kind)
         p.fillPath(head, kInk);
         break;
     }
+    case Kind::Levels:
+        // Nested contours with an up/down arrow: "scroll the levels".
+        p.setPen(QPen(kAccent, 1.4));
+        p.drawEllipse(QPointF(9, 13), 7, 6);
+        p.drawEllipse(QPointF(9, 13), 4, 3.2);
+        p.drawEllipse(QPointF(9, 13), 1.4, 1.2);
+        p.setPen(QPen(kInk, 1.5, Qt::SolidLine, Qt::RoundCap));
+        p.drawLine(QPointF(20, 4), QPointF(20, 20));
+        p.drawLine(QPointF(17, 7), QPointF(20, 4));
+        p.drawLine(QPointF(23, 7), QPointF(20, 4));
+        p.drawLine(QPointF(17, 17), QPointF(20, 20));
+        p.drawLine(QPointF(23, 17), QPointF(20, 20));
+        break;
     case Kind::Export:
         p.drawRect(QRectF(4, 10, 16, 10));
         p.drawLine(QPointF(12, 3), QPointF(12, 15));

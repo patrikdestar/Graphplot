@@ -5,7 +5,11 @@
 #include "model/DataLoader.h"
 #include "model/PlotModel.h"
 #include "qcustomplot.h"
+#include "model/Contour.h"
+#include "render/ContourPlottable.h"
 #include "render/PlotRenderer.h"
+
+#include <QElapsedTimer>
 
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -26,6 +30,24 @@ Dataset ramp(const QString& name, int n = 101, double slope = 1.0)
         d.y.push_back(slope * i);
     }
     return d;
+}
+
+// Gaussian peak (positive) and a weaker negative one on [-1,1]^2.
+Matrix peaks(int n)
+{
+    Matrix m;
+    m.name = "peaks";
+    m.nx = m.ny = n;
+    m.x0 = m.y0 = -1;
+    m.x1 = m.y1 = 1;
+    m.z.resize(qsizetype(n) * n);
+    for (int iy = 0; iy < n; ++iy)
+        for (int ix = 0; ix < n; ++ix) {
+            const double x = -1 + 2.0 * ix / (n - 1), y = -1 + 2.0 * iy / (n - 1);
+            m.z[qsizetype(iy) * n + ix] = std::exp(-((x - 0.3) * (x - 0.3) + y * y) / 0.05) -
+                                          0.5 * std::exp(-((x + 0.4) * (x + 0.4) + y * y) / 0.03);
+        }
+    return m;
 }
 
 }  // namespace
@@ -379,6 +401,147 @@ private slots:
             }
         }
         QVERIFY(!w->exportTo(dir.filePath("fig.bmp"), 0, 0, 1, &err));
+    }
+
+    // ---- 2D data / contours --------------------------------------------------------------
+    void contourCircleGeometry()
+    {
+        // z = sqrt(x^2 + y^2): the level-0.5 contour is a circle of radius 0.5.
+        Matrix m;
+        m.nx = m.ny = 101;
+        m.x0 = m.y0 = -1;
+        m.x1 = m.y1 = 1;
+        for (int iy = 0; iy < 101; ++iy)
+            for (int ix = 0; ix < 101; ++ix) {
+                const double x = -1 + 0.02 * ix, y = -1 + 0.02 * iy;
+                m.z.push_back(std::sqrt(x * x + y * y));
+            }
+        ContourGrid g;
+        g.setMatrix(m);
+        const auto lines = g.compute({0.5});
+        QCOMPARE(int(lines.size()), 1);
+        QVERIFY(lines[0].segments.size() > 100);
+        double total = 0;
+        for (const QLineF& l : lines[0].segments) {
+            for (const QPointF& p : {l.p1(), l.p2()})
+                QVERIFY(std::abs(std::hypot(p.x(), p.y()) - 0.5) < 0.01);
+            total += l.length();
+        }
+        QVERIFY(std::abs(total - 2 * M_PI * 0.5) < 0.02);  // circumference
+    }
+
+    void contourLevelsGeometric()
+    {
+        ContourStyle s;
+        s.baseLevel = 1;
+        s.factor = 2;
+        s.levelCount = 3;
+        s.showNegative = true;
+        const auto l = contourLevels(s);
+        QCOMPARE(l, (std::vector<double>{1, -1, 2, -2, 4, -4}));
+    }
+
+    void matrixAddedWithAutoLevels()
+    {
+        auto w = makeWindow();
+        const ObjectId id = w->editor()->addMatrix(peaks(200));
+        const Matrix* m = w->model()->matrix(id);
+        QVERIFY(m->style.baseLevel > 0);
+        QVERIFY(m->style.positiveColor.isValid());
+        ContourPlottable* c = w->renderer()->contourPlottable(id);
+        QVERIFY(c);
+        QVERIFY(c->segmentCount() > 0);
+        bool anyNegative = false;
+        for (const auto& l : c->lines()) anyNegative |= (l.negative && !l.segments.isEmpty());
+        QVERIFY(anyNegative);
+        w->editor()->undo();
+        QVERIFY(!w->renderer()->contourPlottable(id));
+        w->editor()->redo();
+        QVERIFY(w->renderer()->contourPlottable(id));
+    }
+
+    void altWheelScrollsContourLevels()
+    {
+        auto w = makeWindow();
+        const ObjectId id = w->editor()->addMatrix(peaks(200));
+        w->renderer()->autoscale();
+        const double base0 = w->model()->matrix(id)->style.baseLevel;
+        const qsizetype seg0 = w->renderer()->contourPlottable(id)->segmentCount();
+        const ViewRange view0 = w->renderer()->viewRange();
+        const int undoCount = w->editor()->undoStack()->count();
+        const QPoint at = w->plot()->axisRect()->rect().center();
+        for (int i = 0; i < 3; ++i) {  // three notches "up" with Alt held
+            QWheelEvent ev(at, w->plot()->mapToGlobal(at), QPoint(), QPoint(0, 120), Qt::NoButton,
+                           Qt::AltModifier, Qt::NoScrollPhase, false);
+            QApplication::sendEvent(w->plot(), &ev);
+        }
+        const double base1 = w->model()->matrix(id)->style.baseLevel;
+        QVERIFY(std::abs(base1 - base0 / std::pow(1.2, 3)) < 1e-9 * base0);
+        QCOMPARE(w->renderer()->viewRange(), view0);                       // no zoom
+        QVERIFY(w->renderer()->contourPlottable(id)->segmentCount() > seg0);  // more contours
+        QCOMPARE(w->editor()->undoStack()->count(), undoCount + 1);        // merged
+        w->editor()->undo();
+        QCOMPARE(w->model()->matrix(id)->style.baseLevel, base0);
+
+        // "Levels" mode: plain wheel scrolls levels; '/' doubles them.
+        w->controller()->setWheelAdjustsLevels(true);
+        QWheelEvent ev(at, w->plot()->mapToGlobal(at), QPoint(), QPoint(0, -120), Qt::NoButton,
+                       Qt::NoModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(w->plot(), &ev);
+        QVERIFY(std::abs(w->model()->matrix(id)->style.baseLevel - base0 * 1.2) < 1e-9 * base0);
+        QCOMPARE(w->renderer()->viewRange(), view0);
+        w->controller()->scaleContourLevels(2.0);
+        QVERIFY(std::abs(w->model()->matrix(id)->style.baseLevel - base0 * 2.4) < 1e-9 * base0);
+    }
+
+    void levelScrollTargetsSelectedMatrix()
+    {
+        auto w = makeWindow();
+        const ObjectId a = w->editor()->addMatrix(peaks(50));
+        const ObjectId b = w->editor()->addMatrix(peaks(50));
+        const double ba = w->model()->matrix(a)->style.baseLevel;
+        const double bb = w->model()->matrix(b)->style.baseLevel;
+        w->controller()->setSelection({ObjectKind::Matrix, b});
+        w->controller()->scaleContourLevels(0.5);
+        QCOMPARE(w->model()->matrix(a)->style.baseLevel, ba);
+        QCOMPARE(w->model()->matrix(b)->style.baseLevel, bb * 0.5);
+        w->controller()->setSelection({});
+        w->controller()->scaleContourLevels(2.0);  // all visible
+        QCOMPARE(w->model()->matrix(a)->style.baseLevel, ba * 2);
+        QCOMPARE(w->model()->matrix(b)->style.baseLevel, bb);
+    }
+
+    void contourRecomputeIsFast()
+    {
+        // 1024 x 1024 grid, 2 x 12 levels: recomputation while scrolling must
+        // stay interactive.
+        Matrix m = peaks(1024);
+        ContourStyle s;
+        s.baseLevel = defaultBaseLevel(m, s.factor, s.levelCount);
+        ContourGrid g;
+        g.setMatrix(m);
+        QElapsedTimer t;
+        t.start();
+        const auto lines = g.compute(contourLevels(s));
+        const qint64 ms = t.elapsed();
+        qInfo("1024x1024 grid, %d levels: %lld ms", int(lines.size()), ms);
+        QVERIFY(ms < 250);
+    }
+
+    void loadMatrix()
+    {
+        QTemporaryDir dir;
+        const QString fn = dir.filePath("m.txt");
+        QFile f(fn);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("# extent: 0 10 -1 1\n1 2 3\n4 5 6\n");
+        f.close();
+        const MatrixLoadResult r = loadMatrixFile(fn);
+        QVERIFY2(r.error.isEmpty(), qPrintable(r.error));
+        QCOMPARE(r.matrix.nx, 3);
+        QCOMPARE(r.matrix.ny, 2);
+        QCOMPARE(r.matrix.x1, 10.0);
+        QCOMPARE(r.matrix.z[4], 5.0);
     }
 
     // ---- data loading -----------------------------------------------------------------------

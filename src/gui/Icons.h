@@ -7,7 +7,8 @@
 namespace gp::icons {
 
 enum class Kind {
-    Zoom, Pan, Region, VMarker, HMarker, Annotation, Autoscale, ResetView, Undo, Redo, Export
+    Zoom, Pan, Region, VMarker, HMarker, Annotation, Autoscale, ResetView, Undo, Redo, Export,
+    Levels
 };
 
 QIcon make(Kind kind);

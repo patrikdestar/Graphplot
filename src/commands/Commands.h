@@ -11,6 +11,7 @@
 
 #include "model/PlotModel.h"
 
+#include <QElapsedTimer>
 #include <QUndoCommand>
 
 namespace gp {
@@ -20,6 +21,7 @@ enum CommandId {
     CmdEditMarker,
     CmdEditAnnotation,
     CmdSetRegion,
+    CmdEditMatrix,
 };
 
 // ---- Traits -----------------------------------------------------------------
@@ -34,6 +36,17 @@ struct DatasetTraits {
     static std::optional<Type> take(PlotModel& m, ObjectId id) { return m.takeDataset(id); }
     // Dataset edits change appearance only; data updates use SetDatasetDataCommand.
     static void update(PlotModel& m, const Type& v) { m.setDatasetAppearance(v.id, v.name, v.style); }
+};
+
+struct MatrixTraits {
+    using Type = Matrix;
+    static constexpr const char* kName = "2D dataset";
+    static constexpr int kEditId = CmdEditMatrix;
+    static const Type* get(PlotModel& m, ObjectId id) { return m.matrix(id); }
+    static int index(PlotModel& m, ObjectId id) { return m.matrixIndex(id); }
+    static void insert(PlotModel& m, const Type& v, int i) { m.insertMatrix(v, i); }
+    static std::optional<Type> take(PlotModel& m, ObjectId id) { return m.takeMatrix(id); }
+    static void update(PlotModel& m, const Type& v) { m.setMatrixAppearance(v.id, v.name, v.style); }
 };
 
 struct MarkerTraits {
@@ -107,8 +120,11 @@ private:
 };
 
 // Changes an object's properties (or position). Consecutive edits of the
-// same object made while "mergeable" is true (e.g. spin box steps, typing
-// in a property editor) collapse into one undo step.
+// same object made while "mergeable" is true (e.g. spin box steps, mouse
+// wheel scrolling of contour levels) collapse into one undo step, as long as
+// they follow each other within kMergeWindowMs.
+inline constexpr qint64 kMergeWindowMs = 1500;
+
 template <typename Traits>
 class EditCommand : public QUndoCommand {
 public:
@@ -117,6 +133,7 @@ public:
         : QUndoCommand(text, parent), m_model(model), m_before(std::move(before)),
           m_after(std::move(after)), m_mergeable(mergeable)
     {
+        m_lastEdit.start();
     }
     void redo() override { Traits::update(*m_model, m_after); }
     void undo() override { Traits::update(*m_model, m_before); }
@@ -124,8 +141,11 @@ public:
     bool mergeWith(const QUndoCommand* other) override
     {
         auto* o = static_cast<const EditCommand*>(other);
-        if (!o->m_mergeable || o->m_after.id != m_after.id || o->text() != text()) return false;
+        if (!o->m_mergeable || o->m_after.id != m_after.id || o->text() != text() ||
+            m_lastEdit.elapsed() > kMergeWindowMs)
+            return false;
         m_after = o->m_after;
+        m_lastEdit.restart();
         return true;
     }
 
@@ -134,11 +154,15 @@ private:
     typename Traits::Type m_before;
     typename Traits::Type m_after;
     bool m_mergeable;
+    QElapsedTimer m_lastEdit;
 };
 
 using AddDatasetCommand = AddCommand<DatasetTraits>;
 using RemoveDatasetCommand = RemoveCommand<DatasetTraits>;
 using EditDatasetCommand = EditCommand<DatasetTraits>;
+using AddMatrixCommand = AddCommand<MatrixTraits>;
+using RemoveMatrixCommand = RemoveCommand<MatrixTraits>;
+using EditMatrixCommand = EditCommand<MatrixTraits>;
 using AddMarkerCommand = AddCommand<MarkerTraits>;
 using RemoveMarkerCommand = RemoveCommand<MarkerTraits>;
 using EditMarkerCommand = EditCommand<MarkerTraits>;

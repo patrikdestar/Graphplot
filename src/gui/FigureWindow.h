@@ -40,6 +40,7 @@ public:
     QCustomPlot* plot() const { return m_plot; }
 
     bool openDataFile(const QString& fileName, QString* error = nullptr);
+    bool openMatrixFile(const QString& fileName, QString* error = nullptr);
     bool exportTo(const QString& fileName, int width = 0, int height = 0, double scale = 2.0,
                   QString* error = nullptr);
 
@@ -53,6 +54,8 @@ private:
     void buildActions();
     void showContextMenu(ObjectRef ref, QPoint globalPos, QPointF dataPos);
     void onOpen();
+    void onOpenMatrix();
+    void updateLevelStatus();
     void onExport();
 
     PlotModel* m_model;
@@ -66,6 +69,8 @@ private:
     QComboBox* m_zoomAxes = nullptr;
     QLabel* m_cursorLabel = nullptr;
     QLabel* m_regionLabel = nullptr;
+    QLabel* m_levelLabel = nullptr;
+    QAction* m_levelsAction = nullptr;
     QString m_lastDir;
 };
 

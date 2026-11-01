@@ -82,4 +82,68 @@ LoadResult loadColumnFile(const QString& fileName)
     return result;
 }
 
+MatrixLoadResult loadMatrixFile(const QString& fileName)
+{
+    MatrixLoadResult result;
+    QFile f(fileName);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        result.error = QString("Cannot open '%1': %2").arg(fileName, f.errorString());
+        return result;
+    }
+    static const QRegularExpression sep(R"([,;\t ]+)");
+    static const QRegularExpression extentRe(R"(^[#%]\s*extent\s*:?\s*(.*)$)",
+                                             QRegularExpression::CaseInsensitiveOption);
+    QTextStream in(&f);
+    Matrix& m = result.matrix;
+    bool haveExtent = false;
+    int lineNo = 0;
+    while (!in.atEnd()) {
+        const QString line = in.readLine().trimmed();
+        ++lineNo;
+        if (line.isEmpty()) continue;
+        if (line.startsWith('#') || line.startsWith('%')) {
+            const auto match = extentRe.match(line);
+            if (match.hasMatch()) {
+                const QStringList p = match.captured(1).split(sep, Qt::SkipEmptyParts);
+                if (p.size() == 4) {
+                    m.x0 = p[0].toDouble();
+                    m.x1 = p[1].toDouble();
+                    m.y0 = p[2].toDouble();
+                    m.y1 = p[3].toDouble();
+                    haveExtent = true;
+                }
+            }
+            continue;
+        }
+        const QStringList parts = line.split(sep, Qt::SkipEmptyParts);
+        if (m.nx == 0) m.nx = int(parts.size());
+        if (parts.size() != m.nx) {
+            result.error = QString("Line %1 has %2 values, expected %3").arg(lineNo).arg(parts.size()).arg(m.nx);
+            return result;
+        }
+        for (const QString& p : parts) {
+            bool ok = false;
+            const double v = p.toDouble(&ok);
+            if (!ok && p.toLower() != "nan") {
+                result.error = QString("Line %1 is not numeric").arg(lineNo);
+                return result;
+            }
+            m.z.push_back(ok ? v : std::numeric_limits<double>::quiet_NaN());
+        }
+        ++m.ny;
+    }
+    if (m.nx < 2 || m.ny < 2) {
+        result.error = "A 2D grid needs at least 2 rows and 2 columns";
+        return result;
+    }
+    if (!haveExtent) {
+        m.x0 = 0;
+        m.x1 = m.nx - 1;
+        m.y0 = 0;
+        m.y1 = m.ny - 1;
+    }
+    m.name = QFileInfo(fileName).completeBaseName();
+    return result;
+}
+
 }  // namespace gp

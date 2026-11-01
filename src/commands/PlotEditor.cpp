@@ -1,6 +1,7 @@
 #include "PlotEditor.h"
 
 #include "Commands.h"
+#include "model/Contour.h"
 
 #include <QUndoStack>
 
@@ -51,6 +52,69 @@ void PlotEditor::setDatasetData(ObjectId id, QVector<double> x, QVector<double> 
     if (!m_model->dataset(id)) return;
     if (undoable) m_stack->push(new SetDatasetDataCommand(m_model, id, std::move(x), std::move(y)));
     else m_model->setDatasetData(id, std::move(x), std::move(y));
+}
+
+ObjectId PlotEditor::addMatrix(Matrix m)
+{
+    if (m.id == kInvalidId) m.id = m_model->allocateId();
+    if (!m.style.positiveColor.isValid()) m.style.positiveColor = m_model->takeNextDatasetColor();
+    if (!(m.style.baseLevel > 0))
+        m.style.baseLevel = defaultBaseLevel(m, m.style.factor, m.style.levelCount);
+    if (m.name.isEmpty()) m.name = QString("2D data %1").arg(m_model->matrices().size() + 1);
+    const ObjectId id = m.id;
+    m_stack->push(new AddMatrixCommand(m_model, std::move(m)));
+    return id;
+}
+
+void PlotEditor::removeMatrix(ObjectId id)
+{
+    if (m_model->matrix(id)) m_stack->push(new RemoveMatrixCommand(m_model, id));
+}
+
+void PlotEditor::setMatrixAppearance(ObjectId id, const QString& name, const ContourStyle& style,
+                                     bool mergeable)
+{
+    const Matrix* cur = m_model->matrix(id);
+    if (!cur || (cur->name == name && cur->style == style)) return;
+    Matrix before;  // name/style only - the grid is not needed for the edit
+    before.id = id;
+    before.name = cur->name;
+    before.style = cur->style;
+    Matrix after = before;
+    after.name = name;
+    after.style = style;
+    m_stack->push(new EditMatrixCommand(m_model, before, after, "Change contour settings",
+                                        mergeable));
+}
+
+void PlotEditor::setMatrixData(ObjectId id, int nx, int ny, QVector<double> z, double x0,
+                               double x1, double y0, double y1)
+{
+    // Grid updates are typically streamed from analysis code: not undoable.
+    m_model->setMatrixData(id, nx, ny, std::move(z), x0, x1, y0, y1);
+}
+
+void PlotEditor::scaleContourLevels(const QList<ObjectId>& ids, double factor)
+{
+    if (!(factor > 0) || ids.isEmpty()) return;
+    const bool macro = ids.size() > 1;
+    if (macro) m_stack->beginMacro("Scale contour levels");
+    for (ObjectId id : ids) {
+        const Matrix* cur = m_model->matrix(id);
+        if (!cur) continue;
+        ContourStyle s = cur->style;
+        s.baseLevel *= factor;
+        Matrix before;
+        before.id = id;
+        before.name = cur->name;
+        before.style = cur->style;
+        Matrix after = before;
+        after.style = s;
+        // Mergeable, so a continuous wheel scroll becomes one undo step.
+        m_stack->push(new EditMatrixCommand(m_model, before, after, "Scale contour levels",
+                                            !macro));
+    }
+    if (macro) m_stack->endMacro();
 }
 
 ObjectId PlotEditor::addMarker(Marker m)
@@ -125,6 +189,7 @@ void PlotEditor::removeObject(const ObjectRef& ref)
     case ObjectKind::Marker: removeMarker(ref.id); break;
     case ObjectKind::Annotation: removeAnnotation(ref.id); break;
     case ObjectKind::Region: clearRegion(); break;
+    case ObjectKind::Matrix: removeMatrix(ref.id); break;
     case ObjectKind::None: break;
     }
 }

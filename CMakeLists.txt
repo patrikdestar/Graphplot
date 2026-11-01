@@ -31,6 +31,7 @@ add_library(graphplot_model STATIC
   src/model/PlotTypes.h src/model/PlotTypes.cpp
   src/model/PlotModel.h src/model/PlotModel.cpp
   src/model/DataLoader.h src/model/DataLoader.cpp
+  src/model/Contour.h src/model/Contour.cpp
   src/commands/Commands.h src/commands/Commands.cpp
   src/commands/PlotEditor.h src/commands/PlotEditor.cpp)
 target_include_directories(graphplot_model PUBLIC src)
@@ -41,6 +42,7 @@ target_link_libraries(graphplot_model PUBLIC Qt6::Core Qt6::Gui)
 add_library(graphplot_ui STATIC
   src/render/PlotRenderer.h src/render/PlotRenderer.cpp
   src/render/Exporter.h src/render/Exporter.cpp
+  src/render/ContourPlottable.h src/render/ContourPlottable.cpp
   src/interaction/InteractionController.h src/interaction/InteractionController.cpp
   src/gui/Icons.h src/gui/Icons.cpp
   src/gui/PropertiesPanel.h src/gui/PropertiesPanel.cpp

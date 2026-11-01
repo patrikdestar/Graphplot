@@ -15,6 +15,7 @@ namespace gp {
 namespace {
 constexpr int kDragThresholdPx = 4;
 constexpr double kWheelZoomPerStep = 0.85;  // range factor per 15° wheel step
+constexpr double kLevelStepPerNotch = 1.2;  // contour base level factor per wheel step
 }  // namespace
 
 InteractionController::InteractionController(PlotRenderer* renderer, PlotEditor* editor,
@@ -36,6 +37,9 @@ InteractionController::InteractionController(PlotRenderer* renderer, PlotEditor*
     });
     connect(model, &PlotModel::datasetRemoved, this, [this](ObjectId id) {
         if (m_selection == ObjectRef{ObjectKind::Dataset, id}) setSelection({});
+    });
+    connect(model, &PlotModel::matrixRemoved, this, [this](ObjectId id) {
+        if (m_selection == ObjectRef{ObjectKind::Matrix, id}) setSelection({});
     });
     connect(model, &PlotModel::regionChanged, this, [this, model] {
         if (m_selection.kind == ObjectKind::Region && !model->region().active) setSelection({});
@@ -71,6 +75,18 @@ void InteractionController::setSelection(const ObjectRef& ref)
     m_selection = ref;
     m_renderer->setHighlight(ref);
     emit selectionChanged(ref);
+}
+
+void InteractionController::setWheelAdjustsLevels(bool on)
+{
+    if (on == m_wheelLevels) return;
+    m_wheelLevels = on;
+    emit wheelAdjustsLevelsChanged(on);
+}
+
+void InteractionController::scaleContourLevels(double factor)
+{
+    m_editor->scaleContourLevels(m_renderer->levelTargets(), factor);
 }
 
 void InteractionController::deleteSelection()
@@ -371,8 +387,16 @@ void InteractionController::wheel(QWheelEvent* e)
     const QPointF px = e->position();
     if (!m_renderer->isInsidePlotArea(px) && !m_plot->axisRect()->outerRect().contains(px.toPoint()))
         return;
-    const double steps = e->angleDelta().y() / 120.0;
+    // Some platforms turn Alt+wheel into a horizontal wheel; accept both.
+    const int delta = e->angleDelta().y() != 0 ? e->angleDelta().y() : e->angleDelta().x();
+    const double steps = delta / 120.0;
     if (steps == 0) return;
+
+    const bool levels = m_wheelLevels || (e->modifiers() & Qt::AltModifier);
+    if (levels && !m_renderer->levelTargets().isEmpty()) {
+        scaleContourLevels(std::pow(kLevelStepPerNotch, -steps));
+        return;
+    }
     const double factor = std::pow(kWheelZoomPerStep, steps);
 
     ZoomAxes axes = m_zoomAxes;
@@ -394,6 +418,14 @@ bool InteractionController::key(QKeyEvent* e)
     case Qt::Key_Delete:
     case Qt::Key_Backspace:
         deleteSelection();
+        return true;
+    case Qt::Key_Asterisk:  // TopSpin-like "*2": intensity x2 = levels / 2
+        if (m_renderer->levelTargets().isEmpty()) return false;
+        scaleContourLevels(0.5);
+        return true;
+    case Qt::Key_Slash:     // "/2": intensity / 2 = levels x 2
+        if (m_renderer->levelTargets().isEmpty()) return false;
+        scaleContourLevels(2.0);
         return true;
     case Qt::Key_Escape:
         if (m_drag != Drag::None) {

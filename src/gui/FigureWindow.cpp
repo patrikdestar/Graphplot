@@ -52,8 +52,15 @@ FigureWindow::FigureWindow(QWidget* parent) : QMainWindow(parent)
     m_cursorLabel = new QLabel;
     m_cursorLabel->setMinimumWidth(240);
     m_regionLabel = new QLabel;
+    m_levelLabel = new QLabel;
     statusBar()->addWidget(m_cursorLabel);
+    statusBar()->addPermanentWidget(m_levelLabel);
     statusBar()->addPermanentWidget(m_regionLabel);
+    for (auto sig : {&PlotModel::matrixAdded, &PlotModel::matrixRemoved,
+                     &PlotModel::matrixAppearanceChanged})
+        connect(m_model, sig, this, &FigureWindow::updateLevelStatus);
+    connect(m_controller, &InteractionController::selectionChanged, this,
+            &FigureWindow::updateLevelStatus);
 
     connect(m_controller, &InteractionController::cursorMoved, this,
             [this](QPointF p, bool inside) {
@@ -85,6 +92,7 @@ void FigureWindow::buildActions()
     QMenu* file = menuBar()->addMenu("&File");
     QAction* open = file->addAction("&Open data…", this, &FigureWindow::onOpen);
     open->setShortcut(QKeySequence::Open);
+    file->addAction("Open &2D matrix…", this, &FigureWindow::onOpenMatrix);
     QAction* exportAct = file->addAction(icons::make(icons::Kind::Export), "&Export…", this,
                                          &FigureWindow::onExport);
     exportAct->setShortcut(QKeySequence("Ctrl+E"));
@@ -177,6 +185,27 @@ void FigureWindow::buildActions()
     connect(reset, &QAction::triggered, this, [this] { m_renderer->resetView(); });
     QAction* setHome = new QAction("Set current view as home", this);
     connect(setHome, &QAction::triggered, this, [this] { m_renderer->captureHomeView(); });
+    m_levelsAction = new QAction(icons::make(icons::Kind::Levels), "Levels", this);
+    m_levelsAction->setCheckable(true);
+    m_levelsAction->setShortcut(QKeySequence("L"));
+    m_levelsAction->setToolTip(
+        "Mouse wheel scrolls contour levels of 2D data instead of zooming (L).\n"
+        "Alt+wheel always scrolls levels. Keys: '*' lowers levels x2, '/' raises them x2.\n"
+        "Applies to the selected 2D dataset, or to all when none is selected.");
+    connect(m_levelsAction, &QAction::toggled, m_controller,
+            &InteractionController::setWheelAdjustsLevels);
+    connect(m_controller, &InteractionController::wheelAdjustsLevelsChanged, m_levelsAction,
+            &QAction::setChecked);
+    QAction* lowerLevels = new QAction("Lower contour levels ÷2", this);
+    lowerLevels->setShortcut(QKeySequence("*"));
+    connect(lowerLevels, &QAction::triggered, this, [this] { m_controller->scaleContourLevels(0.5); });
+    QAction* raiseLevels = new QAction("Raise contour levels ×2", this);
+    raiseLevels->setShortcut(QKeySequence("/"));
+    connect(raiseLevels, &QAction::triggered, this, [this] { m_controller->scaleContourLevels(2.0); });
+    view->addAction(m_levelsAction);
+    view->addAction(lowerLevels);
+    view->addAction(raiseLevels);
+    view->addSeparator();
     view->addAction(autoscale);
     view->addAction(autoX);
     view->addAction(autoY);
@@ -186,6 +215,7 @@ void FigureWindow::buildActions()
     view->addAction(m_dock->toggleViewAction());
     tb->addAction(autoscale);
     tb->addAction(reset);
+    tb->addAction(m_levelsAction);
 
     // Zoom axes selector
     tb->addSeparator();
@@ -265,6 +295,42 @@ bool FigureWindow::openDataFile(const QString& fileName, QString* error)
     m_editor->undoStack()->endMacro();
     m_renderer->autoscale();
     return true;
+}
+
+bool FigureWindow::openMatrixFile(const QString& fileName, QString* error)
+{
+    MatrixLoadResult r = loadMatrixFile(fileName);
+    if (!r.error.isEmpty()) {
+        if (error) *error = r.error;
+        return false;
+    }
+    m_editor->addMatrix(std::move(r.matrix));
+    m_renderer->autoscale();
+    return true;
+}
+
+void FigureWindow::onOpenMatrix()
+{
+    const QString fn = QFileDialog::getOpenFileName(
+        this, "Open 2D matrix", m_lastDir, "Data files (*.csv *.txt *.dat *.tsv);;All files (*)");
+    if (fn.isEmpty()) return;
+    m_lastDir = QFileInfo(fn).absolutePath();
+    QString err;
+    if (!openMatrixFile(fn, &err)) QMessageBox::warning(this, "Open 2D matrix", err);
+}
+
+void FigureWindow::updateLevelStatus()
+{
+    const QList<ObjectId> ids = m_renderer->levelTargets();
+    if (ids.isEmpty()) {
+        m_levelLabel->clear();
+        return;
+    }
+    const Matrix* m = m_model->matrix(ids.first());
+    m_levelLabel->setText(QString("Contour base: %1%2")
+                              .arg(QString::number(m->style.baseLevel, 'g', 4),
+                                   ids.size() > 1 ? QString(" (+%1 more)").arg(ids.size() - 1)
+                                                  : QString()));
 }
 
 void FigureWindow::onOpen()

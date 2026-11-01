@@ -37,6 +37,19 @@ public:
     // updates (e.g. from a Python loop) so the history does not grow.
     void setDatasetData(ObjectId id, QVector<double> x, QVector<double> y, bool undoable = true);
 
+    // ---- 2D data (contours) ---------------------------------------------
+    // Fills in an automatic base level and palette colour when unset.
+    ObjectId addMatrix(Matrix m);
+    void removeMatrix(ObjectId id);
+    void setMatrixAppearance(ObjectId id, const QString& name, const ContourStyle& style,
+                             bool mergeable = false);
+    void setMatrixData(ObjectId id, int nx, int ny, QVector<double> z, double x0, double x1,
+                       double y0, double y1);
+    // Multiplies the contour base level of the given matrices by `factor`
+    // (factor < 1 shows more/lower levels). Consecutive calls - e.g. one per
+    // mouse-wheel notch - merge into a single undo step.
+    void scaleContourLevels(const QList<ObjectId>& ids, double factor);
+
     // ---- markers -------------------------------------------------------
     ObjectId addMarker(Marker m);
     void removeMarker(ObjectId id);

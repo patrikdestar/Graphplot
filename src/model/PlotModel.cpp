@@ -108,6 +108,61 @@ bool PlotModel::setDatasetData(ObjectId id, QVector<double> x, QVector<double> y
 
 QColor PlotModel::takeNextDatasetColor() { return paletteColor(m_colorCounter++); }
 
+// ---- Matrices -------------------------------------------------------------
+
+const Matrix* PlotModel::matrix(ObjectId id) const { return find(m_matrices, id); }
+int PlotModel::matrixIndex(ObjectId id) const { return indexOf(m_matrices, id); }
+
+ObjectId PlotModel::insertMatrix(Matrix m, int index)
+{
+    if (m.id == kInvalidId) m.id = newId();
+    else m_lastId = std::max(m_lastId, m.id);
+    if (m.z.size() != qsizetype(m.nx) * m.ny) {
+        m.nx = m.ny = 0;
+        m.z.clear();
+    }
+    const ObjectId id = m.id;
+    insertAt(m_matrices, std::move(m), index);
+    emit matrixAdded(id);
+    return id;
+}
+
+std::optional<Matrix> PlotModel::takeMatrix(ObjectId id)
+{
+    auto m = take(m_matrices, id);
+    if (m) emit matrixRemoved(id);
+    return m;
+}
+
+bool PlotModel::setMatrixAppearance(ObjectId id, const QString& name, const ContourStyle& style)
+{
+    const int i = matrixIndex(id);
+    if (i < 0) return false;
+    Matrix& m = m_matrices[i];
+    if (m.name == name && m.style == style) return true;
+    m.name = name;
+    m.style = style;
+    emit matrixAppearanceChanged(id);
+    return true;
+}
+
+bool PlotModel::setMatrixData(ObjectId id, int nx, int ny, QVector<double> z, double x0, double x1,
+                              double y0, double y1)
+{
+    const int i = matrixIndex(id);
+    if (i < 0 || nx < 0 || ny < 0 || z.size() != qsizetype(nx) * ny) return false;
+    Matrix& m = m_matrices[i];
+    m.nx = nx;
+    m.ny = ny;
+    m.z = std::move(z);
+    m.x0 = x0;
+    m.x1 = x1;
+    m.y0 = y0;
+    m.y1 = y1;
+    emit matrixDataChanged(id);
+    return true;
+}
+
 // ---- Markers ------------------------------------------------------------
 
 const Marker* PlotModel::marker(ObjectId id) const { return find(m_markers, id); }
@@ -209,6 +264,14 @@ bool PlotModel::dataBounds(double& xmin, double& xmax, double& ymin, double& yma
             any = true;
         }
     }
+    for (const auto& m : m_matrices) {
+        if ((visibleOnly && !m.style.visible) || m.nx < 1 || m.ny < 1) continue;
+        xmin = std::min({xmin, m.x0, m.x1});
+        xmax = std::max({xmax, m.x0, m.x1});
+        ymin = std::min({ymin, m.y0, m.y1});
+        ymax = std::max({ymax, m.y0, m.y1});
+        any = true;
+    }
     return any;
 }
 
@@ -217,6 +280,7 @@ void PlotModel::clear()
     while (!m_annotations.empty()) takeAnnotation(m_annotations.back().id);
     while (!m_markers.empty()) takeMarker(m_markers.back().id);
     while (!m_datasets.empty()) takeDataset(m_datasets.back().id);
+    while (!m_matrices.empty()) takeMatrix(m_matrices.back().id);
     setRegion(Region{});
     m_colorCounter = 0;
 }

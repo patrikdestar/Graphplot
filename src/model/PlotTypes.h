@@ -18,7 +18,7 @@ enum class ScatterShape { None, Circle, Square, Triangle, Cross, Plus, Diamond }
 enum class Orientation { Vertical, Horizontal };
 
 // Kind of an interactive plot object; used by selection and hit-testing.
-enum class ObjectKind { None, Dataset, Marker, Annotation, Region };
+enum class ObjectKind { None, Dataset, Marker, Annotation, Region, Matrix };
 
 struct ObjectRef {
     ObjectKind kind = ObjectKind::None;
@@ -45,6 +45,33 @@ struct Dataset {
     QVector<double> x;
     QVector<double> y;
     DatasetStyle style;
+};
+
+// Contour display of 2D data. Levels are base * factor^k, k = 0..levelCount-1
+// (TopSpin-style geometric levels), optionally mirrored for negative values.
+struct ContourStyle {
+    double baseLevel = 0.0;  // <= 0 means "choose automatically" when added
+    double factor = 1.4;
+    int levelCount = 12;
+    bool showNegative = true;
+    QColor positiveColor;    // invalid = next palette colour
+    QColor negativeColor = QColor(0xe3, 0x49, 0x48);
+    double lineWidth = 1.0;
+    bool showImage = false;  // colour-map image underneath the contours
+    bool visible = true;
+    bool operator==(const ContourStyle&) const = default;
+};
+
+// 2D data on a regular grid: z[iy * nx + ix] is the value at
+// x = x0 + ix * (x1 - x0) / (nx - 1),  y = y0 + iy * (y1 - y0) / (ny - 1).
+struct Matrix {
+    ObjectId id = kInvalidId;
+    QString name;
+    int nx = 0;
+    int ny = 0;
+    QVector<double> z;
+    double x0 = 0.0, x1 = 1.0, y0 = 0.0, y1 = 1.0;
+    ContourStyle style;
 };
 
 struct Marker {
