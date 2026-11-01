@@ -156,6 +156,7 @@ private:
     struct MarkerVisual {
         QCPItemStraightLine* line = nullptr;
         RichTextItem* label = nullptr;
+        QCPItemRect* band = nullptr;  // span markers (axvspan / axhspan)
     };
     struct MatrixVisual {
         ContourPlottable* contour = nullptr;
@@ -255,7 +256,7 @@ private:
     QList<PlotRenderer*> m_shareX, m_shareY;
     // The view follows the data (re-fits when data is added or changed) until
     // the user or code sets the view; autoscale() resumes following.
-    bool m_followData = true;
+    bool m_followX = true, m_followY = true;  // per axis
     bool m_autoscaling = false;
     bool m_panelVisible = true;
     bool m_regionLabelOn = true;

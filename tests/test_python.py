@@ -995,6 +995,31 @@ class PlotterTests(unittest.TestCase):
             plt.savefig(os.path.join(d, "b.png"))
             plt.close("all")
 
+    def test_round7_fixes(self):
+        import plotter.pyplot as plt
+        with tempfile.TemporaryDirectory() as d:
+            fig, axs = plt.subplots(1, 2, sharey="row")
+            ax = axs[0]
+            ax.plot([0, 10], [0, 1])
+            ax.axvspan(2, 4, color="red", alpha=0.3)
+            ax.axhspan(-1, 1)
+            # Spans are native band markers, not filled curves.
+            self.assertEqual(len(ax.panel.markers()), 2)
+            self.assertEqual(len(ax.panel.lines()), 1)
+            # NaN and stacked bars render without hanging.
+            axs[1].bar([1, 2, 3], [1, float("nan"), 3])
+            axs[1].bar([1, 2, 3], [1, 1, 1], bottom=[1, 0, 3])
+            ax.fill_betweenx([0, 1, float("nan"), 3], [0, 1, 1, 2])
+            plt.savefig(os.path.join(d, "r7.png"))
+            # Per-axis follow: a fixed x range survives new data, y follows.
+            g = plotter.figure()
+            g.plot([0, 1], [0, 1])
+            g.set_xlim(0, 0.5)
+            g.plot([0, 1], [0, 9])
+            self.assertEqual(tuple(g.xlim()), (0, 0.5))
+            self.assertGreaterEqual(g.ylim()[1], 9)
+            plt.close("all")
+
     def test_round6_correctness(self):
         import plotter.pyplot as plt
         f = self.fig

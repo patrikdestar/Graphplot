@@ -184,10 +184,17 @@ class PltAxes:
     def scatter(self, x, y, s=None, c=None, marker="o", cmap=None, vmin=None, vmax=None, **kw):
         if c is not None:
             arr = _np.asarray(c)
-            if arr.dtype.kind in "fiu" and arr.ndim == 1 and arr.size not in (3, 4):
+            npts = _np.size(x)
+            # One number per point is colour-mapped, also for 3 or 4 points (a
+            # tuple stays an RGB(A) colour).
+            if arr.dtype.kind in "fiu" and arr.ndim == 1 and arr.size == npts and not isinstance(c, tuple):
                 # One value per point: colour-mapped in 32 steps (one dataset per
                 # step, sharing the label of the first).
                 x, y, v = (_np.asarray(a, dtype=float) for a in (x, y, arr))
+                keep = _np.isfinite(v)  # points without a value are not drawn (matplotlib: "bad" colour)
+                x, y, v = x[keep], y[keep], v[keep]
+                if v.size == 0:
+                    return None
                 lo = _np.nanmin(v) if vmin is None else vmin
                 hi = _np.nanmax(v) if vmax is None else vmax
                 steps = 32
@@ -381,8 +388,9 @@ class PltAxes:
     def colorbar(self, mappable=None, label=None, **kw):
         """Show the colour bar of an image (default: the last one drawn in this panel)."""
         m = mappable if mappable is not None else getattr(self, "_last_image", None)
-        if m is None:
-            raise RuntimeError("colorbar: no image (imshow / pcolormesh / contourf) to show it for")
+        if m is None or not hasattr(type(m), "colorbar"):
+            raise RuntimeError("colorbar: colour bars are drawn for images (imshow / pcolormesh / "
+                               "contourf / contour); a scatter's colours have no colour bar here")
         m.colorbar = True
         if label is not None:
             m.label = str(label)
@@ -407,24 +415,41 @@ class PltAxes:
         return self.plot(xs, ys, color=colors, linestyle=linestyles, label=label, **kw)[0]
 
     def axvspan(self, xmin, xmax, ymin=0, ymax=1, alpha=0.25, color=None, label=None, **kw):
-        """Shaded vertical band from xmin to xmax over the current y range."""
-        lo, hi = self._ax.ylim()
-        return self._ax.fill_between([xmin, xmax], [hi, hi], [lo, lo], color=_mpl_color(color),
-                                     alpha=alpha, label=None if label is None else str(label))
+        """Shaded vertical band from xmin to xmax, always the full panel height
+        (not data: it does not change the autoscaled view)."""
+        return self._span(xmin, xmax, "v", alpha, color, label)
 
     def axhspan(self, ymin, ymax, xmin=0, xmax=1, alpha=0.25, color=None, label=None, **kw):
-        """Shaded horizontal band from ymin to ymax over the current x range."""
-        lo, hi = self._ax.xlim()
-        return self._ax.fill_between([lo, hi], [ymax, ymax], [ymin, ymin], color=_mpl_color(color),
-                                     alpha=alpha, label=None if label is None else str(label))
+        """Shaded horizontal band from ymin to ymax, always the full panel width."""
+        return self._span(ymin, ymax, "h", alpha, color, label)
+
+    def _span(self, a, b, orientation, alpha, color, label):
+        col = _mpl_color(color) if color is not None else "#9c9ca1"
+        r, g, bl, _ = _plotter._plotter._rgba(col)
+        return self._ax.marker(float(a), orientation, color=(r, g, bl, float(alpha)),
+                               label="" if label is None else str(label), span_to=float(b))
 
     def fill_betweenx(self, y, x1, x2=0, alpha=0.3, color=None, label=None, **kw):
         """Area between two curves x1(y) and x2(y) (a closed, filled outline)."""
         y = _np.asarray(y, dtype=float)
         x1 = _np.broadcast_to(_np.asarray(x1, dtype=float), y.shape)
         x2 = _np.broadcast_to(_np.asarray(x2, dtype=float), y.shape)
-        xs = _np.concatenate([x1, x2[::-1], x1[:1]])
-        ys = _np.concatenate([y, y[::-1], y[:1]])
+        # Non-finite rows split the area into pieces; one path visits each
+        # piece and returns to the start the same way (no NaN in the path).
+        ok = _np.isfinite(y) & _np.isfinite(x1) & _np.isfinite(x2)
+        xs, ys = [], []
+        start = None
+        idx = _np.flatnonzero(ok)
+        pieces = _np.split(idx, _np.flatnonzero(_np.diff(idx) > 1) + 1) if idx.size else []
+        for piece in pieces:
+            if piece.size < 2:
+                continue
+            px = _np.concatenate([x1[piece], x2[piece][::-1], x1[piece][:1]])
+            py = _np.concatenate([y[piece], y[piece][::-1], y[piece][:1]])
+            if start is None:
+                start = (px[0], py[0])
+            xs += list(px) + [start[0]]
+            ys += list(py) + [start[1]]
         col = _mpl_color(color) or self._ax._take_color()
         r, g, b, _ = _plotter._plotter._rgba(col)
         return self._ax.plot(xs, ys, color=col, fill=(r, g, b, alpha), style="none",
@@ -484,15 +509,22 @@ class PltAxes:
 
     @staticmethod
     def _bar_outline(starts, sizes, lengths, bases, vertical):
-        """One closed path through all bars, along the baseline between them
-        (no NaN: filled curves with gaps cannot be drawn); filled, no edge line."""
+        """One path through all bars without NaN (a filled curve with gaps is
+        not drawn): it starts at one point, and for every bar goes there,
+        around the rectangle and back the same way, so only the rectangles
+        enclose area (stacked bars with different bottoms included). Bars
+        with non-finite values are left out."""
         a, b = [], []  # along / across the bars
+        start = None
         for s0, sz, ln, bs in zip(starts, sizes, lengths, bases):
-            a += [s0, s0, s0 + sz, s0 + sz]
-            b += [bs, bs + ln, bs + ln, bs]
-        if a:
-            a.append(a[0])
-            b.append(b[0])
+            if not all(_np.isfinite(v) for v in (s0, sz, ln, bs)):
+                continue
+            if start is None:
+                start = (s0, bs)
+                a.append(s0)
+                b.append(bs)
+            a += [s0, s0, s0 + sz, s0 + sz, s0, start[0]]
+            b += [bs, bs + ln, bs + ln, bs, bs, start[1]]
         return (a, b) if vertical else (b, a)
 
     def bar(self, x, height, width=0.8, bottom=0.0, align="center", color=None, label=None,
@@ -895,7 +927,8 @@ def subplots(nrows=1, ncols=1, sharex=False, sharey=False, figsize=None, squeeze
     # matplotlib gives hspace as a fraction of the panel height; plotter uses
     # pixels: approximated as fraction * 100 px (0 = frames touch).
     px = lambda v: None if v is None else int(round(v * 100))  # noqa: E731
-    grid = fig._fig.subplots(nrows, ncols, sharex=bool(sharex), sharey=bool(sharey),
+    share = lambda v: v if isinstance(v, str) else bool(v)  # noqa: E731 - 'col', 'row', 'all', 'none' pass through
+    grid = fig._fig.subplots(nrows, ncols, sharex=share(sharex), sharey=share(sharey),
                              height_ratios=hr, width_ratios=wr, hspace=px(hspace),
                              wspace=px(wspace), squeeze=False)
     axes = [[PltAxes(fig, a) for a in row] for row in grid]

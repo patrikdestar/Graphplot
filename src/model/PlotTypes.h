@@ -103,6 +103,10 @@ struct Marker {
     LineStyle lineStyle = LineStyle::Dash;
     double lineWidth = 1.5;
     bool showValue = true;  // show the numeric coordinate next to the label
+    // A band (axvspan / axhspan): from position to spanEnd, across the whole
+    // panel, filled with the colour (its alpha; opaque colours get 25 %).
+    bool span = false;
+    double spanEnd = 0.0;
     bool operator==(const Marker&) const = default;
 };
 

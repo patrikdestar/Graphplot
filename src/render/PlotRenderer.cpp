@@ -203,7 +203,8 @@ PlotRenderer::PlotRenderer(PlotModel* model, QCustomPlot* plot, QCPAxisRect* rec
     });
     connect(m_model, &PlotModel::datasetDataChanged, this, [this](ObjectId id) {
         applyDatasetData(id);
-        if (m_followData && m_autoHome) autoscale();  // live data stays in view until the user zooms
+        if ((m_followX || m_followY) && m_autoHome)
+            autoscale(m_followX, m_followY);  // live data stays in view until the user zooms
         replot();
     });
     connect(m_model, &PlotModel::matrixAdded, this, &PlotRenderer::onMatrixAdded);
@@ -252,11 +253,11 @@ PlotRenderer::PlotRenderer(PlotModel* model, QCustomPlot* plot, QCPAxisRect* rec
     // A view change that is not an autoscale (zoom, pan, typed limits, a
     // linked panel) stops following the data.
     connect(m_x, qOverload<const QCPRange&>(&QCPAxis::rangeChanged), this, [this] {
-        if (!m_autoscaling) m_followData = false;
+        if (!m_autoscaling) m_followX = false;
         emit viewChanged();
     });
     connect(m_y, qOverload<const QCPRange&>(&QCPAxis::rangeChanged), this, [this] {
-        if (!m_autoscaling) m_followData = false;
+        if (!m_autoscaling) m_followY = false;
         emit viewChanged();
     });
 
@@ -456,7 +457,22 @@ void PlotRenderer::autoscale(bool doX, bool doY)
     if (doX) unite(m_shareX, true);
     if (doY) unite(m_shareY, false);
     if (!(xmax >= xmin) || !(ymax >= ymin)) return;  // no data anywhere
-    m_followData = true;  // an explicit or automatic fit: keep following the data
+    // A fitted axis follows the data from now on (the other keeps its state).
+    if (doX) m_followX = true;
+    if (doY) m_followY = true;
+    // Partners linked to the fitted axes receive the range through the link:
+    // that is a fit for them too, not a manual change.
+    QList<PlotRenderer*> partners;
+    if (doX) partners += m_shareX;
+    if (doY) partners += m_shareY;
+    for (PlotRenderer* p : partners) p->m_autoscaling = true;
+    struct PartnerGuard {
+        QList<PlotRenderer*>& list;
+        ~PartnerGuard()
+        {
+            for (PlotRenderer* p : list) p->m_autoscaling = false;
+        }
+    } partnerGuard{partners};
     struct Guard {
         bool& flag;
         ~Guard() { flag = false; }
@@ -508,8 +524,8 @@ void PlotRenderer::maybeCaptureHome()
 {
     // New data: re-fit while the view still follows the data (nobody zoomed
     // or set limits), and remember the fitted view as "home".
-    if (!m_autoHome || (!m_followData && m_hasHome)) return;
-    autoscale();
+    if (!m_autoHome || (!m_followX && !m_followY && m_hasHome)) return;
+    autoscale(m_followX || !m_hasHome, m_followY || !m_hasHome);
     captureHomeView();
 }
 
@@ -1024,6 +1040,7 @@ void PlotRenderer::onMarkerRemoved(ObjectId id)
     const MarkerVisual v = m_markers.take(id);
     if (v.line) m_plot->removeItem(v.line);
     if (v.label) m_plot->removeItem(v.label);
+    if (v.band) m_plot->removeItem(v.band);
     if (m_highlight.kind == ObjectKind::Marker && m_highlight.id == id) m_highlight = {};
     replotObjectLayers();
 }
@@ -1075,10 +1092,41 @@ void PlotRenderer::applyMarker(ObjectId id)
     v.label->setText(text, font(st.xtick.labelSize), st.mathText);
     v.label->setColor(st.labelColor);
     v.label->setVisible(!text.isEmpty() && m_panelVisible);
-    v.line->setVisible(m_panelVisible);
+    v.line->setVisible(m_panelVisible && !m->span);
     QPen border(ink(m->color), hl ? 1.5 : 1.0);
     v.label->setPen(border);
     v.label->setBrush(labelBox(st));
+    // A span: a band across the whole panel (always full height / width,
+    // whatever the view; not data, so it never affects autoscaling).
+    MarkerVisual& mv = m_markers[id];
+    if (m->span && !mv.band) {
+        mv.band = new QCPItemRect(m_plot);
+        bindItem(mv.band);
+        mv.band->setLayer(m_regionLayer);  // under the curves
+        mv.band->setSelectable(false);
+    } else if (!m->span && mv.band) {
+        m_plot->removeItem(mv.band);
+        mv.band = nullptr;
+    }
+    if (mv.band) {
+        const bool vertical = m->orientation == Orientation::Vertical;
+        for (QCPItemPosition* p : {mv.band->topLeft, mv.band->bottomRight}) {
+            p->setTypeX(vertical ? QCPItemPosition::ptPlotCoords : QCPItemPosition::ptAxisRectRatio);
+            p->setTypeY(vertical ? QCPItemPosition::ptAxisRectRatio : QCPItemPosition::ptPlotCoords);
+        }
+        if (vertical) {
+            mv.band->topLeft->setCoords(m->position, 0.0);
+            mv.band->bottomRight->setCoords(m->spanEnd, 1.0);
+        } else {
+            mv.band->topLeft->setCoords(0.0, m->position);
+            mv.band->bottomRight->setCoords(1.0, m->spanEnd);
+        }
+        QColor fill = ink(m->color);
+        if (fill.alpha() == 255) fill.setAlphaF(0.25);
+        mv.band->setBrush(fill);
+        mv.band->setPen(hl ? QPen(kHighlight, 1, Qt::DashLine) : QPen(Qt::NoPen));
+        mv.band->setVisible(m_panelVisible);
+    }
 }
 
 // ---- annotations -------------------------------------------------------------------------

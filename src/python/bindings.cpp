@@ -1184,7 +1184,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
     fig.def(
         "marker",
         [](FigurePtr self, double pos, const std::string& orientation, const py::object& color,
-           const Text& label, const std::string& style, double width, bool showValue) {
+           const Text& label, const std::string& style, double width, bool showValue, const py::object& spanTo) {
             Marker m;
             m.orientation = toOrientation(orientation);
             m.position = pos;
@@ -1194,6 +1194,11 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
             checkWidth(width);
             m.lineWidth = width;
             m.showValue = showValue;
+            if (!spanTo.is_none()) {  // a band from position to span_to
+                m.span = true;
+                m.spanEnd = spanTo.cast<double>();
+                m.showValue = false;
+            }
             const ObjectId id = inGui([&] {
                 m.color = c.isValid() ? c : paletteColor(7 + int(self->model()->markers().size()));
                 return self->editor()->addMarker(m);
@@ -1202,7 +1207,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         },
         py::arg("position"), py::arg("orientation") = "v", py::kw_only(),
         py::arg("color") = py::none(), py::arg("label") = "", py::arg("style") = "--",
-        py::arg("width") = 1.5, py::arg("show_value") = true,
+        py::arg("width") = 1.5, py::arg("show_value") = true, py::arg("span_to") = py::none(),
         "Add a vertical ('v', at x = position) or horizontal ('h', at y = position) marker.");
 
     fig.def(

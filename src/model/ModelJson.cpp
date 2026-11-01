@@ -197,7 +197,8 @@ QJsonObject markerToJson(const Marker& m)
             {"color", colorText(m.color)},
             {"lineStyle", lineStyleName(m.lineStyle)},
             {"lineWidth", m.lineWidth},
-            {"showValue", m.showValue}};
+            {"showValue", m.showValue},
+            {"spanEnd", m.span ? QJsonValue(jnum(m.spanEnd)) : QJsonValue()}};
 }
 
 Marker markerFromJson(const QJsonObject& o)
@@ -211,6 +212,8 @@ Marker markerFromJson(const QJsonObject& o)
     m.lineStyle = parseLineStyle(o["lineStyle"].toString());
     m.lineWidth = o["lineWidth"].toDouble(1.5);
     m.showValue = o["showValue"].toBool(true);
+    m.span = o.contains("spanEnd") && !o["spanEnd"].isNull();
+    if (m.span) m.spanEnd = jdbl(o["spanEnd"]);
     return m;
 }
 
