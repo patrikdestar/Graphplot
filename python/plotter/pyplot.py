@@ -1026,9 +1026,7 @@ class PltAxes:
         self._ax.x_log = scale == "log"
 
     def set_yscale(self, scale):
-        self._ax.y_log = scale == "log"
-        if scale == "log":
-            self._ax.autoscale(x=False, y=True)
+        self._ax.y_log = scale == "log"  # re-fitted by plotter if it follows the data
 
     def invert_xaxis(self):
         self._ax.x_reversed = not self._ax.x_reversed

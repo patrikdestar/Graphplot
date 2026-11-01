@@ -1287,6 +1287,27 @@ class PlotterTests(unittest.TestCase):
         self.assertEqual(len(a1._ax.lines()), 2)
         plt.close("all")
 
+    def test_round12_follow_rules(self):
+        import plotter.pyplot as plt
+        x = np.linspace(1, 5, 10)
+        plt.plot([0, 1], [0, 1])
+        plt.xlim(0, 0.5)
+        plt.clf()
+        plt.plot([10, 20], [100, 200])
+        self.assertEqual(plt.xlim(), (10.0, 20.0))  # a cleared figure fits again
+        fig, ax = plt.subplots()
+        ax.set_yscale("log")
+        ax.plot(x, 100 + 25 * x)
+        self.assertGreater(ax.get_ylim()[0], 100)  # log before data: still fitted
+        fig, ax = plt.subplots()
+        ax.plot(x, x ** 2)
+        ax.set_ylim(10, 1e5)
+        ax.set_yscale("log")
+        self.assertEqual(ax.get_ylim(), (10.0, 100000.0))  # user limits kept
+        ax.plot(x, x ** 3)
+        self.assertEqual(ax.get_ylim(), (10.0, 100000.0))
+        plt.close("all")
+
     def test_round6_correctness(self):
         import plotter.pyplot as plt
         f = self.fig

@@ -806,10 +806,21 @@ void PlotRenderer::onDatasetAdded(ObjectId id)
     replot();
 }
 
+void PlotRenderer::resetFollowIfEmpty()
+{
+    // An empty panel (cleared figure, cla, everything deleted) starts afresh:
+    // the next data is fitted, as in a new figure.
+    if (m_model->datasets().empty() && m_model->matrices().empty()) {
+        m_followX = m_followY = true;
+        m_hasHome = false;
+    }
+}
+
 void PlotRenderer::onDatasetRemoved(ObjectId id)
 {
     removeErrorBars(id);
     if (auto* p = m_plottables.take(id)) m_plot->removePlottable(p);
+    resetFollowIfEmpty();
     // Bands that were filled towards this dataset lose their partner.
     for (const auto& d : m_model->datasets())
         if (d.style.fillTo == id) applyDatasetAppearance(d.id);
@@ -1031,6 +1042,7 @@ void PlotRenderer::onMatrixRemoved(ObjectId id)
     const MatrixVisual v = m_matrices.take(id);
     if (v.contour) m_plot->removePlottable(v.contour);
     if (v.image) m_plot->removePlottable(v.image);
+    resetFollowIfEmpty();
     if (m_highlight.kind == ObjectKind::Matrix && m_highlight.id == id) m_highlight = {};
     syncLegend();
     updateColorBar();  // the removed image may have had the colour bar
@@ -1716,12 +1728,26 @@ void PlotRenderer::applyAxesInfo()
     if (!m_linTickerX) m_linTickerX = m_x->ticker(), m_linTickerY = m_y->ticker();
     const bool xLogChanged = (m_x->scaleType() == QCPAxis::stLogarithmic) != info.xLog;
     const bool yLogChanged = (m_y->scaleType() == QCPAxis::stLogarithmic) != info.yLog;
-    setScale(m_x, m_x2, info.xLog, m_linTickerX);
-    setScale(m_y, m_y2, info.yLog, m_linTickerY);
-    // A linear range (often starting at 0) means little on a log axis: re-fit
-    // an axis that switched scale, if there is data to fit.
-    if ((xLogChanged || yLogChanged) && (!m_model->datasets().empty() || !m_model->matrices().empty()))
-        autoscale(xLogChanged, yLogChanged);
+    // Re-fit a switched axis that follows the data, or whose range cannot be
+    // shown on a log axis (lower limit <= 0); user limits that fit are kept.
+    const bool refitX = xLogChanged && (m_followX || (info.xLog && m_x->range().lower <= 0));
+    const bool refitY = yLogChanged && (m_followY || (info.yLog && m_y->range().lower <= 0));
+    {
+        // QCustomPlot adjusts the range when the scale changes; that is not a
+        // user limit, so the follow state stays as it was.
+        const bool fx = m_followX, fy = m_followY;
+        setScale(m_x, m_x2, info.xLog, m_linTickerX);
+        setScale(m_y, m_y2, info.yLog, m_linTickerY);
+        m_followX = fx;
+        m_followY = fy;
+    }
+    if ((refitX || refitY) && (!m_model->datasets().empty() || !m_model->matrices().empty())) {
+        const bool fx = m_followX, fy = m_followY;
+        autoscale(refitX, refitY);
+        // A forced re-fit (limits not showable on log) does not turn following back on.
+        m_followX = fx;
+        m_followY = fy;
+    }
     // Custom ticks replace the axis' ticker (and are taken away again when
     // switched off, restoring whatever ticker the axis had, e.g. clock time).
     const bool unicodeMinus = st.unicodeMinus;

@@ -140,7 +140,8 @@ public:
         if (m_followX || m_followY) autoscale(m_followX, m_followY);
     }
     void applyLegendLoc(const Style& st);
-    void placeLegendBest();  // legend.loc 'best': the corner over the fewest data points
+    void placeLegendBest();
+    void resetFollowIfEmpty();  // legend.loc 'best': the corner over the fewest data points
     // Draw the region also in exports (default: no, it is a selection aid).
     void setRegionInExports(bool on) { m_regionInExports = on; }
 
