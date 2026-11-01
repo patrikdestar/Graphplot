@@ -123,7 +123,17 @@ QList<double> ColorBar::ticks() const
 
 QString ColorBar::tickText(double v) const
 {
-    return QString::number(v, 'g', 4).replace('-', QChar(0x2212));
+    // Enough significant digits that neighbouring ticks differ (data far
+    // from zero, e.g. 5.000..5.003).
+    const QList<double> t = ticks();
+    int digits = 4;
+    if (t.size() > 1) {
+        const double step = std::abs(t[1] - t[0]);
+        double maxAbs = 0;
+        for (double x : t) maxAbs = std::max(maxAbs, std::abs(x));
+        if (step > 0 && maxAbs > 0) digits = std::clamp(int(std::ceil(std::log10(maxAbs / step))) + 2, 4, 15);
+    }
+    return QString::number(v, 'g', digits).replace('-', QChar(0x2212));
 }
 
 int ColorBar::requiredWidth() const

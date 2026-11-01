@@ -522,7 +522,7 @@ class PltAxes:
     @staticmethod
     def _nice_levels(z, n):
         """About n+1 round level values spanning the data (like matplotlib's MaxNLocator)."""
-        z = _np.asarray(z, dtype=float)
+        z = _np.asarray(_unmask(z), dtype=float)  # masked values do not set the levels
         lo, hi = _np.nanmin(z), _np.nanmax(z)
         if not (_np.isfinite(lo) and _np.isfinite(hi)) or lo == hi:
             return [float(lo) - 0.5, float(lo) + 0.5]
@@ -607,7 +607,7 @@ class PltAxes:
     def pcolormesh(self, *args, cmap=None, vmin=None, vmax=None, shading=None, label=None, **kw):
         """pcolormesh(C) or pcolormesh(X, Y, C) on a uniform grid (X, Y: edges or centres)."""
         if len(args) == 1:
-            c_arr, x, y = _np.asarray(args[0], dtype=float), None, None
+            c_arr, x, y = _np.asarray(_unmask(args[0]), dtype=float), None, None
         elif len(args) == 3:
             X, Y, c_arr = (_np.asarray(_unmask(a), dtype=float) for a in args)
             ny, nx = c_arr.shape

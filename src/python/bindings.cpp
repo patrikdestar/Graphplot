@@ -2437,8 +2437,9 @@ Remove a callback with off(event, callback).)doc");
                 inGui([&] {
                     const Matrix& old = h.get();
                     // Coordinates not given: the grid keeps its extent (ppm axes stay).
-                    if (x.is_none()) m.x0 = old.x0, m.x1 = old.x1;
-                    if (y.is_none()) m.y0 = old.y0, m.y1 = old.y1;
+                    // (Only for a grid of the same size: other sizes get index coordinates.)
+                    if (x.is_none() && m.nx == old.nx) m.x0 = old.x0, m.x1 = old.x1;
+                    if (y.is_none() && m.ny == old.ny) m.y0 = old.y0, m.y1 = old.y1;
                     h.editor()->setMatrixData(h.id, m.nx, m.ny, m.z, m.x0, m.x1, m.y0, m.y1);
                 });
             },

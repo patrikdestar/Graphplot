@@ -1240,7 +1240,8 @@ void PlotRenderer::applyImageAppearance(const Matrix& m, MatrixVisual& v)
         // negative ones on positive data): bands between the levels inside the
         // data range plus one below the lowest and one above the highest, so
         // every level line is a band edge.
-        if (!lv.empty() && v.hi > v.lo && (lv.front() > v.lo || lv.back() < v.hi)) {
+        const double tol = 1e-9 * (v.hi - v.lo);  // rounding in level values (e.g. -3.4000000000000004)
+        if (!lv.empty() && v.hi > v.lo && (lv.front() > v.lo + tol || lv.back() < v.hi - tol)) {
             std::vector<double> inside{v.lo};
             for (double l : lv)
                 if (l > v.lo && l < v.hi) inside.push_back(l);
