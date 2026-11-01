@@ -26,6 +26,9 @@ File paths may be strings with `~` or `pathlib.Path` objects.
 | `pause(seconds=0.05)` | Run the event loop for a while (keeps windows responsive in loops). |
 | `figures()` | Figures that have not been closed (including ones not shown yet). |
 | `close_all()` | Close every figure. |
+| `theme(name=None, *, plots=None, exports=None, save=False)` | Get or set the display theme of all windows (`'system'`, `'light'`, `'dark'`, `'dim'`, `'midnight'`, `'solarized-dark'`, `'high-contrast'`); `plots`: dark themes colour the plots on screen (default on); `exports`: exports use the theme too (default off, so files stay light); `save=True` remembers it like the menu does. Returns the theme id. |
+| `themes()` | `{id: description}` of the available themes. |
+| `tooltips(on=None, *, save=False)` | Get or switch the explanations shown when the mouse rests on a control. |
 
 ## `Figure`
 

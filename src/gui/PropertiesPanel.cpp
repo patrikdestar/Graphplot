@@ -497,6 +497,7 @@ QWidget* PropertiesPanel::buildPeakPage()
     m_pkY = makeCoordSpin();
     m_pkIntensity = new QLabel;
     m_pkComment = new QPlainTextEdit;
+    m_pkComment->setToolTip("Longer notes about the peak, kept off the plot (exported in the CSV).");
     m_pkComment->setPlaceholderText("Notes (not shown on the plot; exported with the peak list)");
     m_pkComment->setMinimumHeight(110);
     form->addRow("Label", m_pkLabel);

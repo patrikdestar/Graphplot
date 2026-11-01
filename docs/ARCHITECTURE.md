@@ -25,7 +25,8 @@ Graphplot/
 │   │   ├── ContourPlottable.*     custom QCustomPlot plottable (QPainter) for contour lines
 │   │   ├── PeakOverlay.*          all peaks (crosses, labels, leader lines) in one layerable
 │   │   ├── RichText.* / RichElements.*  $math$ / **bold** text: labels, header, legend, items
-│   │   └── Exporter.*             PNG / SVG / PDF
+│   │   ├── Exporter.*             PNG / SVG / PDF
+│   │   └── DisplayTheme.*         display themes: widget palette + on-screen plot colours
 │   ├── interaction/            3. interaction layer
 │   │   └── InteractionController.*  mouse/keyboard → view changes and editor calls
 │   ├── gui/                    4. GUI layer
@@ -35,7 +36,9 @@ Graphplot/
 │   │   ├── StyleEditor.*          dialog editing every style key
 │   │   ├── Timeline.*             timeline layout: rows, navigator, cursor line, pins, auto-fit
 │   │   ├── TimelinePanel.*        "Timeline" dock: rows / signals / markers editing
-│   │   └── Icons.*                toolbar icons drawn with QPainter
+│   │   ├── Appearance.*           theme / tooltip settings, Appearance menu, persistence
+│   │   ├── Explanations.*         one table of hover explanations for every control
+│   │   └── Icons.*                toolbar icons drawn with QPainter (follow the palette)
 │   ├── app/main.cpp            standalone executable
 │   └── python/                 6. Python binding layer
 │       ├── bindings.cpp           pybind11 module "_plotter"
@@ -176,6 +179,24 @@ A figure holds one or more *panels*. Each panel has its own `PlotModel`,
 - **CSV loading:** `model/TimeSeriesLoader` detects the time column and
   its format (epoch magnitude: s, ms, µs or ns; or ISO 8601), sorts rows,
   and turns empty cells into NaN gaps.
+
+### Display themes and hover explanations
+
+- `DisplayTheme` (render layer, no widgets) holds the current theme. Its
+  widget palette is applied by `Appearance` (Fusion style + palette, so it
+  looks the same on every platform). Its plot colours are applied by each
+  `PlotRenderer` *on top of* the figure's style when drawing on screen
+  (`displayStyle()`); the model's style never changes, so undo, style files,
+  Python and exports see the real style. `setExportMode()` switches back to
+  the real colours for the duration of an export.
+- Very dark data colours are lightened on dark themes (`ink()`), so `'k'`
+  lines stay visible.
+- `Explanations.cpp` keeps every hover text in one table keyed by
+  "group/label" or "action/text"; `applyExplanations()` attaches them, and a
+  test fails if a new control has none. `Appearance` swallows tooltip events
+  application-wide when the user switches explanations off.
+- Settings persist with `QSettings("Graphplot", "Graphplot")`, shared by the
+  app and the Python module.
 
 ### Styles
 

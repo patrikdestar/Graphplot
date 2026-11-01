@@ -118,6 +118,23 @@ ignored.
 **Picking twice adds nothing.** Peaks within the minimum distance of an
 existing peak *of the same spectrum* are skipped on purpose.
 
+## Appearance
+
+**I chose a dark theme but my exported PDF is white.** On purpose: exports
+and the clipboard use the figure's own style so papers get light figures.
+Tick *View → Appearance → Exports use the theme colours too* (or
+`plotter.theme(exports=True)`) to export what you see.
+
+**Black lines look grey-white in a dark theme.** Very dark data colours are
+lightened on screen so they stay visible; the figure keeps the colour you set
+and exports use it.
+
+**The hover explanations are distracting.** Untick *View → Appearance → Show
+explanations on hover* (or `plotter.tooltips(False, save=True)`).
+
+**Where are these settings stored?** In the user configuration
+(`~/.config/Graphplot/Graphplot.conf` on Linux), shared by the app and Python.
+
 ## Output
 
 **The exported figure has a different size than I expected.** Exports use

@@ -23,6 +23,9 @@
 #include <QElapsedTimer>
 #include <QApplication>
 #include <QCheckBox>
+#include <QComboBox>
+#include <QToolButton>
+#include <QAbstractSpinBox>
 #include <QHelpEvent>
 #include <QStandardPaths>
 #include <QImage>
@@ -1467,6 +1470,40 @@ private slots:
         QVERIFY(QApplication::sendEvent(target, &off));  // swallowed by the filter
         Appearance::instance()->setTooltipsEnabled(true, false);
         QVERIFY(Appearance::instance()->tooltipsEnabled());
+    }
+
+    // Every button, field and menu entry explains itself on hover.
+    void everyControlHasAnExplanation()
+    {
+        FigureWindow w;
+        w.timeline();  // also the Timeline menu and dock
+        w.show();
+        QStringList missing;
+        auto explained = [](const QString& tip, const QString& text) {
+            QString t = text;
+            t.remove('&');
+            return !tip.isEmpty() && tip != t && tip != t.chopped(t.endsWith(QChar(0x2026)) ? 1 : 0);
+        };
+        for (QWidget* c : w.findChildren<QWidget*>()) {
+            const bool control = qobject_cast<QAbstractButton*>(c) || qobject_cast<QAbstractSpinBox*>(c) ||
+                                 qobject_cast<QComboBox*>(c) || qobject_cast<QLineEdit*>(c);
+            if (!control || qobject_cast<QToolButton*>(c)) continue;  // tool buttons: via their actions
+            if (qobject_cast<QLineEdit*>(c) && qobject_cast<QAbstractSpinBox*>(c->parentWidget())) continue;
+            if (qobject_cast<QLineEdit*>(c) && qobject_cast<QComboBox*>(c->parentWidget())) continue;
+            if (c->objectName().startsWith("qt_") || c->inherits("QTableCornerButton"))
+                continue;  // Qt-internal (dock title buttons, table corner, ...)
+            const auto* b = qobject_cast<QAbstractButton*>(c);
+            if (!explained(c->toolTip(), b ? b->text() : QString()))
+                missing << QString("%1 '%2' (%3)").arg(c->metaObject()->className(), b ? b->text() : c->objectName(),
+                                                       c->parentWidget() ? c->parentWidget()->metaObject()->className() : "");
+        }
+        for (QAction* a : w.findChildren<QAction*>()) {
+            if (a->isSeparator() || a->menu() || a->text().isEmpty()) continue;
+            if (!explained(a->toolTip(), a->text())) missing << "action '" + a->text() + "'";
+        }
+        missing.removeDuplicates();
+        for (const QString& m : missing) qWarning("no hover explanation: %s", qPrintable(m));
+        QVERIFY2(missing.isEmpty(), qPrintable("no hover explanation:\n  " + missing.join("\n  ")));
     }
 
     void auditRound3()

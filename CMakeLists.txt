@@ -59,6 +59,7 @@ add_library(graphplot_ui STATIC
   src/interaction/InteractionController.h src/interaction/InteractionController.cpp
   src/gui/Icons.h src/gui/Icons.cpp
   src/gui/Appearance.h src/gui/Appearance.cpp
+  src/gui/Explanations.h src/gui/Explanations.cpp
   src/gui/PropertiesPanel.h src/gui/PropertiesPanel.cpp
   src/gui/PeakTable.h src/gui/PeakTable.cpp
   src/gui/StyleEditor.h src/gui/StyleEditor.cpp

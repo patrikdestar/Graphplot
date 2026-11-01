@@ -53,6 +53,16 @@ annotate, read the results back, process, and re-plot.
 - **Time formats:** epoch s, ms, µs or ns and ISO date-times are aligned on
   one clock. The axis shows seconds or clock time.
 
+**Appearance**
+- **Dark mode:** *View → Appearance* offers System, Light, Dark, Dim,
+  Midnight, Solarized dark and High contrast. Dark themes recolour the
+  windows and, on screen, the plots; exports and the clipboard keep the
+  figure's light publication colours unless you choose otherwise.
+- **Hover explanations:** resting the mouse on any button, field or menu
+  entry explains what it does; switch them off (or on) in the same menu.
+- Both settings are remembered and shared with Python scripts
+  (`plotter.theme("dark")`, `plotter.tooltips(False)`).
+
 **Interaction**
 - Wheel and rectangle zoom, pan, autoscale, and reset to the home view.
 - X-region selection, markers and text annotations. The selected region
@@ -221,6 +231,8 @@ The application:
   add `--row-per-column` for one row per signal).
 - `--screenshot out.png` renders the window to a file and exits (for scripts
   and documentation).
+- `--theme dark` uses a display theme for this session (`system`, `light`,
+  `dark`, `dim`, `midnight`, `solarized-dark`, `high-contrast`).
 - `--help` lists the options.
 
 Python:
@@ -379,6 +391,7 @@ side panel). The timeline has its own table above.
 | Undo / redo | `Ctrl+Z` / `Ctrl+Shift+Z` or `Ctrl+Y` |
 | Clear the region selection | *Edit → Clear region selection* |
 | Styles | *Style* menu: built-ins, *Edit style…*, load/save `.gpstyle`, *Use as my default style* |
+| Theme, hover explanations | *View → Appearance*: themes, "Dark themes also colour the plots", "Exports use the theme colours too", "Show explanations on hover" |
 
 In multi-panel figures, the panel you click becomes current; the side panels
 then show its objects.

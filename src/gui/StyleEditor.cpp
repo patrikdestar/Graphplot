@@ -25,9 +25,11 @@ StyleEditor::StyleEditor(const Style& initial, std::function<void(const Style&)>
     m_filter = new QLineEdit;
     m_filter->setPlaceholderText("Filter keys (e.g. tick, legend, font)…");
     m_filter->setClearButtonEnabled(true);
+    m_filter->setToolTip("Show only the keys whose name or description contains this text.");
     auto* base = new QComboBox;
     base->addItem("Start from…");
     base->addItems(builtinStyleNames());
+    base->setToolTip("Load all values of a built-in style into the table (applied with Apply / OK).");
     top->addWidget(m_filter, 1);
     top->addWidget(base);
     layout->addLayout(top);
@@ -43,7 +45,8 @@ StyleEditor::StyleEditor(const Style& initial, std::function<void(const Style&)>
     layout->addWidget(m_table, 1);
 
     m_status = new QLabel(
-        "Edit values, then Apply. Colours: names or #rrggbb. Texts may use $math$, **bold**, *italic*.");
+        "Edit values, then Apply. Colours: names, #rrggbb or #aarrggbb (alpha first). "
+        "Texts may use $math$, **bold**, *italic*. Hover a row for its description.");
     m_status->setWordWrap(true);
     layout->addWidget(m_status);
 
@@ -51,6 +54,9 @@ StyleEditor::StyleEditor(const Style& initial, std::function<void(const Style&)>
                                          QDialogButtonBox::Cancel);
     layout->addWidget(buttons);
 
+    buttons->button(QDialogButtonBox::Ok)->setToolTip("Apply the values to the figure and close (one undo step).");
+    buttons->button(QDialogButtonBox::Apply)->setToolTip("Apply the values to the figure and keep editing.");
+    buttons->button(QDialogButtonBox::Cancel)->setToolTip("Close without applying further changes.");
     connect(buttons, &QDialogButtonBox::accepted, this, [this] {
         Style s;
         if (collect(&s)) {
@@ -84,9 +90,12 @@ void StyleEditor::load(const Style& s)
         k->setFlags(k->flags() & ~Qt::ItemIsEditable);
         auto* d = new QTableWidgetItem(keys[r].description);
         d->setFlags(d->flags() & ~Qt::ItemIsEditable);
-        d->setForeground(QColor(0x52, 0x51, 0x4e));
+        d->setForeground(palette().color(QPalette::PlaceholderText));  // muted, readable in every theme
+        auto* v = new QTableWidgetItem(s.value(keys[r].key));
+        const QString tip = keys[r].key + ": " + keys[r].description + "\nDouble-click the value to edit it.";
+        for (QTableWidgetItem* it : {k, v, d}) it->setToolTip(tip);
         m_table->setItem(r, 0, k);
-        m_table->setItem(r, 1, new QTableWidgetItem(s.value(keys[r].key)));
+        m_table->setItem(r, 1, v);
         m_table->setItem(r, 2, d);
     }
     m_filter->textChanged(m_filter->text());

@@ -2,6 +2,7 @@
 #include "FigureWindow.h"
 
 #include "Appearance.h"
+#include "Explanations.h"
 
 #include "Icons.h"
 #include "PeakTable.h"
@@ -77,6 +78,7 @@ FigureWindow::FigureWindow(QWidget* parent) : QMainWindow(parent)
     m_dock->raise();
     buildActions();
     limitPlainKeyShortcuts();
+    applyExplanations(this);  // hover explanations for every control
     setAcceptDrops(true);
     m_plot->setFocus();
 
@@ -395,6 +397,7 @@ Timeline* FigureWindow::timeline()
         fit->setChecked(m_timeline->autoFitY());
     });
     limitPlainKeyShortcuts();
+    applyExplanations(this);  // hover explanations for every control
     connect(m_timeline, &Timeline::cursorChanged, this, [this](std::optional<double> t) {
         if (!t) return;
         const auto [a, b] = m_timeline->window();
