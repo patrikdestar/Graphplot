@@ -818,9 +818,11 @@ void PlotRenderer::autoscale(bool doX, bool doY)
     }
     if (doY) {
         // Curves get headroom; a pure 2D (contour) view is fitted exactly.
-        bool anyCurve = false;
+        // An image keeps the view tight (lines drawn over it add no margin).
+        bool anyCurve = false, anyImage = false;
         for (const auto& d : m_model->datasets()) anyCurve |= d.style.visible && !d.x.isEmpty();
-        pad(ymin, ymax, anyCurve ? 0.05 : 0.0, yLog);
+        for (const auto& m : m_model->matrices()) anyImage |= m.style.visible && m.style.showImage;
+        pad(ymin, ymax, anyCurve && !anyImage ? 0.05 : 0.0, yLog);
         r.ymin = ymin;
         r.ymax = ymax;
     }
@@ -2156,9 +2158,31 @@ void PlotRenderer::fitEndLabels()
     // QCustomPlot leaves out a tick label that would stick out of the widget,
     // so the first / last label ("Monday", "recovered") could vanish. Reserve
     // the room they need as minimum side margins and lay out again if needed.
-    if (m_twinHost || !m_x->visible() || !m_x->tickLabels()) return;
+    if (m_twinHost) return;
     const QRect ar = m_rect->rect();
-    if (ar.width() < 20) return;
+    if (ar.width() < 20 || ar.height() < 20) return;
+    int needT = 0, needB = 0;
+    if (m_y->visible() && m_y->tickLabels()) {  // y labels are centred on their ticks
+        const QFontMetrics fy(m_y->tickLabelFont());
+        for (double t : m_y->tickVector()) {
+            const double py = m_y->coordToPixel(t);
+            if (py < ar.top() - 1 || py > ar.bottom() + 1) continue;
+            needT = std::max(needT, int(std::ceil(fy.height() / 2.0 - (py - ar.top()))) + 2);
+            needB = std::max(needB, int(std::ceil(fy.height() / 2.0 - (ar.bottom() - py))) + 2);
+        }
+    }
+    if (!m_x->visible() || !m_x->tickLabels()) {
+        const QMargins want(0, std::max(0, needT), 0, std::max(0, needB));
+        if (want != m_endLabelMargins) {
+            m_endLabelMargins = want;
+            m_rect->setMinimumMargins(want);
+            QCPLayoutGrid* layout = m_plot->plotLayout();
+            layout->update(QCPLayoutElement::upPreparation);
+            layout->update(QCPLayoutElement::upMargins);
+            layout->update(QCPLayoutElement::upLayout);
+        }
+        return;
+    }
     const QVector<double> ticks = m_x->tickVector();
     const QVector<QString> labels = m_x->tickVectorLabels();
     const QFontMetrics fm(m_x->tickLabelFont());
@@ -2174,7 +2198,7 @@ void PlotRenderer::fitEndLabels()
         needL = std::max(needL, int(std::ceil(left - (px - ar.left()))) + 3);
         needR = std::max(needR, int(std::ceil(right - (ar.right() - px))) + 3);
     }
-    const QMargins want(std::max(0, needL), 0, std::max(0, needR), 0);
+    const QMargins want(std::max(0, needL), std::max(0, needT), std::max(0, needR), std::max(0, needB));
     if (want == m_endLabelMargins) return;
     m_endLabelMargins = want;
     m_rect->setMinimumMargins(want);

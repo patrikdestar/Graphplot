@@ -850,9 +850,14 @@ class PltAxes:
             self._ax.plot(x, b + h, yerr=yerr, style="none", color="k")
         if tick_label is not None:
             self._ax.set_xticks(list(x), [str(t) for t in _np.atleast_1d(tick_label)])
-        return _RectGroup(self, line, [(float(l0), float(b0), float(w0), float(h0))
-                                       for l0, b0, w0, h0 in zip(_np.atleast_1d(left), b, w, h)], out,
-                          label=_legend_label(label))
+        group = _RectGroup(self, line, [(float(l0), float(b0), float(w0), float(h0))
+                                        for l0, b0, w0, h0 in zip(_np.atleast_1d(left), b, w, h)], out,
+                           label=_legend_label(label))
+        if yerr is not None:  # bar_label puts values beyond the error bars
+            e = _np.asarray(yerr, dtype=float)
+            hi = e[1] if e.ndim == 2 else e
+            object.__setattr__(group, "_errors", list(_np.broadcast_to(hi, x.shape)))
+        return group
 
     def barh(self, y, width, height=0.8, left=0.0, color=None, label=None, tick_label=None, xerr=None,
              align="center", edgecolor=None, capsize=None, **kw):
@@ -883,9 +888,14 @@ class PltAxes:
             self._ax.plot(lf + wd, bottom + ht / 2, xerr=xerr, style="none", color="k")
         if tick_label is not None:
             self._ax.set_yticks(list(y), [str(t) for t in _np.atleast_1d(tick_label)])
-        return _RectGroup(self, line, [(float(l0), float(b0), float(w0), float(h0))
-                                       for l0, b0, w0, h0 in zip(lf, bottom, wd, ht)], out,
-                          label=_legend_label(label), horizontal=True)
+        group = _RectGroup(self, line, [(float(l0), float(b0), float(w0), float(h0))
+                                        for l0, b0, w0, h0 in zip(lf, bottom, wd, ht)], out,
+                           label=_legend_label(label), horizontal=True)
+        if xerr is not None:
+            e = _np.asarray(xerr, dtype=float)
+            hi = e[1] if e.ndim == 2 else e
+            object.__setattr__(group, "_errors", list(_np.broadcast_to(hi, y.shape)))
+        return group
 
     def step(self, x, y, *args, where="pre", **kw):
         """Step plot (where: 'pre', 'post', 'mid')."""
@@ -1171,15 +1181,18 @@ class PltAxes:
         """Value labels at the end of each bar of a bar() result."""
         out = []
         horizontal = getattr(container, "_horizontal", False)
+        errors = container.__dict__.get("_errors") if hasattr(container, "__dict__") else None
         style = {k: v for k, v in kw.items() if k in ("fontsize", "color")}
         for i, r in enumerate(container):
             v = r.get_width() if horizontal else r.get_height()
             text = labels[i] if labels is not None else (fmt % v if "%" in fmt else fmt.format(v))
+            err = float(errors[i]) if errors is not None and i < len(errors) else 0.0
+            end = v + (err if v >= 0 else -err)  # beyond the error bar, as matplotlib
             if horizontal:  # at the end of the bar, vertically centred
-                out.append(self.text(r.get_x() + v, r.get_y() + r.get_height() / 2, " " + text if v >= 0 else text + " ",
+                out.append(self.text(r.get_x() + end, r.get_y() + r.get_height() / 2, " " + text if v >= 0 else text + " ",
                                      ha="left" if v >= 0 else "right", va="center", **style))
             else:
-                out.append(self.text(r.get_x() + r.get_width() / 2, r.get_y() + v, text, ha="center",
+                out.append(self.text(r.get_x() + r.get_width() / 2, r.get_y() + end, text, ha="center",
                                      va="bottom" if v >= 0 else "top", **style))
         return out
 
@@ -1926,7 +1939,7 @@ class _RectGroup(list):
     becomes its own shape. Other attributes (label, color, remove, ...) act
     on the drawn shape(s), so it can also be used like the Line it was."""
 
-    _own = ("_ax", "_line", "_rects", "_lines", "_label", "_horizontal")
+    _own = ("_ax", "_line", "_rects", "_lines", "_label", "_horizontal", "_errors")
 
     def __init__(self, ax, line, rects, lines=None, label=None, horizontal=False):
         super().__init__(_Rect(self, i) for i in range(len(rects)))

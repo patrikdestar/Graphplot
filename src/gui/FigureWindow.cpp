@@ -55,6 +55,7 @@ FigureWindow::FigureWindow(QWidget* parent) : QMainWindow(parent)
     m_stack = new QUndoStack(this);
     m_stack->setUndoLimit(500);
     m_plot = new QCustomPlot(this);
+    connect(m_plot, &QCustomPlot::afterLayout, this, &FigureWindow::correctGridRatios);
     m_model = new PlotModel(this);
     m_editor = new PlotEditor(m_model, m_stack, this);
     m_renderer = new PlotRenderer(m_model, m_plot, this);
@@ -478,6 +479,10 @@ void FigureWindow::setGrid(const GridSpec& spec)
         }
     }
     m_gridSpec = spec;
+    // The ratio correction runs after the panels' own layout fixes (side
+    // margins for end labels): connect it again so it comes last.
+    disconnect(m_plot, &QCustomPlot::afterLayout, this, &FigureWindow::correctGridRatios);
+    connect(m_plot, &QCustomPlot::afterLayout, this, &FigureWindow::correctGridRatios);
     m_plot->replot();
 }
 
@@ -1252,6 +1257,57 @@ void FigureWindow::closeEvent(QCloseEvent* e)
 {
     emit closed();
     QMainWindow::closeEvent(e);
+}
+
+void FigureWindow::correctGridRatios()
+{
+    // QCustomPlot shares space by the cells' outer size (tick and axis labels
+    // included); the ratios are meant for the frames. Each pass sets the
+    // stretch factors to frame target + that row's / column's label space.
+    if (!m_grid) return;
+    const GridSpec& g = m_gridSpec;
+    const bool rowsOn = g.heightRatios.size() == g.rows && g.rows > 1;
+    const bool colsOn = g.widthRatios.size() == g.cols && g.cols > 1;
+    if (!rowsOn && !colsOn) return;
+    auto rectAt = [this](int r, int c) -> QCPAxisRect* {
+        if (r >= m_grid->rowCount() || c >= m_grid->columnCount()) return nullptr;
+        return qobject_cast<QCPAxisRect*>(m_grid->element(r, c));
+    };
+    for (int pass = 0; pass < 2; ++pass) {
+        bool changed = false;
+        auto fix = [&](bool rows, const QList<double>& ratios, int n) {
+            QList<double> inner, margin;
+            for (int i = 0; i < n; ++i) {
+                QCPAxisRect* a = rows ? rectAt(i, 0) : rectAt(0, i);
+                if (!a) return;
+                const double in = rows ? a->rect().height() : a->rect().width();
+                const double out = rows ? a->outerRect().height() : a->outerRect().width();
+                inner << in;
+                margin << std::max(0.0, out - in);
+            }
+            double total = 0, ratioSum = 0;
+            for (int i = 0; i < n; ++i) total += inner[i], ratioSum += ratios[i];
+            if (total <= 0 || ratioSum <= 0) return;
+            QList<double> factors;
+            bool off = false;
+            for (int i = 0; i < n; ++i) {
+                const double target = total * ratios[i] / ratioSum;
+                off |= std::abs(target - inner[i]) > 1.0;
+                factors << std::max(1.0, target + margin[i]);
+            }
+            if (!off) return;
+            if (rows) m_grid->setRowStretchFactors(factors);
+            else m_grid->setColumnStretchFactors(factors);
+            changed = true;
+        };
+        if (rowsOn) fix(true, g.heightRatios, g.rows);
+        if (colsOn) fix(false, g.widthRatios, g.cols);
+        if (!changed) break;
+        QCPLayoutGrid* layout = m_plot->plotLayout();
+        layout->update(QCPLayoutElement::upPreparation);
+        layout->update(QCPLayoutElement::upMargins);
+        layout->update(QCPLayoutElement::upLayout);
+    }
 }
 
 }  // namespace gp

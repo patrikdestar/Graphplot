@@ -245,6 +245,7 @@ void Timeline::attachRow(int row)
     PlotModel* m = m_win->axes(row).model;
     AxesInfo info = m->axesInfo();
     info.legendVisible = true;
+    if (info.legendLoc.isEmpty()) info.legendLoc = "best";  // keep clear of the signals
     m->setAxesInfo(info);
     // Rows share the time axis: link every row to row 0 (both directions).
     if (row != 0) {

@@ -184,6 +184,7 @@ private:
     QList<QCPMarginGroup*> m_marginGroups;
     QList<QMetaObject::Connection> m_linkConnections;
     GridSpec m_gridSpec;
+    void correctGridRatios();  // height/width ratios apply to the frames, not the cells
     PlotModel* m_model;
     PlotEditor* m_editor;
     QCustomPlot* m_plot;
