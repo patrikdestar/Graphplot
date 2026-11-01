@@ -66,6 +66,8 @@ ObjectId PlotModel::insertDataset(Dataset d, int index)
         d.x.resize(n);
         d.y.resize(n);
     }
+    for (auto* v : {&d.xErrLow, &d.xErrHigh, &d.yErrLow, &d.yErrHigh})
+        if (!v->isEmpty() && v->size() != d.x.size()) v->clear();
     const ObjectId id = d.id;
     insertAt(m_datasets, std::move(d), index);
     emit datasetAdded(id);
@@ -100,8 +102,30 @@ bool PlotModel::setDatasetData(ObjectId id, QVector<double> x, QVector<double> y
         x.resize(n);
         y.resize(n);
     }
+    if (x.size() != m_datasets[i].x.size()) {
+        for (auto* v : {&m_datasets[i].xErrLow, &m_datasets[i].xErrHigh, &m_datasets[i].yErrLow,
+                        &m_datasets[i].yErrHigh})
+            v->clear();
+    }
     m_datasets[i].x = std::move(x);
     m_datasets[i].y = std::move(y);
+    emit datasetDataChanged(id);
+    return true;
+}
+
+bool PlotModel::setDatasetErrors(ObjectId id, QVector<double> xLow, QVector<double> xHigh,
+                                 QVector<double> yLow, QVector<double> yHigh)
+{
+    const int i = datasetIndex(id);
+    if (i < 0) return false;
+    Dataset& d = m_datasets[i];
+    const qsizetype n = d.x.size();
+    for (auto* v : {&xLow, &xHigh, &yLow, &yHigh})
+        if (!v->isEmpty() && v->size() != n) return false;
+    d.xErrLow = std::move(xLow);
+    d.xErrHigh = std::move(xHigh);
+    d.yErrLow = std::move(yLow);
+    d.yErrHigh = std::move(yHigh);
     emit datasetDataChanged(id);
     return true;
 }
@@ -293,14 +317,23 @@ bool PlotModel::dataBounds(double& xmin, double& xmax, double& ymin, double& yma
     xmax = ymax = -std::numeric_limits<double>::infinity();
     for (const auto& d : m_datasets) {
         if (visibleOnly && !d.style.visible) continue;
+        auto err = [](const QVector<double>& v, qsizetype i) {
+            return i < v.size() && std::isfinite(v[i]) ? std::abs(v[i]) : 0.0;
+        };
         for (qsizetype i = 0; i < d.x.size(); ++i) {
             const double x = d.x[i], y = d.y[i];
             if (!std::isfinite(x) || !std::isfinite(y)) continue;
-            xmin = std::min(xmin, x);
-            xmax = std::max(xmax, x);
-            ymin = std::min(ymin, y);
-            ymax = std::max(ymax, y);
+            // Error bars are part of the data extent.
+            xmin = std::min(xmin, x - err(d.xErrLow, i));
+            xmax = std::max(xmax, x + err(d.xErrHigh, i));
+            ymin = std::min(ymin, y - err(d.yErrLow, i));
+            ymax = std::max(ymax, y + err(d.yErrHigh, i));
             any = true;
+        }
+        // Areas filled to zero (histograms) include the baseline.
+        if (any && d.style.fillColor.isValid() && d.style.fillTo == kInvalidId) {
+            ymin = std::min(ymin, 0.0);
+            ymax = std::max(ymax, 0.0);
         }
     }
     for (const auto& m : m_matrices) {

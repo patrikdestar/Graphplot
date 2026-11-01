@@ -445,6 +445,8 @@ void PlotRenderer::onDatasetAdded(ObjectId id)
     if (!d || m_plottables.contains(id)) return;
     applyDatasetData(id);  // creates the plottable
     applyDatasetAppearance(id);
+    for (const auto& o : m_model->datasets())  // bands filled towards this dataset
+        if (o.style.fillTo == id) applyDatasetAppearance(o.id);
     syncLegend();
     maybeCaptureHome();
     replot();
@@ -452,7 +454,11 @@ void PlotRenderer::onDatasetAdded(ObjectId id)
 
 void PlotRenderer::onDatasetRemoved(ObjectId id)
 {
+    removeErrorBars(id);
     if (auto* p = m_plottables.take(id)) m_plot->removePlottable(p);
+    // Bands that were filled towards this dataset lose their partner.
+    for (const auto& d : m_model->datasets())
+        if (d.style.fillTo == id) applyDatasetAppearance(d.id);
     syncLegend();
     replot();
 }
@@ -469,6 +475,7 @@ void PlotRenderer::applyDatasetData(ObjectId id)
     QCPAbstractPlottable* p = m_plottables.value(id);
     const bool needGraph = sorted;
     if (p && (qobject_cast<QCPGraph*>(p) != nullptr) != needGraph) {
+        removeErrorBars(id);  // attached to the old plottable
         m_plot->removePlottable(p);
         p = nullptr;
     }
@@ -482,6 +489,52 @@ void PlotRenderer::applyDatasetData(ObjectId id)
     }
     if (auto* g = qobject_cast<QCPGraph*>(p)) g->setData(d->x, d->y, true);
     else if (auto* c = qobject_cast<QCPCurve*>(p)) c->setData(d->x, d->y);
+    updateErrorBars(id);
+}
+
+void PlotRenderer::removeErrorBars(ObjectId id)
+{
+    const ErrorVisual e = m_errorBars.take(id);
+    if (e.y) m_plot->removePlottable(e.y);
+    if (e.x) m_plot->removePlottable(e.x);
+}
+
+void PlotRenderer::updateErrorBars(ObjectId id)
+{
+    const Dataset* d = m_model->dataset(id);
+    auto* target = dynamic_cast<QCPPlottableInterface1D*>(m_plottables.value(id));
+    if (!d || !target) return;
+    ErrorVisual& e = m_errorBars[id];
+    const Style& st = m_model->style();
+    auto make = [&](QCPErrorBars*& bars, const QVector<double>& lo, const QVector<double>& hi,
+                    QCPErrorBars::ErrorType type) {
+        if (lo.isEmpty() && hi.isEmpty()) {
+            if (bars) m_plot->removePlottable(bars);
+            bars = nullptr;
+            return;
+        }
+        if (!bars) {
+            bars = new QCPErrorBars(m_plot->xAxis, m_plot->yAxis);
+            bars->setSelectable(QCP::stNone);
+            bars->removeFromLegend();
+        }
+        bars->setErrorType(type);
+        bars->setDataPlottable(m_plottables.value(id));
+        const QVector<double>& l = lo.isEmpty() ? hi : lo;
+        const QVector<double>& h = hi.isEmpty() ? lo : hi;
+        bars->setData(l, h);
+        QPen pen(d->style.color, std::max(1.0, d->style.lineWidth * 0.8));
+        pen.setCapStyle(Qt::FlatCap);
+        bars->setPen(pen);
+        bars->setWhiskerWidth(st.errorbarCapSize * 2);
+        bars->setSymbolGap(d->style.scatter != ScatterShape::None ? d->style.scatterSize : 0);
+        bars->setVisible(d->style.visible);
+    };
+    // Error arrays are in data order: QCPGraph only receives already sorted x
+    // (setData(..., alreadySorted = true)) and QCPCurve keeps the order.
+    make(e.y, d->yErrLow, d->yErrHigh, QCPErrorBars::etValueError);
+    make(e.x, d->xErrLow, d->xErrHigh, QCPErrorBars::etKeyError);
+    if (!e.x && !e.y) m_errorBars.remove(id);
 }
 
 void PlotRenderer::applyDatasetAppearance(ObjectId id)
@@ -494,14 +547,30 @@ void PlotRenderer::applyDatasetAppearance(ObjectId id)
     p->setPen(pen);
     p->setName(d->name);
     p->setVisible(s.visible);
-    const QCPScatterStyle scatter(toScatterShape(s.scatter), s.color, Qt::white, s.scatterSize);
+    // Filled symbols (open symbols like x/+ ignore the brush).
+    const QCPScatterStyle scatter(toScatterShape(s.scatter), s.color, s.color, s.scatterSize);
+    p->setBrush(s.fillColor.isValid() ? QBrush(s.fillColor) : QBrush(Qt::NoBrush));
     if (auto* g = qobject_cast<QCPGraph*>(p)) {
-        g->setLineStyle(s.lineStyle == LineStyle::None ? QCPGraph::lsNone : QCPGraph::lsLine);
+        QCPGraph::LineStyle ls = QCPGraph::lsLine;
+        // QCustomPlot names: lsStepLeft = point on the left of its step (= "post").
+        switch (s.step) {
+        case StepMode::None: ls = QCPGraph::lsLine; break;
+        case StepMode::Post: ls = QCPGraph::lsStepLeft; break;
+        case StepMode::Pre: ls = QCPGraph::lsStepRight; break;
+        case StepMode::Mid: ls = QCPGraph::lsStepCenter; break;
+        }
+        // "No line" keeps the line geometry (needed for fills and as a band
+        // partner) but draws it with an invisible pen.
+        if (s.lineStyle == LineStyle::None) p->setPen(Qt::NoPen);
+        g->setLineStyle(ls);
         g->setScatterStyle(scatter);
+        QCPGraph* partner = qobject_cast<QCPGraph*>(m_plottables.value(s.fillTo));
+        g->setChannelFillGraph(s.fillColor.isValid() && partner != g ? partner : nullptr);
     } else if (auto* c = qobject_cast<QCPCurve*>(p)) {
         c->setLineStyle(s.lineStyle == LineStyle::None ? QCPCurve::lsNone : QCPCurve::lsLine);
         c->setScatterStyle(scatter);
     }
+    if (m_errorBars.contains(id)) updateErrorBars(id);
 }
 
 void PlotRenderer::syncLegend()
@@ -511,7 +580,7 @@ void PlotRenderer::syncLegend()
     m_plot->legend->clearItems();
     for (const auto& d : m_model->datasets()) {
         QCPAbstractPlottable* p = m_plottables.value(d.id);
-        if (p && d.style.visible && !d.name.isEmpty())
+        if (p && d.style.visible && d.style.inLegend && !d.name.isEmpty())
             m_plot->legend->addItem(new RichLegendItem(m_plot->legend, p, m_model->style().mathText));
     }
     for (const auto& m : m_model->matrices()) {

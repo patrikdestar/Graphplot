@@ -711,6 +711,55 @@ private slots:
         QCOMPARE(back[0].intensity, 1e6);
     }
 
+    // ---- error bars / steps / fills ---------------------------------------------------------
+    void errorBarsStepsAndFills()
+    {
+        auto w = makeWindow();
+        Dataset d;
+        d.name = "pts";
+        d.x = {1, 2, 3};
+        d.y = {10, 20, 30};
+        d.yErrLow = {1, 2, 3};
+        d.yErrHigh = {1, 2, 30};
+        d.xErrLow = d.xErrHigh = {0.5, 0.5, 0.5};
+        const ObjectId id = w->editor()->addDataset(d);
+        int bars = 0;
+        for (int i = 0; i < w->plot()->plottableCount(); ++i)
+            bars += qobject_cast<QCPErrorBars*>(w->plot()->plottable(i)) != nullptr;
+        QCOMPARE(bars, 2);  // x and y error bars
+        double x0, x1, y0, y1;
+        QVERIFY(w->model()->dataBounds(x0, x1, y0, y1));
+        QCOMPARE(y1, 100.0);  // 100 = ramp max; 30 + 30 = 60 < 100
+        QCOMPARE(x0, 0.0);
+        // Error bars are not legend entries.
+        QCOMPARE(w->plot()->legend->itemCount(), 2);
+        // Removing the dataset removes its error bars; undo restores them.
+        w->editor()->removeDataset(id);
+        QCOMPARE(w->plot()->plottableCount(), 1);
+        w->editor()->undo();
+        QCOMPARE(w->plot()->plottableCount(), 4);
+
+        // Steps + fill
+        DatasetStyle st = w->model()->dataset(id)->style;
+        st.step = StepMode::Post;
+        st.fillColor = QColor(255, 0, 0, 80);
+        w->editor()->setDatasetAppearance(id, "pts", st);
+        auto* g = qobject_cast<QCPGraph*>(w->plot()->plottable(1));
+        QVERIFY(g);
+        QCOMPARE(g->lineStyle(), QCPGraph::lsStepLeft);
+        QCOMPARE(g->brush().color(), QColor(255, 0, 0, 80));
+        // Band: fill towards another dataset.
+        st.fillTo = w->model()->datasets()[0].id;
+        w->editor()->setDatasetAppearance(id, "pts", st);
+        QCOMPARE(g->channelFillGraph(), qobject_cast<QCPGraph*>(w->plot()->plottable(0)));
+        // Fills to zero extend the bounds to the baseline.
+        st.fillTo = kInvalidId;
+        w->editor()->setDatasetAppearance(id, "pts", st);
+        st.inLegend = false;
+        w->editor()->setDatasetAppearance(id, "pts", st);
+        QCOMPARE(w->plot()->legend->itemCount(), 1);
+    }
+
     // ---- styles & rich text ----------------------------------------------------------------
     void styleTextRoundTrip()
     {

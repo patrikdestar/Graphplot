@@ -283,6 +283,16 @@ QWidget* PropertiesPanel::buildDatasetPage()
     m_dsScatterSize->setRange(1, 40);
     m_dsScatterSize->setKeyboardTracking(false);
     m_dsVisible = new QCheckBox("Visible");
+    m_dsLegend = new QCheckBox("In legend");
+    m_dsStep = new QComboBox;
+    for (StepMode sm : {StepMode::None, StepMode::Pre, StepMode::Post, StepMode::Mid})
+        m_dsStep->addItem(sm == StepMode::None ? "No steps" : "Steps (" + stepModeName(sm) + ")", int(sm));
+    m_dsFill = new QCheckBox("Fill");
+    m_dsFillColor = new ColorButton;
+    auto* fillRow = new QHBoxLayout;
+    fillRow->addWidget(m_dsFill);
+    fillRow->addWidget(m_dsFillColor);
+    fillRow->addStretch();
     m_dsInfo = new QLabel;
     m_dsInfo->setStyleSheet("color: #52514e;");
     form->addRow("Name", m_dsName);
@@ -291,7 +301,13 @@ QWidget* PropertiesPanel::buildDatasetPage()
     form->addRow("Line style", m_dsLineStyle);
     form->addRow("Symbol", m_dsScatter);
     form->addRow("Symbol size", m_dsScatterSize);
-    form->addRow(m_dsVisible);
+    form->addRow("Drawing", m_dsStep);
+    form->addRow("Area", fillRow);
+    auto* visRow = new QHBoxLayout;
+    visRow->addWidget(m_dsVisible);
+    visRow->addWidget(m_dsLegend);
+    visRow->addStretch();
+    form->addRow(visRow);
     form->addRow(m_dsInfo);
 
     connect(m_dsName, &QLineEdit::editingFinished, this, [this] { commitDataset(false); });
@@ -301,6 +317,20 @@ QWidget* PropertiesPanel::buildDatasetPage()
     connect(m_dsScatter, &QComboBox::currentIndexChanged, this, [this] { commitDataset(false); });
     connect(m_dsScatterSize, &QDoubleSpinBox::valueChanged, this, [this] { commitDataset(true); });
     connect(m_dsVisible, &QCheckBox::toggled, this, [this] { commitDataset(false); });
+    connect(m_dsLegend, &QCheckBox::toggled, this, [this] { commitDataset(false); });
+    connect(m_dsStep, &QComboBox::currentIndexChanged, this, [this] { commitDataset(false); });
+    connect(m_dsFill, &QCheckBox::toggled, this, [this](bool on) {
+        if (on && !m_dsFillColor->color().isValid()) {
+            QColor c = m_dsColor->color();
+            c.setAlphaF(0.3);
+            m_dsFillColor->setColor(c);
+        }
+        commitDataset(false);
+    });
+    connect(m_dsFillColor, &ColorButton::colorPicked, this, [this] {
+        m_dsFill->setChecked(true);
+        commitDataset(false);
+    });
     return box;
 }
 
@@ -667,6 +697,11 @@ void PropertiesPanel::refreshCurrentPage()
         setComboData(m_dsScatter, int(d->style.scatter));
         m_dsScatterSize->setValue(d->style.scatterSize);
         m_dsVisible->setChecked(d->style.visible);
+        const QSignalBlocker b7(m_dsLegend), b8(m_dsStep), b9(m_dsFill);
+        m_dsLegend->setChecked(d->style.inLegend);
+        setComboData(m_dsStep, int(d->style.step));
+        m_dsFill->setChecked(d->style.fillColor.isValid());
+        if (d->style.fillColor.isValid()) m_dsFillColor->setColor(d->style.fillColor);
         double xmin = 0, xmax = 0;
         if (!d->x.isEmpty()) {
             xmin = *std::min_element(d->x.begin(), d->x.end());
@@ -785,6 +820,9 @@ void PropertiesPanel::commitDataset(bool mergeable)
     s.scatter = ScatterShape(m_dsScatter->currentData().toInt());
     s.scatterSize = m_dsScatterSize->value();
     s.visible = m_dsVisible->isChecked();
+    s.inLegend = m_dsLegend->isChecked();
+    s.step = StepMode(m_dsStep->currentData().toInt());
+    s.fillColor = m_dsFill->isChecked() ? m_dsFillColor->color() : QColor();
     m_editor->setDatasetAppearance(d->id, m_dsName->text(), s, mergeable);
 }
 

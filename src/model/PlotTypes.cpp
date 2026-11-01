@@ -105,4 +105,27 @@ QString scatterShapeName(ScatterShape s)
     return "none";
 }
 
+StepMode parseStepMode(const QString& sIn, bool* ok)
+{
+    const QString s = sIn.trimmed().toLower();
+    if (ok) *ok = true;
+    if (s.isEmpty() || s == "none" || s == "false") return StepMode::None;
+    if (s == "pre") return StepMode::Pre;
+    if (s == "post" || s == "true") return StepMode::Post;
+    if (s == "mid") return StepMode::Mid;
+    if (ok) *ok = false;
+    return StepMode::None;
+}
+
+QString stepModeName(StepMode s)
+{
+    switch (s) {
+    case StepMode::None: return "none";
+    case StepMode::Pre: return "pre";
+    case StepMode::Post: return "post";
+    case StepMode::Mid: return "mid";
+    }
+    return "none";
+}
+
 }  // namespace gp

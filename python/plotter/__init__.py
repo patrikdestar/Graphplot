@@ -128,6 +128,84 @@ def _region_mask(self: Figure, x):
 
 
 Figure.region_mask = _region_mask
+
+
+def _errorbar(self: Figure, x, y, yerr=None, xerr=None, *, label=None, color=None,
+              marker="o", markersize=None, style="none", width=None, **kw) -> Line:
+    """Points with error bars (data-point style). yerr/xerr: scalar, array or (low, high)."""
+    return self.plot(x, y, label=label, color=color, marker=marker, markersize=markersize,
+                     style=style, width=width, xerr=xerr, yerr=yerr, **kw)
+
+
+def _hist(self: Figure, data, bins=10, range=None, *, density=False, weights=None,  # noqa: A002
+          histtype="step", label=None, color=None, fill=None, width=None, style="-"):
+    """Histogram of `data` (numpy.histogram semantics).
+
+    histtype  'step'        outline (default)
+              'stepfilled'  filled area (alpha 0.3 of the line colour, or `fill`)
+              'errorbar'    points at bin centres with Poisson errors sqrt(N)
+                            (scaled consistently when density=True or weights are given)
+    Returns (counts, edges, Line)."""
+    import numpy as np
+
+    data = np.asarray(data, dtype=float).ravel()
+    counts, edges = np.histogram(data, bins=bins, range=range, weights=weights)
+    widths = np.diff(edges)
+    if histtype == "errorbar":
+        # Poisson errors: sqrt(sum of w^2) per bin (= sqrt(N) when unweighted).
+        w2 = None if weights is None else np.square(np.asarray(weights, dtype=float).ravel())
+        err = np.sqrt(np.histogram(data, bins=edges, weights=w2)[0])
+    if density:
+        norm = counts.sum() * widths
+        counts = counts / norm
+        if histtype == "errorbar":
+            err = err / norm
+    if histtype == "errorbar":
+        centres = 0.5 * (edges[:-1] + edges[1:])
+        line = self.plot(centres, counts, label=label, color=color, marker="o", style="none",
+                         width=width, yerr=err, xerr=0.5 * widths)
+        return counts, edges, line
+    if histtype not in ("step", "stepfilled"):
+        raise ValueError("histtype must be 'step', 'stepfilled' or 'errorbar'")
+    # Closed outline: drop to zero at both outer edges.
+    xs = np.concatenate([[edges[0]], edges])
+    ys = np.concatenate([[0.0], counts, [0.0]])
+    if fill is None and histtype == "stepfilled":
+        fill = True
+    line = self.plot(xs, ys, label=label, color=color, step="post", fill=fill, width=width,
+                     style=style)
+    return counts, edges, line
+
+
+def _fill_between(self: Figure, x, y1, y2=0.0, *, label=None, color=None, alpha=0.3,
+                  line=False, step=None) -> Line:
+    """Fill the area between y1 and y2 (scalar or array), e.g. uncertainty bands.
+
+    step: None or 'pre'/'post'/'mid' (use 'mid' for bands on histogram bin centres).
+    One undo step. Returns the Line of y1 (y2 is an unlabelled helper curve)."""
+    import numpy as np
+
+    from ._plotter import _rgba
+
+    x = np.asarray(x, dtype=float)
+    y2 = np.broadcast_to(np.asarray(y2, dtype=float), x.shape)
+    if color is None:
+        color = self._take_color()
+    r, g, b, _ = _rgba(color)
+    fill = (r, g, b, float(alpha))
+    style = "-" if line else "none"
+    self._begin_macro("Fill between")
+    try:
+        lower = self.plot(x, y2, color=color, style=style, step=step)
+        return self.plot(x, y1, label=label, color=color, style=style, fill=fill, fill_to=lower,
+                         step=step)
+    finally:
+        self._end_macro()
+
+
+Figure.errorbar = _errorbar
+Figure.hist = _hist
+Figure.fill_between = _fill_between
 Figure.set_style = style._figure_set_style
 
 # IPython: "%gui plotter" keeps windows live in the terminal IPython shell.

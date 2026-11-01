@@ -113,6 +113,10 @@ private:
     QComboBox* m_dsScatter = nullptr;
     QDoubleSpinBox* m_dsScatterSize = nullptr;
     QCheckBox* m_dsVisible = nullptr;
+    QComboBox* m_dsStep = nullptr;
+    QCheckBox* m_dsFill = nullptr;
+    ColorButton* m_dsFillColor = nullptr;
+    QCheckBox* m_dsLegend = nullptr;
     QLabel* m_dsInfo = nullptr;
 
     // 2D data / contours

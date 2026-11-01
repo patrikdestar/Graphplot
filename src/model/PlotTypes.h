@@ -17,6 +17,9 @@ constexpr ObjectId kInvalidId = 0;
 enum class LineStyle { Solid, Dash, Dot, DashDot, None };
 enum class ScatterShape { None, Circle, Square, Triangle, Cross, Plus, Diamond };
 enum class Orientation { Vertical, Horizontal };
+// Step drawing (matplotlib names): Pre = jump before the point, Post = value
+// holds until the next point (histograms from bin edges), Mid = centred.
+enum class StepMode { None, Pre, Post, Mid };
 
 // Kind of an interactive plot object; used by selection and hit-testing.
 enum class ObjectKind { None, Dataset, Marker, Annotation, Region, Matrix, Peak };
@@ -34,7 +37,11 @@ struct DatasetStyle {
     LineStyle lineStyle = LineStyle::Solid;
     ScatterShape scatter = ScatterShape::None;
     double scatterSize = 0.0;  // <= 0: style default (lines.markersize)
+    StepMode step = StepMode::None;
+    QColor fillColor;          // invalid = no fill; otherwise fill to y = 0 or to fillTo
+    ObjectId fillTo = kInvalidId;  // fill the band between this dataset and another one
     bool visible = true;
+    bool inLegend = true;
     bool operator==(const DatasetStyle&) const = default;
 };
 
@@ -45,6 +52,9 @@ struct Dataset {
     QString name;
     QVector<double> x;
     QVector<double> y;
+    // Optional error bars (empty = none). Low/high are distances below/above
+    // the point (for symmetric errors both hold the same values).
+    QVector<double> yErrLow, yErrHigh, xErrLow, xErrHigh;
     DatasetStyle style;
 };
 
@@ -146,5 +156,8 @@ QString lineStyleName(LineStyle s);
 
 ScatterShape parseScatterShape(const QString& s, bool* ok = nullptr);
 QString scatterShapeName(ScatterShape s);
+
+StepMode parseStepMode(const QString& s, bool* ok = nullptr);  // none, pre, post, mid
+QString stepModeName(StepMode s);
 
 }  // namespace gp

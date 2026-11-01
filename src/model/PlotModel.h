@@ -33,6 +33,9 @@ public:
     bool setDatasetAppearance(ObjectId id, const QString& name, const DatasetStyle& style);
     // Replaces the numeric data. x and y must have equal length.
     bool setDatasetData(ObjectId id, QVector<double> x, QVector<double> y);
+    // Replaces the error arrays (each empty or the same length as the data).
+    bool setDatasetErrors(ObjectId id, QVector<double> xLow, QVector<double> xHigh,
+                          QVector<double> yLow, QVector<double> yHigh);
     // Colour for the next dataset added without an explicit colour; advances
     // through the default palette in fixed order.
     QColor takeNextDatasetColor();

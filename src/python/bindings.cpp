@@ -62,6 +62,30 @@ py::array_t<double> toNumpy(const QVector<double>& v)
     return a;
 }
 
+// Error specification: None, scalar, length-n array, or (2, n) array / pair (low, high).
+std::pair<QVector<double>, QVector<double>> toErrors(const py::object& obj, qsizetype n, const char* what)
+{
+    if (obj.is_none()) return {};
+    if (py::isinstance<py::float_>(obj) || py::isinstance<py::int_>(obj)) {
+        QVector<double> v(n, std::abs(obj.cast<double>()));
+        return {v, v};
+    }
+    auto arr = py::array_t<double, py::array::c_style | py::array::forcecast>::ensure(obj);
+    if (!arr) throw py::type_error(std::string(what) + " must be a number or an array");
+    auto copy = [&](const double* p) {
+        QVector<double> v(n);
+        for (qsizetype i = 0; i < n; ++i) v[i] = std::abs(p[i]);
+        return v;
+    };
+    if (arr.ndim() == 1 && arr.size() == n) {
+        QVector<double> v = copy(arr.data());
+        return {v, v};
+    }
+    if (arr.ndim() == 2 && arr.shape(0) == 2 && arr.shape(1) == n)
+        return {copy(arr.data()), copy(arr.data() + n)};
+    throw py::value_error(std::string(what) + " must be a scalar, length-n, or shape (2, n) (low, high)");
+}
+
 QColor toColor(const py::handle& obj, const char* what = "color")
 {
     if (obj.is_none()) return {};
@@ -431,6 +455,10 @@ PYBIND11_MODULE(_plotter, mod)
                 timeout < 0 ? -1 : int(timeout * 1000));
         },
         py::arg("figures"), py::arg("timeout") = -1.0);
+    mod.def("_rgba", [](const py::object& c) {
+        const QColor q = toColor(c);
+        return py::make_tuple(q.redF(), q.greenF(), q.blueF(), q.alphaF());
+    }, "Colour spec -> (r, g, b, a) floats.");
     mod.def("_has_app", [] { return QCoreApplication::instance() != nullptr; });
 
     // ---- global (default) style: used for figures created afterwards -----------
@@ -489,7 +517,9 @@ PYBIND11_MODULE(_plotter, mod)
         "plot",
         [](FigurePtr self, const py::object& x, const py::object& y, const py::object& label,
            const py::object& color, const py::object& widthObj, const std::string& style,
-           const py::object& marker, const py::object& markersizeObj, bool visible, bool replace) {
+           const py::object& marker, const py::object& markersizeObj, bool visible, bool replace,
+           const py::object& step, const py::object& fill, const py::object& fillTo,
+           const py::object& xerr, const py::object& yerr) {
             const double width = widthObj.is_none() ? 0.0 : widthObj.cast<double>();
             const double markersize = markersizeObj.is_none() ? 0.0 : markersizeObj.cast<double>();
             QVector<double> xv, yv;
@@ -505,15 +535,36 @@ PYBIND11_MODULE(_plotter, mod)
                 throw py::value_error("x and y must have the same length");
             Dataset d;
             if (!label.is_none()) d.name = QString::fromStdString(label.cast<std::string>());
+            d.style.inLegend = !label.is_none();  // like matplotlib: only labelled lines
             d.style.color = toColor(color);
             d.style.lineWidth = width;
             d.style.lineStyle = toLineStyle(style);
             d.style.scatter = toScatter(marker);
             d.style.scatterSize = markersize;
             d.style.visible = visible;
+            if (!step.is_none()) {
+                bool ok = false;
+                d.style.step = parseStepMode(QString::fromStdString(py::str(step).cast<std::string>()), &ok);
+                if (!ok) throw py::value_error("step must be None, 'pre', 'post' or 'mid'");
+            }
+            if (!fill.is_none() && !(py::isinstance<py::bool_>(fill) && !fill.cast<bool>())) {
+                // True: the line colour, translucent; otherwise any colour spec.
+                d.style.fillColor = py::isinstance<py::bool_>(fill) ? QColor() : toColor(fill, "fill");
+                if (!d.style.fillColor.isValid()) d.style.fillColor = QColor(0, 0, 0, 0);  // resolved below
+            }
+            if (!fillTo.is_none()) d.style.fillTo = fillTo.cast<Line&>().id;
+            std::tie(d.xErrLow, d.xErrHigh) = toErrors(xerr, xv.size(), "xerr");
+            std::tie(d.yErrLow, d.yErrHigh) = toErrors(yerr, xv.size(), "yerr");
             d.x = std::move(xv);
             d.y = std::move(yv);
             const ObjectId id = inGui([&] {
+                if (d.style.fillColor == QColor(0, 0, 0, 0)) {
+                    // fill=True: translucent line colour (assign the colour now).
+                    if (!d.style.color.isValid()) d.style.color = self->model()->takeNextDatasetColor();
+                    QColor c = d.style.color;
+                    c.setAlphaF(0.3);
+                    d.style.fillColor = c;
+                }
                 PlotEditor* ed = self->editor();
                 if (replace && !d.name.isEmpty()) {
                     if (const Dataset* old = self->model()->datasetByName(d.name)) {
@@ -542,7 +593,8 @@ PYBIND11_MODULE(_plotter, mod)
         py::arg("x"), py::arg("y") = py::none(), py::kw_only(), py::arg("label") = py::none(),
         py::arg("color") = py::none(), py::arg("width") = py::none(), py::arg("style") = "-",
         py::arg("marker") = py::none(), py::arg("markersize") = py::none(), py::arg("visible") = true,
-        py::arg("replace") = false,
+        py::arg("replace") = false, py::arg("step") = py::none(), py::arg("fill") = py::none(),
+        py::arg("fill_to") = py::none(), py::arg("xerr") = py::none(), py::arg("yerr") = py::none(),
         R"doc(Plot y against x (or y against its index if only one array is given).
 
 label     dataset name shown in the legend
@@ -551,6 +603,10 @@ width     line width in pixels (default: style 'lines.linewidth')
 style     '-', '--', ':', '-.' or 'none'
 marker    point symbol: 'o', 's', '^', 'd', 'x', '+' or None
 replace   if True and a dataset with the same label exists, update it in place
+step      None, 'pre', 'post' (histograms from bin edges) or 'mid'
+fill      True (line colour, translucent) or a colour: fill down to y = 0, or to fill_to
+fill_to   another Line: fill the band between the two curves (uncertainty bands)
+xerr/yerr error bars: scalar, array, or shape (2, n) for (low, high)
 Returns a Line handle.)doc");
 
     fig.def(
@@ -1067,6 +1123,13 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
     fig.def_property_readonly("is_open", [](FigurePtr self) {
         return self->alive() && inGui([&] { return self->w()->isVisible(); });
     });
+    fig.def("_take_color", [](FigurePtr self) {
+        return colorName(inGui([&] { return self->model()->takeNextDatasetColor(); }));
+    });
+    fig.def("_begin_macro", [](FigurePtr self, const std::string& text) {
+        inGui([&] { self->editor()->undoStack()->beginMacro(QString::fromStdString(text)); });
+    });
+    fig.def("_end_macro", [](FigurePtr self) { inGui([&] { self->editor()->undoStack()->endMacro(); }); });
     fig.def("undo", [](FigurePtr self) { inGui([&] { self->editor()->undo(); }); });
     fig.def("redo", [](FigurePtr self) { inGui([&] { self->editor()->redo(); }); });
     fig.def(
@@ -1107,7 +1170,10 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
         .def_property("label",
                       [](Line& h) { return inGui([&] { return h.get().name.toStdString(); }); },
                       [](Line& h, const std::string& v) {
-                          h.setStyle([&](QString& n, DatasetStyle&) { n = QString::fromStdString(v); });
+                          h.setStyle([&](QString& n, DatasetStyle& s) {
+                              n = QString::fromStdString(v);
+                              s.inLegend = !v.empty();
+                          });
                       })
         .def_property("color",
                       [](Line& h) { return colorName(inGui([&] { return h.get().style.color; })); },
@@ -1145,6 +1211,47 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
             },
             py::arg("x"), py::arg("y"), py::kw_only(), py::arg("undoable") = false,
             "Replace the data. Not recorded in the undo history unless undoable=True.")
+        .def(
+            "set_errors",
+            [](Line& h, const py::object& xerr, const py::object& yerr) {
+                const qsizetype n = inGui([&] { return h.get().x.size(); });
+                auto [xl, xh] = toErrors(xerr, n, "xerr");
+                auto [yl, yh] = toErrors(yerr, n, "yerr");
+                inGui([&] { h.fig->model()->setDatasetErrors(h.id, xl, xh, yl, yh); });
+            },
+            py::arg("xerr") = py::none(), py::arg("yerr") = py::none(),
+            "Replace the error bars (None removes them).")
+        .def_property_readonly("yerr", [](Line& h) {
+            const Dataset d = inGui([&] { return h.get(); });
+            if (d.yErrLow.isEmpty()) return py::object(py::none());
+            return py::object(py::make_tuple(toNumpy(d.yErrLow), toNumpy(d.yErrHigh)));
+        }, "(low, high) arrays or None")
+        .def_property("step",
+                      [](Line& h) { return stepModeName(inGui([&] { return h.get().style.step; })).toStdString(); },
+                      [](Line& h, const std::string& v) {
+                          bool ok = false;
+                          const StepMode m = parseStepMode(QString::fromStdString(v), &ok);
+                          if (!ok) throw py::value_error("step must be 'none', 'pre', 'post' or 'mid'");
+                          h.setStyle([&](QString&, DatasetStyle& s) { s.step = m; });
+                      })
+        .def_property("fill",
+                      [](Line& h) -> py::object {
+                          const QColor c = inGui([&] { return h.get().style.fillColor; });
+                          if (!c.isValid()) return py::none();
+                          return py::str(colorName(c));
+                      },
+                      [](Line& h, const py::object& v) {
+                          QColor c;
+                          if (!v.is_none() && !(py::isinstance<py::bool_>(v) && !v.cast<bool>())) {
+                              if (py::isinstance<py::bool_>(v)) {
+                                  c = inGui([&] { return h.get().style.color; });
+                                  c.setAlphaF(0.3);
+                              } else {
+                                  c = toColor(v, "fill");
+                              }
+                          }
+                          h.setStyle([&](QString&, DatasetStyle& s) { s.fillColor = c; });
+                      }, "Fill colour (None = no fill); True = translucent line colour")
         .def("remove", [](Line& h) { inGui([&] { h.fig->editor()->removeDataset(h.id); }); })
         .def_property_readonly("exists", [](Line& h) {
             return h.fig->alive() && inGui([&] { return h.fig->model()->dataset(h.id) != nullptr; });

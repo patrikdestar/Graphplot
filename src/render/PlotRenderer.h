@@ -21,6 +21,7 @@ class QCPItemText;
 class QCPLayer;
 class QCPTextElement;
 class QCPColorMap;
+class QCPErrorBars;
 
 namespace gp {
 
@@ -116,6 +117,8 @@ private:
     void applyDatasetAppearance(ObjectId id);
     void applyDatasetData(ObjectId id);
     void syncLegend();
+    void updateErrorBars(ObjectId id);
+    void removeErrorBars(ObjectId id);
 
     void onMatrixAdded(ObjectId id);
     void onMatrixRemoved(ObjectId id);
@@ -150,6 +153,11 @@ private:
     PeakOverlay* m_peaks = nullptr;
 
     QHash<ObjectId, QCPAbstractPlottable*> m_plottables;
+    struct ErrorVisual {
+        QCPErrorBars* y = nullptr;
+        QCPErrorBars* x = nullptr;
+    };
+    QHash<ObjectId, ErrorVisual> m_errorBars;
     QHash<ObjectId, MatrixVisual> m_matrices;
     QHash<ObjectId, MarkerVisual> m_markers;
     QHash<ObjectId, RichTextItem*> m_annotations;

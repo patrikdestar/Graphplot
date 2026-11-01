@@ -306,6 +306,38 @@ class PlotterTests(unittest.TestCase):
                 plotter.style.reload()
         self.assertEqual(plotter.style.get("font.size"), "10")
 
+    def test_errorbar_hist_fill(self):
+        rng = np.random.default_rng(1)
+        data = rng.normal(0, 1, 5000)
+        counts, edges, step = self.fig.hist(data, bins=20, range=(-4, 4), label="MC")
+        np.testing.assert_array_equal(counts, np.histogram(data, 20, (-4, 4))[0])
+        self.assertEqual(step.step, "post")
+        self.assertEqual(len(step.x), len(edges) + 1)  # closed outline
+        c2, e2, pts = self.fig.hist(data, bins=20, range=(-4, 4), histtype="errorbar", label="Data")
+        lo, hi = pts.yerr
+        np.testing.assert_allclose(lo, np.sqrt(c2))
+        np.testing.assert_allclose(pts.x, 0.5 * (e2[1:] + e2[:-1]))
+        cd, _, _ = self.fig.hist(data, bins=20, range=(-4, 4), density=True, histtype="stepfilled")
+        self.assertAlmostEqual(float((cd * np.diff(e2)).sum()), 1.0)
+        e = self.fig.errorbar([1, 2, 3], [1, 4, 9], yerr=[[0.1, 0.2, 0.3], [1, 2, 3]], xerr=0.5)
+        lo, hi = e.yerr
+        np.testing.assert_allclose(hi, [1, 2, 3])
+        with self.assertRaises(ValueError):
+            self.fig.errorbar([1, 2], [1, 2], yerr=[1, 2, 3])
+        n_before = len(self.fig.lines())
+        band = self.fig.fill_between([0, 1, 2], [2, 3, 4], [1, 1, 1], label="band", alpha=0.25)
+        self.assertEqual(len(self.fig.lines()), n_before + 2)
+        self.assertTrue(band.fill.startswith("#40"))  # alpha 0.25 -> 0x40
+        self.fig.undo()  # the band is one undo step
+        self.assertEqual(len(self.fig.lines()), n_before)
+        # Unlabelled lines are not legend entries; labelling adds them.
+        line = self.fig.plot([0, 1], [0, 1])
+        line.label = "now labelled"
+        line.fill = True
+        self.assertIsNotNone(line.fill)
+        line.fill = None
+        self.assertIsNone(line.fill)
+
     def test_savefig(self):
         self.fig.plot(self.x, np.sin(self.x), label="s")
         self.fig.marker(50, label="M")
