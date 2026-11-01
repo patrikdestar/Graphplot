@@ -301,6 +301,12 @@ label.top.left: "**My Experiment** *Preliminary*"
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): layout, layers, and the
   technical difficulties and their solutions.
 - [docs/STYLE_REFERENCE.md](docs/STYLE_REFERENCE.md): all style keys.
+- [docs/FILE_FORMATS.md](docs/FILE_FORMATS.md): every file Graphplot reads or
+  writes (column data, 2D grids, sensor logs, Bruker, peak lists, styles,
+  exports) and the exact parsing rules.
+- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md): build and import
+  problems, frozen or vanishing windows, threads, data that loads wrongly,
+  and the error messages explained.
 
 ## Author and license
 
