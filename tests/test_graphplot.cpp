@@ -1448,7 +1448,8 @@ private slots:
         QTemporaryDir dir;
         QVERIFY(w->exportTo(dir.filePath("t.png"), 200, 150, 1.0));
         QImage img(dir.filePath("t.png"));
-        QVERIFY(img.pixelColor(img.width() / 2, img.height() / 2).lightnessF() > 0.7);
+        // (A point of the plot area away from the diagonal test line.)
+        QVERIFY(img.pixelColor(img.width() * 2 / 5, img.height() / 3).lightnessF() > 0.7);
         // ...and the screen is dark again afterwards.
         QVERIFY(w->plot()->axisRect()->backgroundBrush().color().lightnessF() < 0.3);
         // Plots can keep their style colours in a dark theme.
