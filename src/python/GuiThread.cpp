@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 #include "GuiThread.h"
 
+#include "gui/Appearance.h"
+
 #include "model/Style.h"
 
 #include <QApplication>
@@ -80,6 +82,7 @@ void ensureApp()
     auto* app = new QApplication(s_argc, s_argv);  // lives until process exit
     app->setQuitOnLastWindowClosed(false);
     QApplication::setApplicationName("plotter");
+    gp::Appearance::instance()->load();  // the theme / tooltip settings saved by the app
     if (!PyOS_InputHook) PyOS_InputHook = inputHook;
 }
 

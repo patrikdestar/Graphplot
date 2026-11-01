@@ -4,6 +4,7 @@
 //   graphplot [data files...]
 // Without arguments a small demo data set is shown.
 #include "commands/PlotEditor.h"
+#include "gui/Appearance.h"
 #include "gui/FigureWindow.h"
 #include "gui/Timeline.h"
 #include "model/PlotModel.h"
@@ -124,7 +125,13 @@ int main(int argc, char** argv)
     parser.addOption(demo2d);
     parser.addPositionalArgument("files", "Column data files (CSV/TSV/whitespace), or Bruker 2D "
                                           "spectra (experiment folder, pdata/N folder or 2rr file).");
+    QCommandLineOption themeOpt("theme", "Display theme for this session: system, light, dark, dim, "
+                                         "midnight, solarized-dark, high-contrast.", "name");
+    parser.addOption(themeOpt);
     parser.process(app);
+    Appearance::instance()->load();  // saved theme and hover-explanation setting
+    if (parser.isSet(themeOpt) && !Appearance::instance()->setTheme(parser.value(themeOpt), false))
+        qWarning("unknown theme '%s'", qPrintable(parser.value(themeOpt)));
     QStringList styleErrors;
     reloadDefaultStyle(&styleErrors);  // user default style file, if any
     for (const QString& e : styleErrors) qWarning("style: %s", qPrintable(e));

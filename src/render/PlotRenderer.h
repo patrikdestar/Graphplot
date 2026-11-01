@@ -112,6 +112,12 @@ public:
     bool panelVisible() const { return m_panelVisible; }
     void setRegionLabelVisible(bool on) { m_regionLabelOn = on; applyRegion(); }
 
+    // The style as drawn: the figure's style, with the display theme's plot
+    // colours on top on screen (see DisplayTheme).
+    Style displayStyle() const;
+    // Re-applies every colour / style (after a theme change).
+    void refreshAppearance();
+
     void replot();               // queued full replot
     void replotObjectLayers();   // immediate replot of marker/annotation/region layers only
 
@@ -165,6 +171,8 @@ private:
     void applyStyle();
     void updateHeader();
     QFont font(double pointSize, bool bold = false) const;
+    QColor ink(const QColor& c) const;           // data colour as drawn (theme-aware)
+    static QColor labelBox(const Style& st);     // background of label boxes
     void maybeCaptureHome();
 
     PlotModel* m_model;

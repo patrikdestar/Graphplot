@@ -18,6 +18,7 @@ struct PeakAppearance {
     QColor color = QColor(0x0b, 0x0b, 0x0b);
     QColor labelColor = QColor(0x0b, 0x0b, 0x0b);
     QColor highlight = QColor(0x2a, 0x78, 0xd6);
+    QColor halo = QColor(255, 255, 255, 200);  // box behind labels (readable on contours)
     double crossSize = 7.0;   // half-length of the cross arms, pixels
     double lineWidth = 1.2;
     double fontSize = 9.0;    // points

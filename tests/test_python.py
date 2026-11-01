@@ -698,6 +698,21 @@ class PlotterTests(unittest.TestCase):
         self.assertNotIn("nan", rows[1].split(",")[1])
         tl.figure.close()
 
+    def test_theme_and_tooltips(self):
+        self.assertIn("dark", plotter.themes())
+        before = plotter.theme()
+        try:
+            self.assertEqual(plotter.theme("midnight"), "midnight")
+            with self.assertRaises(ValueError):
+                plotter.theme("nope")
+            self.fig.plot([0, 1], [0, 1])
+            with tempfile.TemporaryDirectory() as d:
+                self.fig.savefig(os.path.join(d, "light.png"))  # exports stay light by default
+            self.assertFalse(plotter.tooltips(False))
+            self.assertTrue(plotter.tooltips(True))
+        finally:
+            plotter.theme(before)
+
     def test_pyplot_compat_round2(self):
         import io
         import plotter.pyplot as plt

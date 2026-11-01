@@ -49,6 +49,7 @@ from . import style
 
 __all__ = [
     "style", "figure", "Axes", "timeline", "Timeline", "TimelineRow", "TimePin", "show", "pause", "figures", "close_all",
+    "theme", "themes", "tooltips",
     "Figure", "Line", "Contour", "Marker", "Annotation", "Peak",
 ]
 
@@ -103,6 +104,37 @@ def show(block: bool | None = None, timeout: float | None = None) -> None:
         block = not _interactive()
     if block:
         _run_until_closed(list(_figures), -1.0 if timeout is None else float(timeout))
+
+
+def themes() -> dict:
+    """Available display themes: {id: description}."""
+    return {tid: f"{name} - {desc}" for tid, name, desc, _dark in _plotter._themes()}
+
+
+def theme(name: str | None = None, *, plots: bool | None = None, exports: bool | None = None,
+          save: bool = False) -> str:
+    """Get or set the display theme of all windows; returns the current theme id.
+
+    name     "system", "light", "dark", "dim", "midnight", "solarized-dark",
+             "high-contrast" (see themes()).
+    plots    dark themes also colour the plots on screen (default True).
+    exports  exports use the theme colours too (default False: savefig and the
+             clipboard keep the figure's own, usually light, style).
+    save     remember the choice for future sessions (like the Appearance menu).
+    The theme only changes how things look on screen; figure styles are untouched."""
+    if name is not None:
+        _plotter._set_theme(str(name), bool(save))
+    if plots is not None or exports is not None:
+        _plotter._set_theme_options(plots, exports, bool(save))
+    return _plotter._theme()
+
+
+def tooltips(on: bool | None = None, *, save: bool = False) -> bool:
+    """Get or switch the explanations shown when the mouse rests on a button,
+    field or menu entry (View > Appearance > Show explanations on hover)."""
+    if on is not None:
+        _plotter._set_tooltips(bool(on), bool(save))
+    return _plotter._tooltips()
 
 
 def pause(seconds: float = 0.05) -> None:

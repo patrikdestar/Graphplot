@@ -5,6 +5,9 @@
 
 #include <QIcon>
 
+class QAction;
+class QObject;
+
 namespace gp::icons {
 
 enum class Kind {
@@ -12,6 +15,12 @@ enum class Kind {
     Levels, Peak
 };
 
+// The outline colour follows the application palette (dark themes get light
+// icons); call refresh() after the palette changes.
 QIcon make(Kind kind);
+// Sets an action's icon and remembers its kind, so refresh() can redraw it.
+void set(QAction* action, Kind kind);
+// Redraws the icons of every action under `root` that was given one by set().
+void refresh(QObject* root);
 
 }  // namespace gp::icons

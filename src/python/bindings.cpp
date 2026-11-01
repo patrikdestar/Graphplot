@@ -16,6 +16,7 @@
 #include "GuiThread.h"
 
 #include "commands/PlotEditor.h"
+#include "gui/Appearance.h"
 #include "gui/FigureWindow.h"
 #include "gui/PeakTable.h"
 #include "gui/Timeline.h"
@@ -25,6 +26,7 @@
 #include "model/Style.h"
 #include "model/PlotModel.h"
 #include "qcustomplot.h"
+#include "render/DisplayTheme.h"
 #include "render/PlotRenderer.h"
 
 #include <pybind11/functional.h>
@@ -631,6 +633,45 @@ PYBIND11_MODULE(_plotter, mod)
 {
     mod.doc() = "Native part of the 'plotter' package (Graphplot C++/Qt bindings).";
     gp::reloadDefaultStyle();  // the user's default style file, if any (once, at import)
+
+    // ---- appearance (themes, hover explanations); wrapped by plotter.theme() etc.
+    mod.def("_themes", [] {
+        std::vector<std::tuple<std::string, std::string, std::string, bool>> out;
+        for (const ThemeDef& t : DisplayTheme::themes())
+            out.emplace_back(t.id.toStdString(), t.name.toStdString(), t.description.toStdString(), t.dark);
+        return out;
+    });
+    mod.def("_theme", [] {
+        pyglue::ensureApp();
+        return inGui([] { return Appearance::instance()->theme().toStdString(); });
+    });
+    mod.def("_set_theme", [](const std::string& id, bool save) {
+        pyglue::ensureApp();
+        if (!inGui([&] { return Appearance::instance()->setTheme(QString::fromStdString(id), save); }))
+            throw py::value_error("unknown theme '" + id + "'");
+    });
+    mod.def("_theme_options", [] {
+        return inGui([] {
+            return std::make_pair(DisplayTheme::instance()->themePlots(), DisplayTheme::instance()->themeExports());
+        });
+    });
+    mod.def("_set_theme_options", [](const py::object& plots, const py::object& exports, bool save) {
+        pyglue::ensureApp();
+        const std::optional<bool> p = plots.is_none() ? std::nullopt : std::optional<bool>(plots.cast<bool>());
+        const std::optional<bool> e = exports.is_none() ? std::nullopt : std::optional<bool>(exports.cast<bool>());
+        inGui([&] {
+            if (p) Appearance::instance()->setThemePlots(*p, save);
+            if (e) Appearance::instance()->setThemeExports(*e, save);
+        });
+    });
+    mod.def("_tooltips", [] {
+        pyglue::ensureApp();
+        return inGui([] { return Appearance::instance()->tooltipsEnabled(); });
+    });
+    mod.def("_set_tooltips", [](bool on, bool save) {
+        pyglue::ensureApp();
+        inGui([&] { Appearance::instance()->setTooltipsEnabled(on, save); });
+    });
 
     mod.def("process_events", &pyglue::processEvents, py::arg("ms") = 0,
             "Run the Qt event loop for `ms` milliseconds (keeps windows responsive in scripts).");

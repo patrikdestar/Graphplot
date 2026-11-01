@@ -2,6 +2,7 @@
 // Unit and interaction tests. Run headless with QT_QPA_PLATFORM=offscreen
 // (ctest sets this automatically).
 #include "commands/PlotEditor.h"
+#include "gui/Appearance.h"
 #include "gui/FigureWindow.h"
 #include "gui/Timeline.h"
 #include "model/DataLoader.h"
@@ -16,10 +17,15 @@
 #include "render/RichText.h"
 #include "render/PeakOverlay.h"
 #include "render/ContourPlottable.h"
+#include "render/DisplayTheme.h"
 #include "render/PlotRenderer.h"
 
 #include <QElapsedTimer>
+#include <QApplication>
 #include <QCheckBox>
+#include <QHelpEvent>
+#include <QStandardPaths>
+#include <QImage>
 #include <QLineEdit>
 #include <QMimeData>
 
@@ -95,6 +101,10 @@ private:
     }
 
 private slots:
+    // Settings written by tests (theme, tooltips) go to a test location, not
+    // to the user's configuration.
+    void initTestCase() { QStandardPaths::setTestModeEnabled(true); }
+
     // ---- model --------------------------------------------------------------
     void paletteColorsAreDistinct()
     {
@@ -1417,6 +1427,46 @@ private slots:
         QFile pdf(dir.filePath("f.pdf"));
         QVERIFY(pdf.open(QIODevice::ReadOnly));
         QVERIFY(pdf.readAll().contains("MediaBox [0 0 576"));
+    }
+
+    // ---- appearance -------------------------------------------------------------------
+    void themesDarkOnScreenLightInExports()
+    {
+        auto w = makeWindow();
+        Appearance* app = Appearance::instance();
+        QVERIFY(!app->setTheme("no-such-theme", false));
+        QVERIFY(app->setTheme("dark", false));
+        QVERIFY(QApplication::palette().color(QPalette::Window).lightnessF() < 0.3);
+        // On screen: dark plot background; the figure's style is unchanged.
+        QVERIFY(w->plot()->axisRect()->backgroundBrush().color().lightnessF() < 0.3);
+        QCOMPARE(w->model()->style().axesFace, QColor(Qt::white));
+        // Exports use the figure's own (light) colours by default...
+        QTemporaryDir dir;
+        QVERIFY(w->exportTo(dir.filePath("t.png"), 200, 150, 1.0));
+        QImage img(dir.filePath("t.png"));
+        QVERIFY(img.pixelColor(img.width() / 2, img.height() / 2).lightnessF() > 0.7);
+        // ...and the screen is dark again afterwards.
+        QVERIFY(w->plot()->axisRect()->backgroundBrush().color().lightnessF() < 0.3);
+        // Plots can keep their style colours in a dark theme.
+        app->setThemePlots(false, false);
+        QCOMPARE(w->plot()->axisRect()->backgroundBrush().color(), QColor(Qt::white));
+        app->setThemePlots(true, false);
+        // Every theme applies without errors; back to the default.
+        for (const ThemeDef& t : DisplayTheme::themes()) QVERIFY(app->setTheme(t.id, false));
+        QVERIFY(app->setTheme("system", false));
+        QCOMPARE(w->plot()->axisRect()->backgroundBrush().color(), QColor(Qt::white));
+    }
+
+    void tooltipsCanBeSwitchedOff()
+    {
+        auto w = makeWindow();
+        Appearance::instance()->load();  // installs the tooltip filter
+        QWidget* target = w->plot();
+        Appearance::instance()->setTooltipsEnabled(false, false);
+        QHelpEvent off(QEvent::ToolTip, QPoint(5, 5), target->mapToGlobal(QPoint(5, 5)));
+        QVERIFY(QApplication::sendEvent(target, &off));  // swallowed by the filter
+        Appearance::instance()->setTooltipsEnabled(true, false);
+        QVERIFY(Appearance::instance()->tooltipsEnabled());
     }
 
     void auditRound3()

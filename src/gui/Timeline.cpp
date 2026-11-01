@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 #include "Timeline.h"
 
+#include "render/DisplayTheme.h"
+
 #include "FigureWindow.h"
 #include "commands/PlotEditor.h"
 #include "model/PlotModel.h"
@@ -144,6 +146,14 @@ Timeline::Timeline(FigureWindow* window) : QObject(window), m_win(window), m_plo
     m_navTimeLabel->setBrush(QColor(255, 255, 255, 230));
     m_navTimeLabel->setPen(QPen(QColor(0x52, 0x51, 0x4e)));
     m_navTimeLabel->setVisible(false);
+    applyThemeColors();
+
+    // Colours of the cursor, readouts and marker labels follow the display theme.
+    connect(DisplayTheme::instance(), &DisplayTheme::changed, this, [this] {
+        applyThemeColors();
+        rebuildPinVisuals();
+        updateCursorVisuals();
+    });
 
     // Time-only zooming in rows: Y follows the data (auto-fit) or Shift+wheel.
     m_win->controller()->setZoomAxes(ZoomAxes::XOnly);
@@ -201,6 +211,7 @@ void Timeline::attachRow(int row)
     v.readout->setVisible(false);
     v.linearTicker = r->xAxis()->ticker();
     m_rows.insert(row, v);
+    applyThemeColors();
 
     PlotModel* m = m_win->axes(row).model;
     AxesInfo info = m->axesInfo();
@@ -366,6 +377,31 @@ int Timeline::firstVisibleRow() const
     for (int row : m_order)
         if (m_rows.value(row).visible) return row;
     return m_order.isEmpty() ? 0 : m_order.front();
+}
+
+void Timeline::applyThemeColors()
+{
+    // The cursor line and boxes use the plot's text and background colours
+    // as drawn (the figure style, or the dark theme on screen).
+    const Style st = m_navRenderer->displayStyle();
+    QColor line = st.labelColor;
+    line.setAlpha(170);
+    QColor box = st.axesFace;
+    box.setAlpha(228);
+    QPen cursorPen(line, 1);
+    cursorPen.setCosmetic(true);
+    if (m_navCursor) {  // not yet created while the first row is attached
+        m_navCursor->setPen(cursorPen);
+        m_navTimeLabel->setBrush(box);
+        m_navTimeLabel->setPen(QPen(st.axesEdge));
+        m_navTimeLabel->setColor(st.labelColor);
+    }
+    for (RowVisual& v : m_rows) {
+        v.cursor->setPen(cursorPen);
+        v.readout->setBrush(box);
+        v.readout->setPen(QPen(st.gridColor));
+        v.readout->setColor(st.labelColor);
+    }
 }
 
 void Timeline::relayout()
@@ -887,9 +923,13 @@ void Timeline::rebuildPinVisuals()
             t->position->setCoords(p.t, 0.0);
             t->setPositionAlignment(Qt::AlignTop | Qt::AlignHCenter);
             t->setPadding(QMargins(4, 1, 4, 1));
-            t->setBrush(QColor(255, 255, 255, 235));
+            const Style st = m_navRenderer->displayStyle();
+            QColor box = st.axesFace;
+            box.setAlpha(235);
+            t->setBrush(box);
             t->setPen(QPen(p.color));
-            t->setColor(p.color.darker(140));
+            // Darker text on light backgrounds, lighter on dark ones.
+            t->setColor(st.axesFace.lightnessF() < 0.5 ? p.color.lighter(150) : p.color.darker(140));
             t->setText(p.label, f, true);
             m_pinItems.push_back(t);
         }

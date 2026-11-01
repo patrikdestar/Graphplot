@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 #include "PropertiesPanel.h"
 
+#include "render/DisplayTheme.h"
+
 #include "commands/PlotEditor.h"
 #include "interaction/InteractionController.h"
 #include "model/Contour.h"
@@ -689,7 +691,10 @@ void PropertiesPanel::refreshTreeItem(const ObjectRef& ref)
             QString t = a->text;
             t.replace('\n', ' ');
             item->setText(0, t.isEmpty() ? "(empty)" : t);
-            item->setIcon(0, swatchIcon(a->color));
+            // Unset colour = the style's annotation colour (as drawn on screen).
+            const QColor ac = a->color.isValid() ? a->color : m_model->style().annotationColor;
+            item->setIcon(0, swatchIcon(DisplayTheme::instance()->plotOverlayActive(false)
+                                            ? DisplayTheme::instance()->ink(ac) : ac));
         }
         break;
     case ObjectKind::Region: {

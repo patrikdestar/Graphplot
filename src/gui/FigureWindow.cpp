@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 #include "FigureWindow.h"
 
+#include "Appearance.h"
+
 #include "Icons.h"
 #include "PeakTable.h"
 #include "PropertiesPanel.h"
@@ -478,8 +480,9 @@ void FigureWindow::buildActions()
     openTs->setShortcut(QKeySequence("Ctrl+T"));
     QAction* bruker = file->addAction("Open &Bruker 2D spectrum…", this, &FigureWindow::onOpenBruker);
     bruker->setShortcut(QKeySequence("Ctrl+B"));
-    QAction* exportAct = file->addAction(icons::make(icons::Kind::Export), "&Export…", this,
+    QAction* exportAct = file->addAction("&Export…", this,
                                          &FigureWindow::onExport);
+    icons::set(exportAct, icons::Kind::Export);
     exportAct->setShortcut(QKeySequence("Ctrl+E"));
     QAction* copyAct = file->addAction("&Copy figure to clipboard", this, &FigureWindow::copyToClipboard);
     copyAct->setShortcut(QKeySequence("Ctrl+Shift+C"));
@@ -491,10 +494,10 @@ void FigureWindow::buildActions()
     QMenu* edit = menuBar()->addMenu("&Edit");
     QAction* undo = stack->createUndoAction(this, "&Undo");
     undo->setShortcut(QKeySequence::Undo);
-    undo->setIcon(icons::make(icons::Kind::Undo));
+    icons::set(undo, icons::Kind::Undo);
     QAction* redo = stack->createRedoAction(this, "&Redo");
     redo->setShortcuts({QKeySequence::Redo, QKeySequence("Ctrl+Y")});
-    redo->setIcon(icons::make(icons::Kind::Redo));
+    icons::set(redo, icons::Kind::Redo);
     // Keep the toolbar buttons short; the menu shows "Undo <action>".
     undo->setIconText("Undo");
     redo->setIconText("Redo");
@@ -542,7 +545,8 @@ void FigureWindow::buildActions()
     tb->setIconSize(QSize(22, 22));
     tb->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
     for (const ModeDef& d : modes) {
-        QAction* a = new QAction(icons::make(d.icon), d.text, this);
+        QAction* a = new QAction(d.text, this);
+        icons::set(a, d.icon);
         a->setCheckable(true);
         a->setShortcut(QKeySequence(d.key));
         a->setToolTip(QString("%1 (%2)\n%3").arg(d.text, d.key, d.tip));
@@ -563,7 +567,8 @@ void FigureWindow::buildActions()
 
     // ---- View
     QMenu* view = menuBar()->addMenu("&View");
-    QAction* autoscale = new QAction(icons::make(icons::Kind::Autoscale), "Autoscale", this);
+    QAction* autoscale = new QAction("Autoscale", this);
+    icons::set(autoscale, icons::Kind::Autoscale);
     autoscale->setShortcut(QKeySequence("A"));
     autoscale->setToolTip("Fit all visible data (A). Double-click the plot does the same.");
     connect(autoscale, &QAction::triggered, this, [this] { m_renderer->autoscale(); });
@@ -572,13 +577,15 @@ void FigureWindow::buildActions()
     QAction* autoY = new QAction("Autoscale Y", this);
     autoY->setShortcut(QKeySequence("Shift+A"));
     connect(autoY, &QAction::triggered, this, [this] { m_renderer->autoscale(false, true); });
-    QAction* reset = new QAction(icons::make(icons::Kind::ResetView), "Reset view", this);
+    QAction* reset = new QAction("Reset view", this);
+    icons::set(reset, icons::Kind::ResetView);
     reset->setShortcut(QKeySequence("Home"));
     reset->setToolTip("Return to the original axis limits (Home).");
     connect(reset, &QAction::triggered, this, [this] { m_renderer->resetView(); });
     QAction* setHome = new QAction("Set current view as home", this);
     connect(setHome, &QAction::triggered, this, [this] { m_renderer->captureHomeView(); });
-    m_levelsAction = new QAction(icons::make(icons::Kind::Levels), "Levels", this);
+    m_levelsAction = new QAction("Levels", this);
+    icons::set(m_levelsAction, icons::Kind::Levels);
     m_levelsAction->setCheckable(true);
     m_levelsAction->setShortcut(QKeySequence("L"));
     m_levelsAction->setToolTip(
@@ -639,6 +646,9 @@ void FigureWindow::buildActions()
     view->addAction(setHome);
     view->addSeparator();
     view->addAction(m_dock->toggleViewAction());
+    view->addSeparator();
+    view->addMenu(Appearance::instance()->createMenu(this));  // themes, hover explanations
+    connect(Appearance::instance(), &Appearance::changed, this, [this] { icons::refresh(this); });
     buildStyleMenu();
     QMenu* help = menuBar()->addMenu("&Help");
     help->addAction("&About Graphplot", this, [this] {

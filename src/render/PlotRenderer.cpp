@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 #include "PlotRenderer.h"
 
+#include "DisplayTheme.h"
+
 #include "ContourPlottable.h"
 #include "PeakOverlay.h"
 #include "RichElements.h"
@@ -177,6 +179,7 @@ PlotRenderer::PlotRenderer(PlotModel* model, QCustomPlot* plot, QCPAxisRect* rec
         applyRegion();
         replotObjectLayers();
     });
+    connect(DisplayTheme::instance(), &DisplayTheme::changed, this, &PlotRenderer::refreshAppearance);
     connect(m_model, &PlotModel::styleChanged, this, [this] {
         applyStyle();
         replot();
@@ -498,9 +501,46 @@ void PlotRenderer::setHighlight(const ObjectRef& ref)
     replotObjectLayers();
 }
 
+Style PlotRenderer::displayStyle() const
+{
+    Style s = m_model->style();
+    if (DisplayTheme::instance()->plotOverlayActive(m_exportMode)) DisplayTheme::instance()->applyTo(s);
+    return s;
+}
+
+QColor PlotRenderer::ink(const QColor& c) const
+{
+    return DisplayTheme::instance()->plotOverlayActive(m_exportMode) ? DisplayTheme::instance()->ink(c) : c;
+}
+
+QColor PlotRenderer::labelBox(const Style& st)
+{
+    QColor c = st.axesFace;  // white on light styles, the theme's plot background on dark ones
+    c.setAlpha(225);
+    return c;
+}
+
+void PlotRenderer::refreshAppearance()
+{
+    applyStyle();  // also markers, annotations, axes labels, peaks
+    for (const Dataset& d : m_model->datasets()) {
+        applyDatasetAppearance(d.id);
+        updateErrorBars(d.id);
+    }
+    for (const Matrix& m : m_model->matrices()) applyMatrixAppearance(m.id);
+    applyRegion();
+    replot();
+}
+
 void PlotRenderer::setExportMode(bool on)
 {
+    const bool themeChanges = DisplayTheme::instance()->plotOverlayActive(m_exportMode) !=
+                              DisplayTheme::instance()->plotOverlayActive(on);
     m_exportMode = on;
+    if (themeChanges) {  // exports use the figure's own colours (see DisplayTheme)
+        refreshAppearance();
+        if (m_plot) m_plot->replot(QCustomPlot::rpImmediateRefresh);
+    }
     m_peaks->setExportMode(on);
     if (m_highlight.kind == ObjectKind::Marker) applyMarker(m_highlight.id);
     else if (m_highlight.kind == ObjectKind::Annotation) applyAnnotation(m_highlight.id);
@@ -589,7 +629,7 @@ void PlotRenderer::updateErrorBars(ObjectId id)
     auto* target = dynamic_cast<QCPPlottableInterface1D*>(m_plottables.value(id));
     if (!d || !target) return;
     ErrorVisual& e = m_errorBars[id];
-    const Style& st = m_model->style();
+    const Style st = displayStyle();
     auto make = [&](QCPErrorBars*& bars, const QVector<double>& lo, const QVector<double>& hi,
                     QCPErrorBars::ErrorType type) {
         if (lo.isEmpty() && hi.isEmpty()) {
@@ -607,7 +647,7 @@ void PlotRenderer::updateErrorBars(ObjectId id)
         const QVector<double>& l = lo.isEmpty() ? hi : lo;
         const QVector<double>& h = hi.isEmpty() ? lo : hi;
         bars->setData(l, h);
-        QPen pen(d->style.color, std::max(1.0, d->style.lineWidth * 0.8));
+        QPen pen(ink(d->style.color), std::max(1.0, d->style.lineWidth * 0.8));
         pen.setCapStyle(Qt::FlatCap);
         bars->setPen(pen);
         bars->setWhiskerWidth(st.errorbarCapSize * 2);
@@ -627,12 +667,13 @@ void PlotRenderer::applyDatasetAppearance(ObjectId id)
     QCPAbstractPlottable* p = m_plottables.value(id);
     if (!d || !p) return;
     const DatasetStyle& s = d->style;
-    QPen pen(s.color, s.lineWidth, toPenStyle(s.lineStyle), Qt::RoundCap, Qt::RoundJoin);
+    const QColor color = ink(s.color);  // e.g. black lines stay visible on dark themes
+    QPen pen(color, s.lineWidth, toPenStyle(s.lineStyle), Qt::RoundCap, Qt::RoundJoin);
     p->setPen(pen);
     p->setName(d->name);
     p->setVisible(s.visible);
     // Filled symbols (open symbols like x/+ ignore the brush).
-    const QCPScatterStyle scatter(toScatterShape(s.scatter), s.color, s.color, s.scatterSize);
+    const QCPScatterStyle scatter(toScatterShape(s.scatter), color, color, s.scatterSize);
     p->setBrush(s.fillColor.isValid() ? QBrush(s.fillColor) : QBrush(Qt::NoBrush));
     if (auto* g = qobject_cast<QCPGraph*>(p)) {
         QCPGraph::LineStyle ls = QCPGraph::lsLine;
@@ -742,7 +783,10 @@ void PlotRenderer::applyMatrixAppearance(ObjectId id)
     const Matrix* m = m_model->matrix(id);
     const MatrixVisual v = m_matrices.value(id);
     if (!m || !v.contour) return;
-    v.contour->setContourStyle(m->style);  // recomputes only if the levels changed
+    ContourStyle cs = m->style;
+    cs.positiveColor = ink(cs.positiveColor);  // dark contours stay visible on dark themes
+    cs.negativeColor = ink(cs.negativeColor);
+    v.contour->setContourStyle(cs);  // recomputes only if the levels changed
     v.contour->setName(m->name);
     v.contour->setVisible(m->style.visible);
     // The colour map only has to be rebuilt when it is switched on (the data
@@ -833,7 +877,7 @@ void PlotRenderer::applyMarker(ObjectId id)
     if (!m || !v.line) return;
     const bool hl = !m_exportMode && m_highlight == ObjectRef{ObjectKind::Marker, id};
 
-    QPen pen(m->color, m->lineWidth + (hl ? 1.0 : 0.0), toPenStyle(m->lineStyle));
+    QPen pen(ink(m->color), m->lineWidth + (hl ? 1.0 : 0.0), toPenStyle(m->lineStyle));
     if (m->lineStyle == LineStyle::None) pen.setStyle(Qt::SolidLine);
     v.line->setPen(pen);
 
@@ -869,13 +913,14 @@ void PlotRenderer::applyMarker(ObjectId id)
                               fmt(m->position);
         text = text.isEmpty() ? value : text + "\n" + value;
     }
-    const Style& st = m_model->style();
+    const Style st = displayStyle();
     v.label->setText(text, font(st.xtick.labelSize), st.mathText);
     v.label->setColor(st.labelColor);
     v.label->setVisible(!text.isEmpty() && m_panelVisible);
     v.line->setVisible(m_panelVisible);
-    QPen border(m->color, hl ? 1.5 : 1.0);
+    QPen border(ink(m->color), hl ? 1.5 : 1.0);
     v.label->setPen(border);
+    v.label->setBrush(labelBox(st));
 }
 
 // ---- annotations -------------------------------------------------------------------------
@@ -907,13 +952,13 @@ void PlotRenderer::applyAnnotation(ObjectId id)
     const Annotation* a = m_model->annotation(id);
     RichTextItem* t = m_annotations.value(id);
     if (!a || !t) return;
-    const Style& st = m_model->style();
+    const Style st = displayStyle();
     const bool hl = !m_exportMode && m_highlight == ObjectRef{ObjectKind::Annotation, id};
     t->position->setCoords(a->x, a->y);
     // Unset size/colour follow the style (annotation.size / annotation.color).
     t->setText(a->text.isEmpty() ? QStringLiteral(" ") : a->text,
                font(a->fontSize > 0 ? a->fontSize : st.annotationSize), st.mathText);
-    t->setColor(a->color.isValid() ? a->color : st.annotationColor);
+    t->setColor(a->color.isValid() ? ink(a->color) : st.annotationColor);
     t->setPen(hl ? QPen(kHighlight, 1, Qt::DashLine) : QPen(Qt::NoPen));
 }
 
@@ -941,7 +986,7 @@ void PlotRenderer::applyRegion()
 
 QFont PlotRenderer::font(double pointSize, bool bold) const
 {
-    const Style& st = m_model->style();
+    const Style st = displayStyle();
     QFont f = m_plot->font();
     QStringList families;
     for (const QString& part : st.fontFamily.split(',', Qt::SkipEmptyParts)) {
@@ -959,7 +1004,7 @@ QFont PlotRenderer::font(double pointSize, bool bold) const
 
 void PlotRenderer::applyStyle()
 {
-    const Style& st = m_model->style();
+    const Style st = displayStyle();
     QCustomPlot* p = m_plot;
     if (m_primary) {  // figure-level settings come from the first panel
         p->setFont(font(st.fontSize));
@@ -1033,11 +1078,15 @@ void PlotRenderer::applyStyle()
     pa.labelColor = st.peakLabelColor;
     pa.crossSize = st.peakSize;
     pa.lineWidth = st.peakLineWidth;
+    pa.halo = labelBox(st);
+    pa.halo.setAlpha(200);
     pa.fontSize = st.peakLabelSize;
     pa.fontFamily = font(st.peakLabelSize);
     pa.math = st.mathText;
     m_peaks->setAppearance(pa);
     m_region.label->setFont(font(st.xtick.labelSize));
+    m_region.label->setBrush(labelBox(st));
+    m_region.label->setColor(st.labelColor);
 
     for (const auto& m : m_model->markers()) applyMarker(m.id);
     for (const auto& a : m_model->annotations()) applyAnnotation(a.id);
@@ -1048,7 +1097,7 @@ void PlotRenderer::updateHeader()
 {
     if (!m_primary) return;  // one header per figure
     const AxesInfo& info = m_model->axesInfo();
-    const Style& st = m_model->style();
+    const Style st = displayStyle();
     m_header->setTexts(info.title, font(st.titleSize, st.titleBold), st.titleColor, st.labelTopLeft,
                        st.labelTopRight, font(st.labelSize), st.labelColor, st.mathText);
     QCPLayoutGrid* layout = m_plot->plotLayout();
@@ -1065,7 +1114,7 @@ void PlotRenderer::updateHeader()
 void PlotRenderer::applyAxesInfo()
 {
     const AxesInfo& info = m_model->axesInfo();
-    const Style& st = m_model->style();
+    const Style st = displayStyle();
     // Rich-text labels: QCustomPlot reserves the space (a blank label in the
     // label font plus extra padding for taller rich text), RichAxisLabels draws.
     const QFont lf = font(st.labelSize);

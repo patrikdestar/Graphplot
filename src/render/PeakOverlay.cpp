@@ -99,9 +99,9 @@ void PeakOverlay::draw(QCPPainter* painter)
                                  std::clamp(c.y(), r.top(), r.bottom()));
             painter->drawLine(c, target);
         }
-        // White halo keeps the label readable on top of contours.
+        // A halo (the background colour) keeps the label readable on contours.
         painter->setPen(Qt::NoPen);
-        painter->setBrush(QColor(255, 255, 255, 200));
+        painter->setBrush(m_app.halo);
         painter->drawRect(r.adjusted(-1, 0, 1, 0));
         painter->setBrush(Qt::NoBrush);
         block(p.label).draw(painter, r.topLeft(), hl ? m_app.highlight : m_app.labelColor);

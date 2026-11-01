@@ -170,6 +170,7 @@ private:
     void applyTimeAxis();
     int rowAt(const QPointF& px) const;           // visible row under px, or -1
     int firstVisibleRow() const;
+    void applyThemeColors();
     bool inNavigator(const QPointF& px) const;
     ObjectId pinAt(const QPointF& px, int row) const;
     PlotRenderer* rowRenderer(int row) const;

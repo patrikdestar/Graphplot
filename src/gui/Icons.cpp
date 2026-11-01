@@ -1,7 +1,10 @@
 // Copyright (c) 2026 Justinas Minkevicius. All rights reserved. See LICENSE.
 #include "Icons.h"
 
+#include <QAction>
+#include <QGuiApplication>
 #include <QPainter>
+#include <QPalette>
 #include <QPainterPath>
 #include <QPixmap>
 
@@ -9,7 +12,9 @@ namespace gp::icons {
 
 namespace {
 
-const QColor kInk(0x33, 0x33, 0x33);
+// Outline colour: the palette's text colour, slightly softened (current
+// palette at drawing time; light themes give the familiar dark grey).
+QColor kInk(0x33, 0x33, 0x33);
 const QColor kAccent(0x2a, 0x78, 0xd6);
 const QColor kRed(0xe3, 0x49, 0x48);
 
@@ -154,6 +159,8 @@ void draw(QPainter& p, Kind kind)
 
 QIcon make(Kind kind)
 {
+    const QColor text = QGuiApplication::palette().color(QPalette::WindowText);
+    kInk = text.lightnessF() > 0.5 ? text.darker(115) : QColor(0x33, 0x33, 0x33);
     QIcon icon;
     for (int scale : {1, 2}) {
         QPixmap pm(24 * scale, 24 * scale);
@@ -166,6 +173,20 @@ QIcon make(Kind kind)
         icon.addPixmap(pm);
     }
     return icon;
+}
+
+void set(QAction* action, Kind kind)
+{
+    action->setIcon(make(kind));
+    action->setProperty("gpIconKind", int(kind));
+}
+
+void refresh(QObject* root)
+{
+    for (QAction* a : root->findChildren<QAction*>()) {
+        const QVariant k = a->property("gpIconKind");
+        if (k.isValid()) a->setIcon(make(Kind(k.toInt())));
+    }
 }
 
 }  // namespace gp::icons
