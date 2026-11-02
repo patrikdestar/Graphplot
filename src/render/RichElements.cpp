@@ -179,9 +179,13 @@ void RichAxisLabels::draw(QCPPainter* painter)
             // so neighbouring names never overlap.
             const double room = 2.0 * std::min(ar.center().y() - outer.top(), outer.bottom() - ar.center().y());
             const double f = std::max(0.55, (room - 2) / s.width());
+            // Still too long at the smallest size: keep its beginning (vertical
+            // text reads upwards) and let the end run out at the top.
+            double cy = ar.center().y();
+            if (s.width() * f > room) cy = ar.center().y() + room / 2 - s.width() * f / 2;
             painter->save();
             painter->setClipRect(QRect(outer.left(), outer.top(), int(s.height()) + 4, outer.height()));
-            painter->translate(outer.left() + s.height() * f / 2 + 1, ar.center().y());
+            painter->translate(outer.left() + s.height() * f / 2 + 1, cy);
             painter->scale(f, f);
             m_y.drawVertical(painter, QPointF(0, 0), m_color);
             painter->restore();

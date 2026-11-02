@@ -1066,8 +1066,10 @@ class PltAxes:
         rows, cols, index = self._grid_pos
         if index // cols < rows - 1:
             self._ax.xlabel = ""
+            self._ax.x_tick_labels = False  # as matplotlib: inner tick numbers go too
         if index % cols > 0:
             self._ax.ylabel = ""
+            self._ax.y_tick_labels = False
 
     def set_xscale(self, scale):
         self._ax.x_log = scale == "log"

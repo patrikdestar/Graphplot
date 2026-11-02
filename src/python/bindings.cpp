@@ -1621,6 +1621,20 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
             });
         },
         py::arg("x"), py::arg("width") = 0, py::arg("height") = 0);
+    for (const bool isX : {true, false}) {
+        fig.def_property(
+            isX ? "x_tick_labels" : "y_tick_labels",
+            [isX](FigurePtr self) {
+                return inGui([&] { return (isX ? self->renderer()->xAxis() : self->renderer()->yAxis())->tickLabels(); });
+            },
+            [isX](FigurePtr self, bool on) {
+                inGui([&] {
+                    (isX ? self->renderer()->xAxis() : self->renderer()->yAxis())->setTickLabels(on);
+                    self->w()->plot()->replot();
+                });
+            },
+            "Show the tick numbers of this axis (label_outer hides inner ones; not saved in .gpfig).");
+    }
     fig.def("fit_following", [](FigurePtr self) { inGui([&] { self->renderer()->fitFollowing(); }); },
             "Fit the axes that still follow the data (not zoomed, no limits set; shared axes included).");
     fig.def("set_home_view", [](FigurePtr self) {

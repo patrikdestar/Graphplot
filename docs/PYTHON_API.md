@@ -144,6 +144,7 @@ How `pick_peaks` works:
 | `x_log`, `y_log` | logarithmic axes |
 | `x_time` | x values are Unix times (UTC): date / time tick labels (set automatically for datetime x data) |
 | `supxlabel`, `supylabel` | figure-wide axis labels below / left of all panels (first panel; panels keep their own labels) |
+| `x_tick_labels`, `y_tick_labels` | show the tick numbers (False hides them; `label_outer` uses this) |
 | `x_tick_rotation`, `y_tick_rotation` | tick label rotation in degrees (counter-clockwise, -90..90) |
 | `legend_with_twin` | the legend also lists the twinx panel's lines |
 | `window_title` | title of the window only (not drawn) |
@@ -353,6 +354,8 @@ Differences from matplotlib:
 - `legend(handles=[...])` with lines of a `twinx` panel makes one legend
   listing both panels' lines (host lines first); the order of `handles` is
   not otherwise applied.
+- A y label longer than its panel is tall is drawn smaller; if it still does
+  not fit, its beginning is shown and the end is cut at the panel's top.
 - `scatter(c=values)` colours points with the colour map but has no colour
   bar (`colorbar` on it raises a clear error); filled areas (bars,
   `fill_between`) are drawn below lines, as matplotlib's default order.
