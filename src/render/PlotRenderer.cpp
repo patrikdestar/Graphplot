@@ -2188,7 +2188,7 @@ bool PlotRenderer::fitTickCounts()
     // x: by label width (horizontal labels only; rotation is the user's way out).
     const int styleX = std::max(1, st.xtick.count);
     if (adjustable(m_x)) {
-        if (!m_x->visible() || std::abs(m_x->tickLabelRotation()) >= 1) {
+        if (!m_x->visible()) {
             if (m_autoTicksX != 0) {
                 m_autoTicksX = 0;
                 setCount(m_x, styleX, 0);
@@ -2203,17 +2203,32 @@ bool PlotRenderer::fitTickCounts()
                 if (widest == 0 || !m_x->tickLabels()) {
                     // Hidden labels (inner panels of a shared x): the same ticks as
                     // the partner that shows them, so grid lines line up.
-                    for (PlotRenderer* p : m_shareX)
-                        if (p->m_x->tickLabels() && p->m_autoTicksX != m_autoTicksX) {
-                            m_autoTicksX = p->m_autoTicksX;
-                            setCount(m_x, styleX, m_autoTicksX);
-                            m_rect->update(QCPLayoutElement::upPreparation);
-                            changed = true;
+                    // One partner, chosen the same way every pass: a labelled,
+                    // visible x axis (not a twin), preferably in this column.
+                    PlotRenderer* lead = nullptr;
+                    for (PlotRenderer* p : m_shareX) {
+                        if (p->m_twinHost || p == m_twin || !p->m_x->visible() || !p->m_x->tickLabels()) continue;
+                        const QRect pr = p->m_rect->rect();
+                        if (pr.left() == ar.left() && pr.width() == ar.width()) {
+                            lead = p;
                             break;
                         }
+                        if (!lead) lead = p;
+                    }
+                    if (lead && lead->m_autoTicksX != m_autoTicksX) {
+                        m_autoTicksX = lead->m_autoTicksX;
+                        setCount(m_x, styleX, m_autoTicksX);
+                        m_rect->update(QCPLayoutElement::upPreparation);
+                        changed = true;
+                    }
                     break;
                 }
-                const int slot = widest + fm.horizontalAdvance("00");  // label plus a gap
+                // Horizontal labels need their width; rotated ones (dates after
+                // autofmt_xdate) their line height divided by sin(angle).
+                const double angle = std::abs(m_x->tickLabelRotation()) * M_PI / 180.0;
+                const int slot = angle > 0.02
+                                     ? int(std::ceil(fm.height() / std::max(0.3, std::sin(angle)))) + 6
+                                     : widest + fm.horizontalAdvance("00");  // label plus a gap
                 const int fits = std::max(2, ar.width() / std::max(1, slot));
                 int want = m_autoTicksX;
                 if (labels.size() > fits)

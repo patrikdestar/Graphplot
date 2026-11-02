@@ -460,8 +460,17 @@ void Timeline::relayout()
     grid->setRowStretchFactors(stretch);
     grid->setRowSpacing(6);
 
-    // Only the lowest row shows time tick labels (the navigator has its own).
-    for (int row : m_order) rowRenderer(row)->xAxis()->setTickLabels(row == lastVisible);
+    // Only the lowest row shows time tick labels (the navigator has its own);
+    // the rows above need no room below their frames for them.
+    for (int row : m_order) {
+        QCPAxisRect* rect = rowRenderer(row)->axisRect();
+        const bool last = row == lastVisible;
+        rowRenderer(row)->xAxis()->setTickLabels(last);
+        QMargins m = rect->margins();
+        m.setBottom(3);
+        rect->setMargins(m);
+        rect->setAutoMargins(last ? QCP::msAll : QCP::msLeft | QCP::msRight | QCP::msTop);
+    }
 
     // Aligned frames.
     for (QCPMarginGroup* g : m_win->marginGroups()) delete g;

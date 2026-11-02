@@ -259,6 +259,8 @@ What a timeline is:
 - A navigator strip with the visible window sits at the bottom.
 - A cursor line through all rows shows the values at the cursor.
 - Time markers (pins) are drawn through all rows.
+- Exports without an explicit height grow with the number of rows (about
+  44 px per row), as the window does, so many-row timelines stay readable.
 - Times are seconds since `time_origin` (Unix epoch seconds) when the data
   has absolute timestamps.
 - Anything not listed below is forwarded to the underlying `Figure`

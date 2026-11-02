@@ -171,8 +171,19 @@ void RichAxisLabels::draw(QCPPainter* painter)
         else if (m_rightOuter)
             m_y.drawVertical(painter, QPointF(m_rightOuter->outerRect().right() - s.height() / 2 - 1, ar.center().y()),
                              m_color);
-        else
+        else if (s.width() <= outer.height()) {
             m_y.drawVertical(painter, QPointF(outer.left() + s.height() / 2 + 1, ar.center().y()), m_color);
+        } else {
+            // Longer than the panel is tall (many stacked timeline rows): smaller,
+            // and kept inside the panel so neighbouring names never overlap.
+            const double f = std::max(0.55, (outer.height() - 2) / s.width());
+            painter->save();
+            painter->setClipRect(QRect(outer.left(), outer.top(), int(s.height()) + 4, outer.height()));
+            painter->translate(outer.left() + s.height() * f / 2 + 1, ar.center().y());
+            painter->scale(f, f);
+            m_y.drawVertical(painter, QPointF(0, 0), m_color);
+            painter->restore();
+        }
     }
     if (!m_title.isEmpty()) {  // in the top margin (reserved by the top axis' label)
         const QSizeF s = m_title.size();

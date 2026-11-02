@@ -1219,9 +1219,18 @@ bool FigureWindow::exportTo(const QString& fileName, int width, int height, doub
 {
     // No explicit size: the nominal figure size if set, else the widget size
     // (which is only meaningful once the window has been laid out).
+    const bool explicitHeight = height > 0;
     if (width <= 0 && height <= 0 && m_figureSize.isValid()) {
         width = m_figureSize.width();
         height = m_figureSize.height();
+    }
+    // A timeline with many rows grows taller, as its window does, so every
+    // row stays readable (unless a height was asked for).
+    if (m_timeline && !explicitHeight) {
+        int rows = 0;
+        for (int row : m_timeline->rows()) rows += m_timeline->rowVisible(row);
+        const int needed = 160 + 44 * rows;
+        if (height > 0 && height < needed) height = needed;
     }
     if ((width <= 0 || height <= 0) && (m_plot->width() < 100 || m_plot->height() < 100)) {
         width = width > 0 ? width : 800;
