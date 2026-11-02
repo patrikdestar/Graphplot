@@ -460,6 +460,9 @@ void Timeline::relayout()
     grid->setRowStretchFactors(stretch);
     grid->setRowSpacing(6);
 
+    int visibleRows = 0;
+    for (int row : m_order) visibleRows += m_rows[row].visible;
+    for (int row : m_order) rowRenderer(row)->setCompactRows(visibleRows);
     // Only the lowest row shows time tick labels (the navigator has its own);
     // the rows above need no room below their frames for them.
     for (int row : m_order) {

@@ -153,6 +153,8 @@ public:
     // 'best' position for this geometry.
     void finishLegend();
     bool m_compact = false;
+    int m_compactRows = 1;  // rows stacked with this one (set by the timeline)
+    void setCompactRows(int n) { m_compactRows = n; }
     bool m_legendWanted = false;
     const QList<PlotRenderer*>& sharedX() const { return m_shareX; }
     const QList<PlotRenderer*>& sharedY() const { return m_shareY; }

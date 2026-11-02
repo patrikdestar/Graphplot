@@ -2164,9 +2164,17 @@ bool PlotRenderer::fitTickCounts()
     const QRect ar = m_rect->rect();
     bool changed = false;
     if (m_compact) {  // compact rows (timeline): too short for two labels -> none
-        // A few pixels of hysteresis: a row right at the limit keeps its state.
-        const int need = 2 * QFontMetrics(m_y->tickLabelFont()).height();
-        const bool room = m_y->tickLabels() ? ar.height() >= need - 3 : ar.height() >= need + 3;
+        // Decided from the row's share of the layout alone (its cell minus the
+        // bottom margin, which the labels do not change), so the result does
+        // not depend on earlier layouts: room for two labels plus the top half
+        // of the upper one.
+        // One decision for all rows, from the figure height and the number of
+        // rows only (what fits on average after the title, time axis and
+        // navigator), so it never depends on earlier layouts.
+        const int fh = QFontMetrics(m_y->tickLabelFont()).height();
+        const int rows = std::max(1, m_compactRows);
+        const int share = (m_plot->viewport().height() - 220) / rows - 12;
+        const bool room = share >= 2 * fh + fh / 2 + 2;
         if (m_y->tickLabels() != room) {
             m_y->setTickLabels(room);
             m_rect->update(QCPLayoutElement::upPreparation);

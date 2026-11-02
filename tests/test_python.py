@@ -1501,6 +1501,36 @@ class PlotterTests(unittest.TestCase):
         self.assertTrue(all(l.get_text() for l in axs[0].get_xticklabels()))
         plt.close("all")
 
+    def test_round24_fixes(self):
+        import hashlib
+        import plotter.pyplot as plt
+        # A timeline export at a given size does not depend on earlier exports.
+        t = np.linspace(0, 100, 200)
+
+        def make():
+            tl = plotter.timeline("x")
+            for i in range(12):
+                tl.add_row(f"r{i}").plot(t, np.sin(t / (i + 1)))
+            return tl
+
+        with tempfile.TemporaryDirectory() as d:
+            a, b = os.path.join(d, "a.png"), os.path.join(d, "b.png")
+            make().savefig(a, width=1000, height=736)
+            tl = make()
+            tl.savefig(os.path.join(d, "big.png"), width=1000, height=1200)
+            tl.savefig(b, width=1000, height=736)
+            digest = lambda p: hashlib.md5(open(p, "rb").read()).hexdigest()
+            self.assertEqual(digest(a), digest(b))
+        # label_outer hides inner tick numbers.
+        fig, axs = plt.subplots(2, 2)
+        for a in axs.flat:
+            a.plot([0, 1], [0, 1])
+            a.label_outer()
+        self.assertFalse(axs[0, 0]._ax.x_tick_labels)
+        self.assertTrue(axs[1, 0]._ax.x_tick_labels)
+        self.assertFalse(axs[1, 1]._ax.y_tick_labels)
+        plt.close("all")
+
     def test_round6_correctness(self):
         import plotter.pyplot as plt
         f = self.fig
