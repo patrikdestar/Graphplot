@@ -1575,15 +1575,17 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
     fig.def("reset_view", [](FigurePtr self) { inGui([&] { self->renderer()->resetView(); }); });
     fig.def(
         "_drawn_ticks",
-        [](FigurePtr self, bool isX) {
+        [](FigurePtr self, bool isX, int width, int height) {
             // The ticks an export draws: lay the figure out at its export size
             // (layout passes and their fitting handlers only, no painting),
             // read the ticks, then lay it out at the screen size again.
             return inGui([&] {
                 FigureWindow* w = self->w();
                 QCustomPlot* plot = w->plot();
-                QSize size = w->figureSize();
+                QSize size = width > 0 && height > 0 ? QSize(width, height) : w->figureSize();
                 if (!size.isValid()) size = plot->width() >= 100 && plot->height() >= 100 ? plot->size() : QSize(800, 600);
+                // As an export does: export mode (e.g. a timeline's pending Y auto-fit).
+                w->setExportMode(true);
                 const QRect screen = plot->viewport();
                 auto layoutAt = [plot](const QRect& r) {
                     plot->setViewport(r);
@@ -1606,6 +1608,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
                     if (t2 != ticks) texts = QVector<QString>(ticks.size());
                 }
                 layoutAt(screen);
+                w->setExportMode(false);
                 std::vector<double> p2;
                 std::vector<std::string> l2;
                 // Only the ticks inside the view (QCustomPlot keeps one outside each end).
@@ -1617,7 +1620,7 @@ Peaks closer than min_distance to existing peaks are not added again.)doc");
                 return std::make_pair(p2, l2);
             });
         },
-        py::arg("x"));
+        py::arg("x"), py::arg("width") = 0, py::arg("height") = 0);
     fig.def("fit_following", [](FigurePtr self) { inGui([&] { self->renderer()->fitFollowing(); }); },
             "Fit the axes that still follow the data (not zoomed, no limits set; shared axes included).");
     fig.def("set_home_view", [](FigurePtr self) {

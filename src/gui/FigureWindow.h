@@ -115,6 +115,8 @@ public:
     // and the window is sized so the plot area roughly matches it.
     void setFigureSize(const QSize& size);
     QSize figureSize() const { return m_figureSize; }
+    // Figure colours instead of the display theme (exports; also tick queries).
+    void setExportMode(bool on);
     void showPeakTable();
     bool exportTo(const QString& fileName, int width = 0, int height = 0, double scale = 2.0,
                   QString* error = nullptr);
@@ -159,7 +161,6 @@ private:
     void commitView(PlotRenderer* r);
     void stepView(int direction);
     void copyToClipboard();
-    void setExportMode(bool on);
     // Opens files / folders by type (used by drag & drop); shows any errors.
     void openPaths(const QStringList& paths);
     void onExport();

@@ -2200,7 +2200,19 @@ bool PlotRenderer::fitTickCounts()
                 int widest = 0;
                 const QVector<QString> labels = m_x->tickVectorLabels();
                 for (const QString& l : labels) widest = std::max(widest, fm.horizontalAdvance(l));
-                if (widest == 0) break;
+                if (widest == 0 || !m_x->tickLabels()) {
+                    // Hidden labels (inner panels of a shared x): the same ticks as
+                    // the partner that shows them, so grid lines line up.
+                    for (PlotRenderer* p : m_shareX)
+                        if (p->m_x->tickLabels() && p->m_autoTicksX != m_autoTicksX) {
+                            m_autoTicksX = p->m_autoTicksX;
+                            setCount(m_x, styleX, m_autoTicksX);
+                            m_rect->update(QCPLayoutElement::upPreparation);
+                            changed = true;
+                            break;
+                        }
+                    break;
+                }
                 const int slot = widest + fm.horizontalAdvance("00");  // label plus a gap
                 const int fits = std::max(2, ar.width() / std::max(1, slot));
                 int want = m_autoTicksX;

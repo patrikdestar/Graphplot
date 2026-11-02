@@ -1043,11 +1043,11 @@ class PltAxes:
 
     def get_xticks(self, minor=False):
         t = self._ax.get_xticks()
-        return _np.asarray(self._ax._drawn_ticks(True)[0]) if t is None else t[0]
+        return _np.asarray(self._ax._drawn_ticks(True, *self.figure._size)[0]) if t is None else t[0]
 
     def get_yticks(self, minor=False):
         t = self._ax.get_yticks()
-        return _np.asarray(self._ax._drawn_ticks(False)[0]) if t is None else t[0]
+        return _np.asarray(self._ax._drawn_ticks(False, *self.figure._size)[0]) if t is None else t[0]
 
     def get_xscale(self):
         return "log" if self._ax.x_log else "linear"
@@ -1184,7 +1184,7 @@ class PltAxes:
         if t is not None and len(t[1]):
             return list(t[1])
         if t is None:  # automatic ticks: the labels as drawn
-            return list(self._ax._drawn_ticks(axis == "x")[1])
+            return list(self._ax._drawn_ticks(axis == "x", *self.figure._size)[1])
         return [str(v) for v in t[0]]
 
     def clabel(self, *_, **__):
