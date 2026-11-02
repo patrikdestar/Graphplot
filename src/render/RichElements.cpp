@@ -171,12 +171,14 @@ void RichAxisLabels::draw(QCPPainter* painter)
         else if (m_rightOuter)
             m_y.drawVertical(painter, QPointF(m_rightOuter->outerRect().right() - s.height() / 2 - 1, ar.center().y()),
                              m_color);
-        else if (s.width() <= outer.height()) {
+        else if (s.width() <= 2.0 * std::min(ar.center().y() - outer.top(), outer.bottom() - ar.center().y())) {
             m_y.drawVertical(painter, QPointF(outer.left() + s.height() / 2 + 1, ar.center().y()), m_color);
         } else {
-            // Longer than the panel is tall (many stacked timeline rows): smaller,
-            // and kept inside the panel so neighbouring names never overlap.
-            const double f = std::max(0.55, (outer.height() - 2) / s.width());
+            // Longer than the room around the frame's centre (many stacked
+            // timeline rows, short panels): smaller, and kept inside the panel
+            // so neighbouring names never overlap.
+            const double room = 2.0 * std::min(ar.center().y() - outer.top(), outer.bottom() - ar.center().y());
+            const double f = std::max(0.55, (room - 2) / s.width());
             painter->save();
             painter->setClipRect(QRect(outer.left(), outer.top(), int(s.height()) + 4, outer.height()));
             painter->translate(outer.left() + s.height() * f / 2 + 1, ar.center().y());

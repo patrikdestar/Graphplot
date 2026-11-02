@@ -2164,7 +2164,9 @@ bool PlotRenderer::fitTickCounts()
     const QRect ar = m_rect->rect();
     bool changed = false;
     if (m_compact) {  // compact rows (timeline): too short for two labels -> none
-        const bool room = ar.height() >= 2 * QFontMetrics(m_y->tickLabelFont()).height();
+        // A few pixels of hysteresis: a row right at the limit keeps its state.
+        const int need = 2 * QFontMetrics(m_y->tickLabelFont()).height();
+        const bool room = m_y->tickLabels() ? ar.height() >= need - 3 : ar.height() >= need + 3;
         if (m_y->tickLabels() != room) {
             m_y->setTickLabels(room);
             m_rect->update(QCPLayoutElement::upPreparation);

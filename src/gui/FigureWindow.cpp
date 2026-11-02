@@ -1229,7 +1229,7 @@ bool FigureWindow::exportTo(const QString& fileName, int width, int height, doub
     if (m_timeline && !explicitHeight) {
         int rows = 0;
         for (int row : m_timeline->rows()) rows += m_timeline->rowVisible(row);
-        const int needed = 160 + 44 * rows;
+        const int needed = 160 + 56 * rows;  // frames well above the 2-label limit
         if (height > 0 && height < needed) height = needed;
     }
     if ((width <= 0 || height <= 0) && (m_plot->width() < 100 || m_plot->height() < 100)) {
