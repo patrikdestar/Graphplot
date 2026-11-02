@@ -140,7 +140,15 @@ public:
     bool legendFits() const;
     // Compact panels (timeline rows): a legend taller than the panel and
     // tick labels that cannot fit are hidden instead of spilling over.
-    void setCompact(bool on) { m_compact = on; }
+    void setCompact(bool on)
+    {
+        m_compact = on;
+        // Stacked rows: little space above / below each frame (the gaps
+        // between rows stay small however many rows there are).
+        if (on) m_baseMargins = QMargins(15, 3, 15, 3);
+        applyEndMargins(0, 0, 0, 0);
+    }
+    QMargins m_baseMargins{15, 15, 15, 15};
     // After the figure's layout has settled: final legend visibility and
     // 'best' position for this geometry.
     void finishLegend();

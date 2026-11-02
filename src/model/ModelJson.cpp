@@ -93,6 +93,7 @@ QJsonObject datasetToJson(const Dataset& d)
                   {"symbolSize", s.scatterSize},
                   {"markerEdge", colorText(s.markerEdge)},
                   {"markerFace", colorText(s.markerFace)},
+                  {"exactColor", s.exactColor},
                   {"step", stepModeName(s.step)},
                   {"fillColor", colorText(s.fillColor)},
                   {"fillTo", idText(s.fillTo)},
@@ -115,6 +116,7 @@ bool datasetFromJson(const QJsonObject& o, Dataset* d)
     s.scatterSize = o["symbolSize"].toDouble();
     s.markerEdge = colorFrom(o["markerEdge"]);
     s.markerFace = colorFrom(o["markerFace"]);
+    s.exactColor = o["exactColor"].toBool();
     s.step = parseStepMode(o["step"].toString());
     s.fillColor = colorFrom(o["fillColor"]);
     s.fillTo = idFrom(o["fillTo"]);

@@ -44,6 +44,7 @@ struct DatasetStyle {
     double scatterSize = 0.0;  // <= 0: style default (lines.markersize)
     QColor markerEdge;         // symbol outline: invalid = the line colour, transparent = none
     QColor markerFace;         // symbol fill: invalid = the line colour, transparent = hollow
+    bool exactColor = false;   // drawn as given in dark themes (colour-mapped points)
     StepMode step = StepMode::None;
     QColor fillColor;          // invalid = no fill; otherwise fill to y = 0 or to fillTo
     ObjectId fillTo = kInvalidId;  // fill the band between this dataset and another one

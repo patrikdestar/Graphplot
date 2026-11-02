@@ -1139,7 +1139,9 @@ void PlotRenderer::applyDatasetAppearance(ObjectId id)
     QCPAbstractPlottable* p = m_plottables.value(id);
     if (!d || !p) return;
     const DatasetStyle& s = d->style;
-    const QColor color = ink(s.color);  // e.g. black lines stay visible on dark themes
+    // e.g. black lines stay visible on dark themes; colour-mapped points keep
+    // their exact colours (they must match the colour scale).
+    const QColor color = s.exactColor ? s.color : ink(s.color);
     QPen pen(color, s.lineWidth, toPenStyle(s.lineStyle), Qt::RoundCap, Qt::RoundJoin);
     p->setPen(pen);
     p->setName(d->name);
@@ -2238,7 +2240,7 @@ bool PlotRenderer::fitEndLabels()
     // the room they need as minimum side margins and lay out again if needed.
     if (m_twinHost) return false;
     const QRect ar = m_rect->rect();
-    if (ar.width() < 20 || ar.height() < 20) return false;
+    if (ar.width() < 20 || ar.height() < 20) return applyEndMargins(0, 0, 0, 0);  // the base margins
     int needT = 0, needB = 0;
     if (m_y->visible() && m_y->tickLabels()) {  // y labels are centred on their ticks
         const QFontMetrics fy(m_y->tickLabelFont());
@@ -2270,9 +2272,10 @@ bool PlotRenderer::fitEndLabels()
 
 bool PlotRenderer::applyEndMargins(int l, int t, int r, int b)
 {
-    // QCustomPlot's default minimum margins (15 px) stay the base.
-    const int base = 15;
-    const QMargins want(std::max(base, l), std::max(base, t), std::max(base, r), std::max(base, b));
+    // The base minimum margins (QCustomPlot's 15 px, or tighter for timeline
+    // rows) grow only where end labels need more room.
+    const QMargins& m = m_baseMargins;
+    const QMargins want(std::max(m.left(), l), std::max(m.top(), t), std::max(m.right(), r), std::max(m.bottom(), b));
     if (want == m_rect->minimumMargins()) return false;
     m_rect->setMinimumMargins(want);
     QCPLayoutGrid* layout = m_plot->plotLayout();

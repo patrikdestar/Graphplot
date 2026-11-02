@@ -2259,6 +2259,10 @@ Remove a callback with off(event, callback).)doc");
                 h.setStyle([&](QString&, DatasetStyle& s) { s.markerFace = c; });
             },
             "Fill colour of the symbols: None = the line colour, 'none' = hollow symbols.")
+        .def_property("exact_color",
+                      [](Line& h) { return inGui([&] { return h.get().style.exactColor; }); },
+                      [](Line& h, bool v) { h.setStyle([&](QString&, DatasetStyle& s) { s.exactColor = v; }); },
+                      "Draw the colour exactly as given in dark themes (e.g. colour-mapped points).")
         .def_property("visible",
                       [](Line& h) { return inGui([&] { return h.get().style.visible; }); },
                       [](Line& h, bool v) { h.setStyle([&](QString&, DatasetStyle& s) { s.visible = v; }); })

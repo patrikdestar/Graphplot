@@ -348,6 +348,7 @@ class PltAxes:
                 keys = _np.array([index[col] for col in names])
             else:
                 single = _mpl_color(c)
+        mapped = keys is not None  # per-point colours (a colour map or a list)
         # Per-point sizes: grouped into at most 12 sizes.
         size_keys, sizes = None, None
         if s is not None and _np.ndim(s) > 0 and _np.size(s) == x.size and x.size > 1:
@@ -361,6 +362,8 @@ class PltAxes:
         def draw(mask, color, msize, lab):
             line = self._ax.plot(x[mask], y[mask], style="none", marker=sym, markersize=msize,
                                  color=color, label=lab, **opts)
+            if mapped:
+                line.exact_color = True  # colours from a colour map / per point: no theme recolouring
             if edge is not None:
                 line.markeredgecolor = edge
             return line
