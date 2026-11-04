@@ -28,7 +28,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: ["22.04", "24.04"]
+        include:
+          - version: "22.04"
+            svg_dev: libqt6svg6-dev   # renamed qt6-svg-dev in later releases
+          - version: "24.04"
+            svg_dev: qt6-svg-dev
     steps:
       - uses: actions/checkout@v4
 
@@ -37,7 +41,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build dpkg-dev file \
-            qt6-base-dev qt6-svg-dev qt6-qpa-plugins libgl1-mesa-dev \
+            qt6-base-dev ${{ matrix.svg_dev }} qt6-qpa-plugins libgl1-mesa-dev \
             python3-dev python3-numpy pybind11-dev
 
       - name: Configure
@@ -113,14 +117,18 @@ jobs:
           arch: x64
 
       - name: Python build dependencies
-        run: python -m pip install --upgrade pip pybind11 numpy
+        run: |
+          & "${{ steps.py.outputs.python-path }}" -m pip install --upgrade pybind11 numpy
+          & "${{ steps.py.outputs.python-path }}" -m pybind11 --cmakedir
 
       - name: Configure
-        run: >
-          cmake -S . -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
-          "-DPython_EXECUTABLE=${{ steps.py.outputs.python-path }}"
-          -DGRAPHPLOT_BUILD_TESTS=${{ env.APP_JOB == 'true' && 'ON' || 'OFF' }}
+        run: |
+          $py = "${{ steps.py.outputs.python-path }}"
+          $pyb = (& $py -m pybind11 --cmakedir).Trim()
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release `
+            "-DPython_EXECUTABLE=$py" "-Dpybind11_DIR=$pyb" `
+            "-DGRAPHPLOT_BUILD_TESTS=${{ env.APP_JOB == 'true' && 'ON' || 'OFF' }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build
         run: cmake --build build
