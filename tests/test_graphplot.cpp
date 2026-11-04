@@ -1480,8 +1480,10 @@ private slots:
             const int row = tl->addRow("r");
             tl->addSignal(row, "s", {0, 1, 2}, {0, 1, 0});
             tl->addPin(1, "pin");
-            tw.resize(600, 500);
+            tw.resize(900, 700);
             tw.show();
+            QCoreApplication::processEvents();  // let the layout settle (Windows applies it later)
+            tl->navigatorRenderer()->plot()->replot();
             QVERIFY(tw.exportTo(dir.filePath("tl.png"), 300, 300, 1.0));
             QImage ti(dir.filePath("tl.png"));
             const QRect nav = tl->navigatorRenderer()->axisRect()->rect();
@@ -1680,14 +1682,14 @@ private slots:
         QString err;
         QVERIFY(writeDataCsv(m, dir.filePath("wide.csv"), std::nullopt, &err));
         QFile wide(dir.filePath("wide.csv"));
-        QVERIFY(wide.open(QIODevice::ReadOnly));
+        QVERIFY(wide.open(QIODevice::ReadOnly | QIODevice::Text));  // CRLF on Windows
         QCOMPARE(QString(wide.readAll()), QString("x,a,b\n0,0,0\n1,1,2\n2,2,4\n3,3,6\n"));
         Dataset c = ramp("c", 2);
         c.x = {0.5, 1.5};
         m.insertDataset(c);  // different x: long format
         QVERIFY(writeDataCsv(m, dir.filePath("long.csv"), Region{true, 1, 2}, &err));
         QFile lng(dir.filePath("long.csv"));
-        QVERIFY(lng.open(QIODevice::ReadOnly));
+        QVERIFY(lng.open(QIODevice::ReadOnly | QIODevice::Text));
         const QStringList lines = QString(lng.readAll()).trimmed().split('\n');
         QCOMPARE(lines.front(), QString("dataset,x,y"));
         QCOMPARE(lines.size(), 1 + 2 + 2 + 1);  // a: x=1,2; b: x=1,2; c: x=1.5
