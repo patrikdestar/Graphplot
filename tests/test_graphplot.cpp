@@ -94,13 +94,22 @@ private:
     {
         return w->renderer()->dataToPixel({x, y}).toPoint();
     }
+    // A mouse move with buttons held. QTest::mouseMove does not carry the
+    // pressed buttons with Qt < 6.3 (Ubuntu 22.04 ships 6.2), so send the event.
+    static void moveHeld(QWidget* widget, QPoint p, Qt::MouseButtons buttons,
+                         Qt::KeyboardModifiers mods = {})
+    {
+        QMouseEvent ev(QEvent::MouseMove, QPointF(p), QPointF(widget->mapToGlobal(p)), Qt::NoButton,
+                       buttons, mods);
+        QApplication::sendEvent(widget, &ev);
+    }
     void drag(QWidget* widget, QPoint from, QPoint to, Qt::KeyboardModifiers mods = {},
               Qt::MouseButton button = Qt::LeftButton)
     {
         QTest::mousePress(widget, button, mods, from);
         const int steps = 8;
         for (int i = 1; i <= steps; ++i)
-            QTest::mouseMove(widget, from + (to - from) * i / steps);
+            moveHeld(widget, from + (to - from) * i / steps, button, mods);
         QTest::mouseRelease(widget, button, mods, to);
     }
 
@@ -1239,7 +1248,7 @@ private slots:
         // Start dragging the marker, then press the right button: drag cancelled.
         const QPoint p0 = px(w.get(), 50, 50), p1 = px(w.get(), 70, 50);
         QTest::mousePress(w->plot(), Qt::LeftButton, {}, p0);
-        for (int i = 1; i <= 5; ++i) QTest::mouseMove(w->plot(), p0 + (p1 - p0) * i / 5);
+        for (int i = 1; i <= 5; ++i) moveHeld(w->plot(), p0 + (p1 - p0) * i / 5, Qt::LeftButton);
         QTest::mousePress(w->plot(), Qt::RightButton, {}, p1);
         QCOMPARE(w->model()->marker(id)->position, 50.0);  // back at the start
         QCOMPARE(w->undoStack()->count(), undoCount);      // nothing recorded

@@ -634,13 +634,17 @@ class PlotterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             self.fig.savefig(pathlib.Path(d) / "p.png")  # os.PathLike accepted
             self.assertTrue((pathlib.Path(d) / "p.png").exists())
-            home = os.environ.get("HOME")
-            os.environ["HOME"] = d
+            # "~" is the home folder: HOME, or USERPROFILE on Windows.
+            saved = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE")}
+            os.environ.update(HOME=d, USERPROFILE=d)
             try:
-                self.fig.savefig("~/q.svg")  # "~" is the home folder
+                self.fig.savefig("~/q.svg")
             finally:
-                if home is not None:
-                    os.environ["HOME"] = home
+                for k, v in saved.items():
+                    if v is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = v
             self.assertTrue((pathlib.Path(d) / "q.svg").exists())
 
     def test_audit_round3(self):

@@ -95,14 +95,12 @@ jobs:
     defaults:
       run:
         shell: pwsh
+    # Every step calls this Python by its full path (PY, set below).
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        id: py
-        with:
-          python-version: ${{ matrix.python }}
-
+      # Qt first: install-qt-action sets up a Python of its own (for
+      # aqtinstall); the Python set up afterwards is the one on PATH.
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
@@ -112,14 +110,20 @@ jobs:
           arch: win64_msvc2022_64
           cache: true
 
+      - uses: actions/setup-python@v5
+        id: py
+        with:
+          python-version: ${{ matrix.python }}
+
       - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
 
       - name: Python build dependencies
         run: |
+          "PY=${{ steps.py.outputs.python-path }}" | Out-File -Append $env:GITHUB_ENV
+          & "${{ steps.py.outputs.python-path }}" --version
           & "${{ steps.py.outputs.python-path }}" -m pip install --upgrade pybind11 numpy
-          & "${{ steps.py.outputs.python-path }}" -m pybind11 --cmakedir
 
       - name: Configure
         run: |
@@ -135,7 +139,14 @@ jobs:
 
       - name: Test
         if: env.APP_JOB == 'true'
-        run: ctest --test-dir build --output-on-failure
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          & build\tests\test_graphplot.exe -o "$env:RUNNER_TEMP\cpp.txt,txt"
+          $cpp = $LASTEXITCODE
+          Get-Content "$env:RUNNER_TEMP\cpp.txt" -ErrorAction SilentlyContinue
+          "test_graphplot exit code: $cpp"
+          ctest --test-dir build --output-on-failure -R test_python
+          if ($LASTEXITCODE -ne 0 -or $cpp -ne 0) { exit 1 }
 
       - name: Collect Qt and the C++ runtime (windeployqt)
         run: |
@@ -169,9 +180,9 @@ jobs:
 
       - name: Python wheel
         run: |
-          python tools/make_wheel.py --package build/python/plotter --bundle deploy --out dist
+          & $env:PY tools/make_wheel.py --package build/python/plotter --bundle deploy --out dist
           # Install into a clean virtual environment with Qt removed from PATH.
-          python -m venv "$env:RUNNER_TEMP\venv"
+          & $env:PY -m venv "$env:RUNNER_TEMP\venv"
           $whl = Get-ChildItem dist\*.whl | Select-Object -First 1
           & "$env:RUNNER_TEMP\venv\Scripts\python.exe" -m pip install $whl.FullName
           $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch '\\Qt\\' }) -join ';'
