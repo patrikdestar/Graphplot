@@ -87,11 +87,19 @@ namespace {
 
 // ---- conversions ------------------------------------------------------------------
 
-// A file path from Python: "~" / "~/..." means the home folder (as in the shell).
+// A file path from Python: "~" / "~/..." means the home folder, found the way
+// os.path.expanduser finds it (HOME; USERPROFILE on Windows, where "~\\" works too).
 QString toPath(const std::string& p)
 {
     QString s = QString::fromStdString(p);
-    if (s == "~" || s.startsWith("~/")) s = QDir::homePath() + s.mid(1);
+#ifdef _WIN32
+    const bool tilde = s == "~" || s.startsWith("~/") || s.startsWith("~\\");
+    const QString home = qEnvironmentVariable("USERPROFILE", QDir::homePath());
+#else
+    const bool tilde = s == "~" || s.startsWith("~/");
+    const QString home = qEnvironmentVariable("HOME", QDir::homePath());
+#endif
+    if (tilde) s = home + s.mid(1);
     return s;
 }
 
