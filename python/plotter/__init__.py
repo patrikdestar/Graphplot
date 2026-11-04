@@ -41,6 +41,31 @@ __license__ = "Proprietary - no use without the author's written permission (see
 
 import sys as _sys
 
+
+def _prepare_windows_dlls() -> None:
+    """Let Windows find Qt's DLLs and plugins before _plotter is loaded.
+
+    Since Python 3.8, extension modules do not see DLLs on PATH. The release
+    wheel bundles Qt next to this file (with platforms/, styles/, ... plugin
+    folders); a self-built module uses the Qt found on PATH instead.
+    """
+    import os
+    here = os.path.dirname(os.path.abspath(__file__))
+    if os.path.isfile(os.path.join(here, "Qt6Core.dll")):
+        os.add_dll_directory(here)
+        if os.path.isdir(os.path.join(here, "platforms")):
+            old = os.environ.get("QT_PLUGIN_PATH")
+            os.environ["QT_PLUGIN_PATH"] = here + (os.pathsep + old if old else "")
+        return
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        if d and os.path.isfile(os.path.join(d, "Qt6Core.dll")):
+            os.add_dll_directory(d)
+            break
+
+
+if _sys.platform == "win32":
+    _prepare_windows_dlls()
+
 from ._plotter import Annotation, Contour, Figure, Line, Marker, Peak
 from ._plotter import process_events as _process_events
 from ._plotter import _run_until_closed

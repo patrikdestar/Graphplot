@@ -1,0 +1,206 @@
+# Release builds: Ubuntu 22.04 / 24.04 .deb packages and a Windows x64
+# portable zip plus Python wheels.
+#
+# * Push a tag "v0.1.0"      -> builds everything and creates a DRAFT GitHub
+#                               release with all files (publish it by hand).
+# * Actions tab -> "Release builds" -> Run workflow
+#                            -> builds everything; files are workflow artifacts.
+# * Pushes that change the packaging also build (artifacts only).
+name: Release builds
+
+on:
+  push:
+    tags: ["v*"]
+    branches: ["claude/**"]
+    paths:
+      - ".github/workflows/release.yml"
+      - "packaging/**"
+      - "tools/make_wheel.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu:
+    name: Ubuntu ${{ matrix.version }} (.deb)
+    runs-on: ubuntu-${{ matrix.version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ["22.04", "24.04"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build dpkg-dev file \
+            qt6-base-dev qt6-svg-dev qt6-qpa-plugins libgl1-mesa-dev \
+            python3-dev python3-numpy pybind11-dev
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_INSTALL_PREFIX=/usr
+          -DPython_EXECUTABLE=/usr/bin/python3
+          -DGRAPHPLOT_PYTHON_INSTALL_DIR=/usr/lib/python3/dist-packages
+          -DGRAPHPLOT_DEB_DISTRO=ubuntu${{ matrix.version }}
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Package
+        run: |
+          cd build
+          cpack -G DEB
+          dpkg-deb --info graphplot_*.deb
+          dpkg-deb --contents graphplot_*.deb
+
+      - name: Install the package and smoke-test it
+        run: |
+          sudo apt-get install -y ./build/graphplot_*.deb
+          cd "$RUNNER_TEMP"
+          QT_QPA_PLATFORM=offscreen graphplot --version
+          QT_QPA_PLATFORM=offscreen graphplot --demo2d --export demo.png
+          QT_QPA_PLATFORM=offscreen /usr/bin/python3 -c "import numpy as np, plotter; f = plotter.figure(); f.plot(np.arange(10), np.arange(10) ** 2); f.savefig('py.png'); print(plotter.__file__)"
+          test -s demo.png && test -s py.png
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: graphplot-ubuntu${{ matrix.version }}
+          path: build/graphplot_*.deb
+          if-no-files-found: error
+
+  windows:
+    name: Windows x64 (Python ${{ matrix.python }})
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    env:
+      QT_VERSION: "6.8.3"
+      # The portable application zip is made (and the tests run) once.
+      APP_JOB: ${{ matrix.python == '3.12' }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        id: py
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Python build dependencies
+        run: python -m pip install --upgrade pip pybind11 numpy
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          "-DPython_EXECUTABLE=${{ steps.py.outputs.python-path }}"
+          -DGRAPHPLOT_BUILD_TESTS=${{ env.APP_JOB == 'true' && 'ON' || 'OFF' }}
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        if: env.APP_JOB == 'true'
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Collect Qt and the C++ runtime (windeployqt)
+        run: |
+          New-Item -ItemType Directory deploy | Out-Null
+          Copy-Item build\graphplot.exe deploy\
+          windeployqt --release --no-translations --no-compiler-runtime --no-system-d3d-compiler --no-opengl-sw deploy\graphplot.exe
+          # Headless rendering (scripts, servers, CI): the offscreen platform plugin.
+          Copy-Item "$env:QT_ROOT_DIR\plugins\platforms\qoffscreen.dll" deploy\platforms\
+          # Microsoft C++ runtime DLLs, so nothing else needs installing.
+          $crt = Get-ChildItem "$env:VCToolsRedistDir\x64" -Directory -Filter "Microsoft.VC*.CRT" | Select-Object -First 1
+          Copy-Item "$($crt.FullName)\*.dll" deploy\
+          Get-ChildItem deploy -Recurse | Select-Object -ExpandProperty FullName
+
+      - name: Portable application zip
+        if: env.APP_JOB == 'true'
+        run: |
+          $ver = (Select-String -Path CMakeLists.txt -Pattern 'VERSION ([0-9.]+)' | Select-Object -First 1).Matches[0].Groups[1].Value
+          $name = "graphplot-$ver-windows-x64"
+          New-Item -ItemType Directory "dist\$name\licenses" -Force | Out-Null
+          Copy-Item deploy\* "dist\$name\" -Recurse
+          Copy-Item LICENSE, AUTHORS "dist\$name\licenses\"
+          Copy-Item third_party\qcustomplot\GPL.txt "dist\$name\licenses\qcustomplot-GPL.txt"
+          Copy-Item packaging\windows\README.txt "dist\$name\"
+          Compress-Archive -Path "dist\$name" -DestinationPath "dist\$name.zip"
+          # Smoke test from the unpacked folder with Qt removed from PATH.
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch '\\Qt\\' }) -join ';'
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $env:QT_PLUGIN_PATH = ""
+          & "dist\$name\graphplot.exe" --demo2d --export "$env:RUNNER_TEMP\demo.png" | Out-Host
+          if (-not (Test-Path "$env:RUNNER_TEMP\demo.png")) { throw "graphplot.exe did not export" }
+
+      - name: Python wheel
+        run: |
+          python tools/make_wheel.py --package build/python/plotter --bundle deploy --out dist
+          # Install into a clean virtual environment with Qt removed from PATH.
+          python -m venv "$env:RUNNER_TEMP\venv"
+          $whl = Get-ChildItem dist\*.whl | Select-Object -First 1
+          & "$env:RUNNER_TEMP\venv\Scripts\python.exe" -m pip install $whl.FullName
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch '\\Qt\\' }) -join ';'
+          $env:QT_QPA_PLATFORM = "offscreen"
+          Set-Location $env:RUNNER_TEMP
+          & "$env:RUNNER_TEMP\venv\Scripts\python.exe" -c "import numpy as np, plotter; f = plotter.figure(); f.plot(np.arange(10), np.arange(10) ** 2); f.savefig('py.png'); print(plotter.__file__)"
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path py.png)) { throw "wheel smoke test failed" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: graphplot-windows-py${{ matrix.python }}
+          path: |
+            dist/*.zip
+            dist/*.whl
+          if-no-files-found: error
+
+  release:
+    name: Draft GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [ubuntu, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Create a draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          name: Graphplot ${{ github.ref_name }}
+          body: |
+            Installation and usage:
+            - Windows: docs/INSTALL_WINDOWS.md
+            - Ubuntu 22.04 / 24.04: docs/INSTALL_UBUNTU.md
+          files: artifacts/*
+          fail_on_unmatched_files: true

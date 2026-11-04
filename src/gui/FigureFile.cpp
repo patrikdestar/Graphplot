@@ -240,7 +240,7 @@ bool FigureWindow::loadFigure(const QString& fileName, QString* error)
             tl->setNavigatorSignal({target[navRow], ObjectId(nav[1].toString().toULongLong())});
         for (const QJsonValue& v : t["pins"].toArray()) {
             const QJsonObject p = v.toObject();
-            tl->addPin(p["t"].toDouble(), p["label"].toString(), QColor::fromString(p["color"].toString()));
+            tl->addPin(p["t"].toDouble(), p["label"].toString(), colorFromString(p["color"].toString()));
         }
         const QJsonArray w = t["window"].toArray();
         if (w.size() == 2 && w[1].toDouble() > w[0].toDouble()) tl->setWindow(w[0].toDouble(), w[1].toDouble());

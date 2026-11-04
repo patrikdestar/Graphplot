@@ -18,6 +18,13 @@ endif()
 option(GRAPHPLOT_BUILD_PYTHON "Build the 'plotter' Python module (needs pybind11)" ON)
 option(GRAPHPLOT_BUILD_TESTS "Build the C++ tests" ON)
 
+if(MSVC)
+  # M_PI from <cmath>, no min/max macros from <windows.h>, UTF-8 sources,
+  # and room for the large binding / QCustomPlot object files.
+  add_compile_definitions(_USE_MATH_DEFINES NOMINMAX)
+  add_compile_options(/utf-8 /bigobj)
+endif()
+
 find_package(Qt6 6.2 REQUIRED COMPONENTS Core Gui Widgets PrintSupport Svg)
 
 # ---- QCustomPlot (vendored, GPLv3) -------------------------------------------
@@ -96,3 +103,14 @@ if(GRAPHPLOT_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)
 endif()
+
+# ---- Desktop integration, licence files, packages -------------------------------------
+if(UNIX AND NOT APPLE)
+  install(FILES packaging/linux/graphplot.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+  install(FILES packaging/linux/graphplot.svg
+          DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+endif()
+install(FILES LICENSE AUTHORS DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/graphplot)
+install(FILES third_party/qcustomplot/GPL.txt
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/graphplot/qcustomplot)
+include(packaging/Packaging.cmake)

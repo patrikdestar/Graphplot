@@ -105,6 +105,17 @@ annotate, read the results back, process, and re-plot.
 - `plotter.pyplot`: a matplotlib-compatible layer, so many existing scripts
   run after changing the import.
 
+## Download and install (ready-made builds)
+
+Release builds are made by the *Release builds* GitHub Actions workflow
+(`.github/workflows/release.yml`):
+
+- **Windows 10/11 (x64):** a portable zip with the application and Python
+  wheels for Python 3.10–3.14. See [docs/INSTALL_WINDOWS.md](docs/INSTALL_WINDOWS.md).
+- **Ubuntu 22.04 and 24.04:** one `.deb` per release, containing the
+  application, a menu entry and the Python module for the system Python. See
+  [docs/INSTALL_UBUNTU.md](docs/INSTALL_UBUNTU.md).
+
 ## Building
 
 Requirements:
@@ -443,6 +454,9 @@ label.top.left: "**My Experiment** *Preliminary*"
 - [docs/FILE_FORMATS.md](docs/FILE_FORMATS.md): every file Graphplot reads or
   writes (column data, 2D grids, sensor logs, Bruker, peak lists, styles,
   exports) and the exact parsing rules.
+- [docs/INSTALL_WINDOWS.md](docs/INSTALL_WINDOWS.md) /
+  [docs/INSTALL_UBUNTU.md](docs/INSTALL_UBUNTU.md): installing and using the
+  release builds.
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md): build and import
   problems, frozen or vanishing windows, threads, data that loads wrongly,
   and the error messages explained.

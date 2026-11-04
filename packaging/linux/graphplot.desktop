@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Graphplot
+GenericName=Scientific plotting
+Comment=Interactive plots of spectra, sensor logs and column data
+Exec=graphplot %F
+Icon=graphplot
+Terminal=false
+Categories=Science;Education;DataVisualization;Qt;
+Keywords=plot;graph;spectrum;NMR;timeline;csv;
+MimeType=text/csv;

@@ -71,7 +71,7 @@ QString colorText(const QColor& c) { return c.isValid() ? c.name(QColor::HexArgb
 QColor colorFrom(const QJsonValue& v)
 {
     const QString s = v.toString();
-    return s.isEmpty() ? QColor() : QColor::fromString(s);
+    return s.isEmpty() ? QColor() : colorFromString(s);
 }
 
 ObjectId idFrom(const QJsonValue& v) { return ObjectId(v.toString().toULongLong()); }

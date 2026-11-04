@@ -199,6 +199,17 @@ QColor paletteColor(int index);
 // Parses "blue", "#ff0000", "r", "tab:orange"-like names; returns invalid QColor on failure.
 QColor parseColor(const QString& name);
 
+// "#rrggbb", "#aarrggbb" or an SVG colour name -> QColor (invalid if unknown).
+// QColor::fromString exists from Qt 6.4; Ubuntu 22.04 ships Qt 6.2.
+inline QColor colorFromString(const QString& s)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 4, 0)
+    return QColor::fromString(s);
+#else
+    return QColor::isValidColor(s) ? QColor(s) : QColor();
+#endif
+}
+
 // Parses matplotlib-like line style strings: "-", "--", ":", "-.", "none".
 LineStyle parseLineStyle(const QString& s, bool* ok = nullptr);
 QString lineStyleName(LineStyle s);

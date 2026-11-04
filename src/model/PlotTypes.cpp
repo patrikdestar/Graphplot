@@ -48,7 +48,7 @@ QColor parseColor(const QString& nameIn)
         const int idx = name.mid(1).toInt(&ok);
         if (ok) return paletteColor(idx);
     }
-    QColor c = QColor::fromString(name);  // "#rrggbb", "#aarrggbb", SVG names
+    QColor c = colorFromString(name);  // "#rrggbb", "#aarrggbb", SVG names
     return c.isValid() ? c : QColor();
 }
 

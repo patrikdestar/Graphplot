@@ -19,6 +19,10 @@
 #include <QTimer>
 #include <QUndoStack>
 #include <cmath>
+#ifdef _WIN32
+#include <windows.h>
+#include <cstdio>
+#endif
 
 using namespace gp;
 
@@ -108,6 +112,15 @@ static void addDemo2D(FigureWindow& w)
 
 int main(int argc, char** argv)
 {
+#ifdef _WIN32
+    // A Windows GUI program has no console. When started from one (cmd,
+    // PowerShell), print --help/--version/--export errors there.
+    if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+        FILE* f = nullptr;
+        freopen_s(&f, "CONOUT$", "w", stdout);
+        freopen_s(&f, "CONOUT$", "w", stderr);
+    }
+#endif
     QApplication app(argc, argv);
     QApplication::setApplicationName("Graphplot");
     QApplication::setOrganizationName("Graphplot");
